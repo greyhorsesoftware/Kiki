@@ -1,0 +1,5 @@
+# Stand-ins for the Quickshell types the kiki singletons declare, so the leaf tests can import
+# the kiki module without Quickshell installed. Passed to qmltestrunner with -import.
+module Quickshell
+singleton Quickshell 1.0 Quickshell.qml
+FileView 1.0 FileView.qml

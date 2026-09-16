@@ -52,7 +52,7 @@ Already specified per plan; collected here so the harness is shared.
 
 Coverage list (one test file per component in plan 02's inventory; the highlights): sidebar sections and the Locations `+` button, the shortcut bar (chips match the declared set for each context), breadcrumb, search box, view switcher, icon tile, list row and header sort, column and its selection states, inspector General and Permissions tabs (octal and symbolic derivation from the checkbox grid), context menu, undo toast, the generated Add-location form (renders every `Field` kind, Connect enabled state, inline field errors), Open dialog list and filter, split pane header, mirror Configure controls and the plan sentence, mirror Review tabs, rows and footer summary, mirror Running rows in every status.
 
-Verify early in plan 02 whether a QtTest `TestCase` also runs inside Quickshell's engine. If it does, these tests can additionally run in the real runtime and rule 1 matters less.
+Importing the `kiki` module compiles its singletons, two of which import Quickshell; `tests/qml/stubs/` provides inert `Quickshell`, `Quickshell.Io.Socket`, `SplitParser` and `FileView` stand-ins so the standard runner (`qmltestrunner -import tests/qml/stubs -input tests/qml`) loads the module without Quickshell installed. Verify early in plan 02 whether a QtTest `TestCase` also runs inside Quickshell's engine. If it does, these tests can additionally run in the real runtime and rule 1 matters less.
 
 ## Shell tests in the real runtime
 

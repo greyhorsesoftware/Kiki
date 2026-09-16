@@ -58,7 +58,8 @@ jobs:
         run: |
           export QT_QPA_PLATFORM=offscreen
           # Arch installs the Qt 6 tools under /usr/lib/qt6/bin without a -qt6 suffix
-          /usr/lib/qt6/bin/qmltestrunner -input tests/qml
+          # tests/qml/stubs stands in for the Quickshell modules the kiki singletons import
+          /usr/lib/qt6/bin/qmltestrunner -import tests/qml/stubs -input tests/qml
 
   package:
     name: Build package (${{ matrix.arch }})
