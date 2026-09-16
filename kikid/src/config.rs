@@ -92,7 +92,7 @@ pub fn settings() -> Value {
     m.insert("editor".into(), Value::obj().s("terminal", "auto").s("placement", "right").u("tabWidth", 4).done());
     m.insert("git".into(), Value::obj().b("enabled", true).s("showIgnored", "dim").s("folders", "aggregate").done());
     m.insert("project".into(), Value::obj().u("width", 320).b("arrange", true).b("agent", true).done());
-    m.insert("jarvis".into(), Value::obj().s("provider", "omarchy").s("model", "").s("baseUrl", "").done());
+    m.insert("jarvis".into(), Value::obj().s("provider", "omarchy").s("mode", "auto").s("model", "").s("baseUrl", "").s("cliCommand", "").done());
     merge(&mut m, &v);
     Value::Obj(m)
 }

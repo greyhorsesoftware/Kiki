@@ -21,6 +21,7 @@ Rectangle {
         uris = u; transcript = sessions[key()] || []; busy = false
         input.forceActiveFocus()
     }
+    function cancel() { if (busy && activeId) { Kiki.Daemon.request("AiCancel", { id: activeId }); busy = false } }
     function ask(text) {
         if (!text.trim() || busy) return
         transcript = transcript.concat([{ role: "user", text: text }, { role: "assistant", text: "", local: false }])
@@ -73,7 +74,7 @@ Rectangle {
                 color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12; selectionColor: Kiki.Theme.accent
                 Keys.onPressed: event => {
                     if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) { ai.ask(text); event.accepted = true }
-                    else if (event.key === Qt.Key_Escape) { ai.close(); event.accepted = true }
+                    else if (event.key === Qt.Key_Escape) { if (ai.busy) ai.cancel(); else ai.close(); event.accepted = true }
                 }
                 Text { visible: !input.text.length && !input.activeFocus; text: "Ask Jarvis about this file… (count lines, how many times does \"x\" appear)"; color: Kiki.Theme.muted; font: input.font; width: parent.width; wrapMode: Text.Wrap }
             }

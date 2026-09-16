@@ -80,12 +80,47 @@ fn credential(provider: &str) -> (Option<String>, Option<&'static str>) {
     (None, None)
 }
 
+/// CLI print-mode command for a provider's own tool: (binary, args with {prompt}); the tool reads files itself.
+pub fn cli_for(provider: &str) -> Option<(String, Vec<String>)> {
+    let js = jarvis_settings();
+    if let Some(c) = js.str_field("cliCommand").filter(|c| !c.is_empty()) {
+        let mut parts = c.split_whitespace().map(str::to_string);
+        let bin = parts.next()?;
+        return Some((bin, parts.collect()));
+    }
+    let (bin, args): (&str, Vec<&str>) = match provider {
+        "anthropic" => ("claude", vec!["-p", "{prompt}", "--output-format", "text"]),
+        "openai" => ("codex", vec!["exec", "{prompt}"]),
+        "gemini" => ("gemini", vec!["-p", "{prompt}"]),
+        "xai" => ("grok", vec!["{prompt}"]),
+        _ => return None,
+    };
+    Some((bin.to_string(), args.iter().map(|a| a.to_string()).collect()))
+}
+
+/// "api" | "cli" | "auto" (cli when the provider's tool is installed, else api).
+pub fn mode() -> (&'static str, bool) {
+    let js = jarvis_settings();
+    let (p, _) = provider();
+    let cli_ok = cli_for(&p).map(|(bin, _)| crate::openin::on_path(&bin)).unwrap_or(false);
+    match js.str_field("mode") {
+        Some("cli") => ("cli", cli_ok),
+        Some("api") => ("api", cli_ok),
+        _ => (if cli_ok { "cli" } else { "api" }, cli_ok),
+    }
+}
+
 pub fn status() -> Value {
     let (p, chosen_by) = provider();
     let (_, source) = credential(&p);
     let s = jarvis_settings();
+    let (m, cli_ok) = mode();
+    let configured = if m == "cli" { cli_ok } else { source.is_some() };
     Value::obj()
-        .b("configured", source.is_some())
+        .b("configured", configured)
+        .s("mode", m)
+        .b("cliAvailable", cli_ok)
+        .opt_s("cli", cli_for(&p).map(|(b, _)| b).as_deref())
         .s("provider", p.clone())
         .s("chosenBy", chosen_by)
         .opt_s("omarchyProvider", omarchy_provider())
@@ -97,8 +132,14 @@ pub fn status() -> Value {
 }
 
 /// Settings → Jarvis: provider ("omarchy" to follow Omarchy), a key for a provider, model, base URL.
-pub fn configure(provider_choice: Option<&str>, key_for: Option<&str>, api_key: Option<&str>, model: Option<&str>, base_url: Option<&str>) -> Result<(), VfsError> {
+pub fn configure(provider_choice: Option<&str>, key_for: Option<&str>, api_key: Option<&str>, model: Option<&str>, base_url: Option<&str>, mode: Option<&str>, cli_command: Option<&str>) -> Result<(), VfsError> {
     let mut patch = Value::obj();
+    if let Some(m) = mode {
+        patch = patch.s("mode", m);
+    }
+    if let Some(c) = cli_command {
+        patch = patch.s("cliCommand", c);
+    }
     if let Some(p) = provider_choice {
         patch = patch.s("provider", p);
     }
@@ -193,6 +234,15 @@ pub fn query(tx: Sender<Value>, id: u64, session: String, uris: Vec<Uri>, questi
                 let _ = tx.send(proto::event("AiDone").u("id", id).s("text", a).b("local", true).v("usage", Value::obj().u("input", 0).u("output", 0).done()).done());
                 return;
             }
+            let (m, cli_ok) = mode();
+            if m == "cli" {
+                if !cli_ok {
+                    let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", "the provider's command-line tool is not installed; switch Jarvis to API mode in Settings").done());
+                    return;
+                }
+                run_cli(tx, id, &uris, &question, &history);
+                return;
+            }
             let helper = match crate::helpers::get("kiki-plugin-jarvis") {
                 Ok(h) => h,
                 Err(e) => {
@@ -246,4 +296,95 @@ mod tests {
         assert!(local_answer("how many times does \"ping\" appear", &a).unwrap().contains("1 time(s) exactly, 2 ignoring case"));
         assert!(local_answer("what does this do", &a).is_none());
     }
+}
+
+/// CLI mode: run the provider's tool in print mode from the first file's directory with a prompt
+/// naming the files, and stream its stdout into the panel. Uses the tool's own login.
+fn run_cli(tx: Sender<Value>, id: u64, uris: &[Uri], question: &str, history: &Value) {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    let (p, _) = provider();
+    let Some((bin, args)) = cli_for(&p) else {
+        let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", "no command-line tool for this provider").done());
+        return;
+    };
+    let paths: Vec<String> = uris.iter().filter(|u| u.is_local()).map(|u| u.to_path().to_string_lossy().into_owned()).collect();
+    if paths.len() != uris.len() {
+        let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", "CLI mode works on local files; API mode can read remote ones").done());
+        return;
+    }
+    let cwd = std::path::Path::new(&paths[0]).parent().map(|d| d.to_path_buf()).unwrap_or_else(crate::config::home);
+    let mut prompt = String::new();
+    if let Some(h) = history.as_arr() {
+        for turn in h {
+            prompt.push_str(&format!("{}: {}\n", if turn.str_field("role") == Some("assistant") { "Assistant" } else { "User" }, turn.str_field("text").unwrap_or("")));
+        }
+        if !h.is_empty() {
+            prompt.push_str("\n");
+        }
+    }
+    prompt.push_str(&format!("Read {} and answer concisely in plain text. Question: {}", paths.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", "), question));
+    let mut cmd = Command::new(&bin);
+    cmd.args(args.iter().map(|a| a.replace("{prompt}", &prompt).replace("{files}", &paths.join(" "))));
+    cmd.current_dir(&cwd).env("KIKI_SELECTION", paths.join("\n")).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Io").s("message", format!("{bin}: {e}")).done());
+            return;
+        }
+    };
+    cli_children().lock().unwrap().insert(id, child.id());
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let err_thread = std::thread::spawn(move || {
+        let mut s = String::new();
+        for l in BufReader::new(stderr).lines().map_while(|l| l.ok()) {
+            s.push_str(&l);
+            s.push('\n');
+        }
+        s
+    });
+    let mut text = String::new();
+    let mut buf = [0u8; 4096];
+    let mut reader = BufReader::new(stdout);
+    loop {
+        use std::io::Read;
+        match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
+                text.push_str(&chunk);
+                let _ = tx.send(proto::event("AiDelta").u("id", id).s("text", chunk).done());
+            }
+        }
+    }
+    let status = child.wait();
+    cli_children().lock().unwrap().remove(&id);
+    let errs = err_thread.join().unwrap_or_default();
+    match status {
+        Ok(st) if st.success() || !text.trim().is_empty() => {
+            let _ = tx.send(proto::event("AiDone").u("id", id).s("text", text.trim_end().to_string()).b("local", false).v("usage", Value::obj().u("input", 0).u("output", 0).s("via", bin.clone()).done()).done());
+        }
+        Ok(st) => {
+            let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Io").s("message", format!("{bin} exited with {st}: {}", errs.trim())).done());
+        }
+        Err(e) => {
+            let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Io").s("message", e.to_string()).done());
+        }
+    }
+}
+
+fn cli_children() -> &'static std::sync::Mutex<std::collections::HashMap<u64, u32>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64, u32>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Cancel a CLI-mode query by killing its process.
+pub fn cancel(id: u64) -> bool {
+    if let Some(pid) = cli_children().lock().unwrap().remove(&id) {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        return true;
+    }
+    false
 }

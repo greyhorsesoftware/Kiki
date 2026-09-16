@@ -229,7 +229,8 @@ Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action":
 | `ChooserResult` | `token`, `uris: [Uri] \| null` | `{}` (the shell's answer to `ShowChooser`) |
 | `SetOpenIn` | `tools: [tool]` | `{}` |
 | `AiStatus` | | `{ configured, provider, chosenBy: "omarchy" \| "settings" \| "default", omarchyProvider, model, baseUrl, source: "env" \| "keyring" \| "ant" \| "local" \| null, providers }` |
-| `AiConfigure` | `provider?` (`omarchy` to follow Omarchy), `keyFor?` + `apiKey?`, `model?`, `baseUrl?` | `AiStatus` result |
+| `AiConfigure` | `provider?` (`omarchy` to follow Omarchy), `keyFor?` + `apiKey?`, `model?`, `baseUrl?`, `mode?` (`auto` \| `cli` \| `api`), `cliCommand?` | `AiStatus` result (also carries `mode`, `cli`, `cliAvailable`) |
+| `AiCancel` | `id` | `{ cancelled }` |
 | `AiQuery` | `session`, `uris`, `question`, `history: [{ role, text }]` | `{ id }` then events `AiDelta { id, text }`, `AiDone { id, text, local, usage }`, `AiError { id, code, message }` |
 
 Text views (plan 13): `OpenText { lid, uri } -> { total, lang }`; `Window` on that `lid` returns `{ n, spans: [{ text, class }] }` rows.

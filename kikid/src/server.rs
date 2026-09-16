@@ -192,7 +192,8 @@ impl Client {
                 crate::jobs::submit(op, Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done()))
             }
             "AiStatus" => Ok(Some(crate::ai::status())),
-            "AiConfigure" => crate::ai::configure(b.str_field("provider"), b.str_field("keyFor"), b.str_field("apiKey"), b.str_field("model"), b.str_field("baseUrl")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
+            "AiConfigure" => crate::ai::configure(b.str_field("provider"), b.str_field("keyFor"), b.str_field("apiKey"), b.str_field("model"), b.str_field("baseUrl"), b.str_field("mode"), b.str_field("cliCommand")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
+            "AiCancel" => Ok(Some(Value::obj().b("cancelled", b.u64_field("id").map(crate::ai::cancel).unwrap_or(false)).done())),
             "AiQuery" => {
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 crate::ai::query(self.tx.clone(), id, b.str_field("session").unwrap_or("default").to_string(), uris, b.str_field("question").unwrap_or("").to_string(), b.get("history").cloned().unwrap_or(Value::Arr(vec![])));
