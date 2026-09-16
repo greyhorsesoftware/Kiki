@@ -17,6 +17,7 @@ pub mod toml;
 pub mod vfs;
 pub mod watch;
 pub mod locations;
+pub mod mirror;
 pub mod plugin;
 
 /// Tests that set process-wide environment variables take this lock so they never interleave.

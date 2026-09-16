@@ -7,6 +7,8 @@ Rectangle {
     property string home: ""
     property bool inspector: false
     property bool split: false
+    property bool mirror: false
+    signal toggleMirror()
     signal toggleInspector()
     signal toggleSplit()
     property alias search: search
@@ -33,7 +35,7 @@ Rectangle {
         Breadcrumb {
             id: crumb
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16
+            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - (bar.split ? 42 : 0)
             uri: bar.pane.uri; home: bar.home
             onNavigate: uri => bar.pane.open(uri)
         }
@@ -46,5 +48,6 @@ Rectangle {
         ViewSwitcher { anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onChanged: v => bar.pane.view = v }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "split"; active: bar.split; onClicked: bar.toggleSplit() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "info"; active: bar.inspector; onClicked: bar.toggleInspector() }
+        ToggleButton { visible: bar.split; anchors.verticalCenter: parent.verticalCenter; icon: "mirror"; active: bar.mirror; tip: "Mirror local and remote"; onClicked: bar.toggleMirror() }
     }
 }

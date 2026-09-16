@@ -32,6 +32,8 @@ struct Client {
     id: u64,
     tx: Sender<Value>,
     listings: HashMap<u64, Arc<Listing>>,
+    /// Mirror plans served as windowed views: lid -> (job, reason filter)
+    plans: HashMap<u64, (u64, String)>,
 }
 
 impl Client {
@@ -69,7 +71,7 @@ impl Client {
                 }
             })
             .expect("spawn writer");
-        let mut client = Client { id, tx, listings: HashMap::new() };
+        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new() };
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -118,7 +120,30 @@ impl Client {
             "Ping" => Ok(Some(Value::obj().done())),
             "Version" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).done())),
             "Open" => self.open(b),
-            "Window" => self.window(b),
+            "Window" => {
+                if let Some(lid) = b.u64_field("lid") {
+                    if self.plans.contains_key(&lid) {
+                        return self.reply(id, self.plan_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
+                    }
+                }
+                self.window(b)
+            }
+            "MirrorPlan" => self.mirror_plan(b),
+            "MirrorFilter" => self.mirror_filter(b),
+            "MirrorCheck" => self.mirror_check(b),
+            "MirrorReport" => match b.u64_field("job").and_then(crate::mirror::stored) {
+                Some(s) => Ok(Some(Value::obj().s("text", crate::mirror::report(&s.spec, &s.plan.lock().unwrap())).done())),
+                None => Err(("NotFound", "no such plan".into())),
+            },
+            "Filters" => Ok(Some(Value::obj().v("rules", Value::Arr(crate::mirror::load_filters().iter().map(|r| match r { crate::mirror::Rule::Contains(v) => Value::obj().s("kind", "contains").s("value", v.clone()).done(), crate::mirror::Rule::StartsWith(v) => Value::obj().s("kind", "startsWith").s("value", v.clone()).done(), crate::mirror::Rule::EndsWith(v) => Value::obj().s("kind", "endsWith").s("value", v.clone()).done(), crate::mirror::Rule::Matches(v) => Value::obj().s("kind", "matches").s("value", v.clone()).done() }).collect())).done())),
+            "SetFilters" => match b.get("rules").and_then(Value::as_arr) {
+                Some(rules) => {
+                    let mut m = std::collections::BTreeMap::new();
+                    m.insert("rule".to_string(), Value::Arr(rules.to_vec()));
+                    crate::config::write_named("filters.toml", &Value::Obj(m)).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string()))
+                }
+                None => Err(("Protocol", "missing rules".into())),
+            },
             "Sort" => self.sort(b, id),
             "Filter" => self.filter(b),
             "Enrich" => self.enrich(b, id),
@@ -285,6 +310,75 @@ impl Client {
         let (_, l) = self.lid(b)?;
         l.rescan();
         Ok(Some(Value::obj().done()))
+    }
+}
+
+impl Client {
+    fn plan_rows(&self, lid: u64) -> Result<(Arc<crate::mirror::Stored>, Vec<usize>), (&'static str, String)> {
+        let (job, reason) = self.plans.get(&lid).cloned().ok_or(("NotFound", "no plan view".to_string()))?;
+        let stored = crate::mirror::stored(job).ok_or(("NotFound", "no such plan".to_string()))?;
+        let idx: Vec<usize> = {
+            let p = stored.plan.lock().unwrap();
+            p.actions
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| match reason.as_str() {
+                    "new" => a.reason == crate::mirror::Reason::New,
+                    "changed" => a.reason == crate::mirror::Reason::Changed,
+                    "equal" => a.reason == crate::mirror::Reason::Equal,
+                    "delete" => matches!(a.kind, crate::mirror::ActionKind::Delete | crate::mirror::ActionKind::Rmdir),
+                    _ => true,
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
+        Ok((stored, idx))
+    }
+
+    fn plan_window(&self, lid: u64, first: usize, count: usize) -> Result<Value, (&'static str, String)> {
+        let (stored, idx) = self.plan_rows(lid)?;
+        let p = stored.plan.lock().unwrap();
+        let rows: Vec<Value> = idx.iter().skip(first).take(count.min(512)).map(|&i| crate::mirror::action_json(&p.actions[i])).collect();
+        Ok(Value::obj().u("first", first as u64).u("n", idx.len() as u64).b("done", true).v("rows", Value::Arr(rows)).done())
+    }
+
+    fn mirror_plan(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let job = b.u64_field("job").ok_or(("Protocol", "missing job".to_string()))?;
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let stored = crate::mirror::stored(job).ok_or(("NotFound", "no such plan".to_string()))?;
+        self.plans.insert(lid, (job, "all".into()));
+        let (counts, offset, n) = {
+            let p = stored.plan.lock().unwrap();
+            (p.counts_json(), p.clock_offset_ms, p.actions.len() as u64)
+        };
+        let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
+        Ok(Some(Value::obj().v("counts", counts).i("clockOffsetMs", offset).u("n", n).done()))
+    }
+
+    fn mirror_filter(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let reason = b.str_field("reason").unwrap_or("all").to_string();
+        let entry = self.plans.get_mut(&lid).ok_or(("NotFound", "no plan view".to_string()))?;
+        entry.1 = reason;
+        let (_, idx) = self.plan_rows(lid)?;
+        let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", idx.len() as u64).done());
+        Ok(Some(Value::obj().u("n", idx.len() as u64).done()))
+    }
+
+    fn mirror_check(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let first = b.u64_field("first").unwrap_or(0) as usize;
+        let count = b.u64_field("count").unwrap_or(1) as usize;
+        let checked = b.get("checked").and_then(Value::as_bool).unwrap_or(true);
+        let (stored, idx) = self.plan_rows(lid)?;
+        let mut p = stored.plan.lock().unwrap();
+        for &i in idx.iter().skip(first).take(count) {
+            if p.actions[i].kind != crate::mirror::ActionKind::Skip {
+                p.actions[i].checked = checked;
+            }
+        }
+        let counts = p.counts_json();
+        Ok(Some(Value::obj().v("counts", counts).done()))
     }
 }
 

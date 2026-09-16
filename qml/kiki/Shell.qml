@@ -35,7 +35,9 @@ FloatingWindow {
         const u = selectedUris(); if (!u.length || !split) return
         Kiki.Jobs.submit({ op: move ? "move" : "copy", items: u, dest: otherPane().uri })
     }
-    onSplitChanged: if (!split) focusPane(left)
+    onSplitChanged: if (!split) { focusPane(left); mirrorOpen = false }
+    property bool mirrorOpen: false
+    function toggleMirror() { if (!split) return; mirrorOpen = !mirrorOpen }
     property string toast: ""
     // The inspected item follows the selection's current row.
     property string inspectedUri: ""
@@ -156,6 +158,7 @@ FloatingWindow {
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
+            case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
             default: return
             }
             event.accepted = true
@@ -174,6 +177,8 @@ FloatingWindow {
         function uri(pane: string): string { return win.pane.uri }
         function inspector(on: string): void { win.inspector = on === "on" }
         function split(on: string): void { win.split = on === "on" }
+        function mirror(on: string): void { win.mirrorOpen = on === "open" && win.split }
+        function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
         function transfer(kind: string): void { win.transfer(kind === "move") }
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
@@ -208,11 +213,21 @@ FloatingWindow {
                 id: toolbar
                 width: parent.width
                 pane: win.pane; home: win.home
-                inspector: win.inspector; split: win.split
+                inspector: win.inspector; split: win.split; mirror: win.mirrorOpen
                 onToggleInspector: win.inspector = !win.inspector
                 onToggleSplit: win.split = !win.split
+                onToggleMirror: win.toggleMirror()
+            }
+            UI.MirrorWorkspace {
+                id: mirrorWs
+                visible: win.mirrorOpen
+                width: parent.width; height: parent.height - toolbar.height - bar.height
+                localUri: win.left.uri; remoteUri: win.right.uri; home: win.home
+                onClosed: win.mirrorOpen = false
+                onRelist: { win.left.listing.refresh(); win.right.listing.refresh() }
             }
             Row {
+                visible: !win.mirrorOpen
                 width: parent.width; height: parent.height - toolbar.height - bar.height
                 // Left pane (the only pane when not split)
                 Column {

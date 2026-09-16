@@ -539,9 +539,46 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let created: Vec<PathBuf> = top.iter().map(|t| dest.join(t)).collect();
             Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
         }
+        "mirrorScan" => {
+            let mut spec = crate::mirror::Spec::from_json(op.get("spec").ok_or(VfsError::Io("missing spec".into()))?).map_err(VfsError::Io)?;
+            let plan = crate::mirror::scan(&mut spec, &cancel)?;
+            let n = plan.actions.len() as u64;
+            job.set_totals(n, 0);
+            job.progress(n, 0);
+            crate::mirror::store(job.id, spec, plan);
+            None
+        }
+        "mirrorRun" => {
+            let stored = crate::mirror::stored(op.u64_field("plan").ok_or(VfsError::Io("missing plan".into()))?).ok_or(VfsError::Io("no such plan".into()))?;
+            let mut spec = stored.spec.clone();
+            if let Some(s) = op.get("spec") {
+                if let Ok(over) = crate::mirror::Spec::from_json(s) {
+                    spec.confirmed_large_delete = over.confirmed_large_delete;
+                    spec.delete_extras = over.delete_extras;
+                }
+            }
+            let (total, bytes) = {
+                let p = stored.plan.lock().unwrap();
+                (p.actions.iter().filter(|a| a.checked && a.kind != crate::mirror::ActionKind::Skip).count() as u64, p.copy_bytes())
+            };
+            job.set_totals(total, bytes);
+            let workers = op.u64_field("workers").unwrap_or(3).clamp(1, 8) as usize;
+            let ctx = crate::mirror::ExecCtx { cancel: &cancel, workers, on_change: &|_| job.progress(0, 0), on_bytes: &|n| job.progress(0, n) };
+            let out = crate::mirror::execute(&stored.plan, &spec, &ctx)?;
+            job.progress(total.saturating_sub(job.status.lock().unwrap().done), 0);
+            audit_summary(job, &out);
+            None
+        }
         other => return Err(VfsError::Io(format!("unknown op {other}"))),
     };
     Ok(if unjournaled { None } else { inverse })
+}
+
+fn audit_summary(job: &Job, out: &crate::mirror::Outcome) {
+    let mut st = job.status.lock().unwrap();
+    st.done = st.total;
+    drop(st);
+    broadcast(proto::event("Toast").u("job", job.id).s("text", format!("Mirror complete · {} copied · {} deleted{}", out.copies, out.deletes, if out.skipped > 0 { format!(" · {} skipped", out.skipped) } else { String::new() })).b("undoable", false).done());
 }
 
 fn title_for(op: &Value) -> String {
@@ -562,6 +599,8 @@ fn title_for(op: &Value) -> String {
         "rmdirIfEmpty" => "Remove folder".into(),
         "chmod" => format!("Change permissions of {what}"),
         "compress" => format!("Compress {what}"),
+        "mirrorScan" => "Mirror preflight".into(),
+        "mirrorRun" => "Mirror".into(),
         "extract" => "Extract archive".into(),
         "chmodList" => "Restore permissions".into(),
         other => other.to_string(),
