@@ -269,3 +269,24 @@ pub fn cancel(id: u64) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn local_answers() {
+        let a = vec![("x.rs".to_string(), "fn main() {}\nfn ping() {}\nfn Ping() {}\n".to_string(), false)];
+        assert_eq!(local_answer("count lines", &a).unwrap(), "x.rs: 3 lines");
+        assert!(local_answer("how many times does `fn` appear", &a).unwrap().contains("3 time"));
+        assert!(local_answer("how many times does \"ping\" appear", &a).unwrap().contains("1 time(s) exactly, 2 ignoring case"));
+        assert!(local_answer("what does this do", &a).is_none());
+    }
+
+    #[test]
+    fn cli_commands() {
+        assert_eq!(cli_for("anthropic").unwrap().0, "claude");
+        assert_eq!(cli_for("openai").unwrap().0, "codex");
+        assert_eq!(cli_for("gemini").unwrap().0, "gemini");
+        assert!(cli_for("custom").is_none()); // needs cliCommand
+    }
+}
