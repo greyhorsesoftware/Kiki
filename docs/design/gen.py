@@ -147,7 +147,7 @@ def search_box(placeholder, search):
             f'{scope_btn}<span style="flex-grow: 1; white-space: nowrap;">{text}<span style="display: inline-block; width: 1px; height: 14px; margin-left: 1px; background: {FG}; vertical-align: -2px;"></span></span>'
             f'<span style="display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: {CM};">{ico("x", size=10)}</span></div>')
 
-def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirror=None, search=None):
+def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirror=None, search=None, merged=False):
     parts = []
     for i, c in enumerate(crumbs):
         if i: parts.append(f'<span style="color: {GUT};">{ico("chev-r", size=12)}</span>')
@@ -162,10 +162,10 @@ def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirr
   <div style="display: flex; gap: 2px;">{nav_btn("arr-l")}{nav_btn("arr-r", enabled=False)}</div>
   <div style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; margin-left: 4px; flex-grow: 1; min-width: 0; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; white-space: nowrap; overflow: hidden;">{crumb_html}</div>
   {search_box(search_placeholder, search)}
-  <div style="display: flex; align-items: center; justify-content: center; gap: 4px; width: 52px; height: 34px; flex: none; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; box-sizing: border-box; color: {BLUE};" title="View: icon, list, columns; show hidden files">{ico({"icon": '"grid"', "list": '"list"', "columns": '"columns"'}[view].strip('"'))}{ico("chev-d", size=10, color=CM)}</div>
-  <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {HL if split else BGD}; border: 1px solid {BLUE if split else LINE}; border-radius: 2px; color: {BLUE if split else CM}; box-sizing: border-box;" title="Split: local and remote side by side">{ico("split")}</div>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 4px; width: 52px; height: 34px; flex: none; background: {HL if merged else BGD}; border: 1px solid {BLUE if merged else LINE}; border-radius: 2px; box-sizing: border-box; color: {BLUE};" title="View: icon, list, columns, mirror; show hidden files">{ico({"icon": "grid", "list": "list", "columns": "columns", "mirror": "mirror"}[view])}{ico("chev-d", size=10, color=CM)}</div>
+  {"" if merged else f'<div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {HL if split else BGD}; border: 1px solid {BLUE if split else LINE}; border-radius: 2px; color: {BLUE if split else CM}; box-sizing: border-box;" title="Split: local and remote side by side">{ico("split")}</div>'}
   <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {HL if inspector else BGD}; border: 1px solid {BLUE if inspector else LINE}; border-radius: 2px; color: {BLUE if inspector else CM}; box-sizing: border-box;" title="Toggle inspector panel">{ico("info")}</div>
-  {mirror_btn(mirror)}
+  {"" if merged else mirror_btn(mirror)}
   <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; color: {CM}; box-sizing: border-box;" title="Settings (Ctrl+,)">{ico("gear")}</div>
 </div>"""
 
@@ -182,7 +182,7 @@ def key(k, label):
 
 BROWSE_KEYS = [("Enter","open"),("F2","rename"),("Del","trash"),("^C","copy"),("^V","paste"),("/","search"),("^Z","undo"),("?","all keys")]
 COLUMNS_KEYS = [("Enter","open"),("h l","columns"),("F2","rename"),("Del","trash"),("^C","copy"),("^V","paste"),("^Z","undo"),("?","all keys")]
-SPLIT_KEYS = [("Tab","switch pane"),("^C ^V","transfer"),("^M","mirror"),("^⇧S","unsplit"),("?","all keys")]
+SPLIT_KEYS = [("Tab","switch pane"),("^C ^V","transfer"),("^M","mirror…"),("^1-4","view"),("?","all keys")]
 
 def statusbar(text, keys=BROWSE_KEYS):
     chips = "".join(key(k, l) for k, l in keys)
@@ -424,7 +424,32 @@ LOCAL_KIKI = [("design","folder","12 Sep 2026 23:54","—"),("src","folder","12 
               ("Cargo.toml","toml","12 Sep 2026 11:40","612 B"),("PLAN.md","md","12 Sep 2026 23:58","4.1 KB"),("README.md","md","12 Sep 2026 14:02","1.1 KB")]
 REMOTE_KIKI = [("design","folder","12 Sep 2026 23:55","—"),("src","folder","12 Sep 2026 14:03","—"),("Cargo.toml","toml","12 Sep 2026 11:41","612 B"),("README.md","md","12 Sep 2026 14:03","1.1 KB")]
 
-split_body = f"""<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
+def view_menu_open(active="mirror", hidden=False):
+    def item(label, key, on, sep=False):
+        top = f'border-top: 1px solid {LINE}; margin-top: 4px; padding-top: 4px;' if sep else ""
+        check = f'<span style="width: 14px; color: {BLUE}; font-weight: 600;">{"✓" if on else ""}</span>'
+        return (f'<div style="{top}"><div style="display: flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; color: {FG};">{check}<span style="flex-grow: 1;">{label}</span>'
+                f'<span style="color: {CM}; font-size: 11px;">{key}</span></div></div>')
+    return f"""<div style="position: absolute; right: 100px; top: 48px; z-index: 5; display: flex; flex-direction: column; width: 232px; padding: 4px 0; background: {BGD}; border: 1px solid {GUT}; border-radius: 2px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);">
+  {item("Icon view", "Ctrl+1", active == "icon")}{item("List view", "Ctrl+2", active == "list")}{item("Columns view", "Ctrl+3", active == "columns")}{item("Mirror view", "Ctrl+4", active == "mirror")}
+  {item("Show hidden files", "Ctrl+H", hidden, sep=True)}
+</div>"""
+
+def _bar_btn(label, primary=False):
+    if primary:
+        return f'<div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; background: {BLUE}; color: {BG}; font-weight: 600; border-radius: 2px;">{label}</div>'
+    return f'<div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 14px; border: 1px solid {GUT}; color: {FGD}; border-radius: 2px;">{label}</div>'
+
+mirror_bar = f"""<div style="display: flex; align-items: center; gap: 10px; height: 40px; flex: none; padding: 0 14px; border-bottom: 1px solid {LINE}; box-sizing: border-box; font-size: 12px;">
+  {ico("hdd", size=14, color=FGD)}<span style="color: {FGD};">~/Projects/kiki</span>
+  <span style="display: flex; align-items: center; gap: 2px; color: {CM};">{ico("arr-r", size=12)}{ico("arr-l", size=12)}</span>
+  {ico("server", size=14, color=GREEN)}<span style="color: {FGD};">homelab · /srv/kiki</span>
+  <span style="flex-grow: 1;"></span>
+  <span style="color: {CM}; font-size: 11px;">last mirrored 2 h ago · 3 changed locally</span>
+  {_bar_btn("Swap sides")}{_bar_btn("Mirror…", primary=True)}
+</div>"""
+
+split_body = f"""{mirror_bar}<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
   {pane("hdd", FGD, "local", "~/Projects/kiki", LOCAL_KIKI, focused=False, selected="PLAN.md")}
   <div style="width: 1px; flex: none; background: {LINE};"></div>
   {pane("server", GREEN, "homelab", "/srv/kiki", REMOTE_KIKI, focused=True)}
@@ -434,7 +459,7 @@ split_status = (f'<div style="display: flex; align-items: center; gap: 14px; hei
                 f'<span style="white-space: nowrap;">Uploading <span style="color: {FG};">PLAN.md</span></span>'
                 f'<div style="width: 120px; height: 4px; flex: none; background: {HL}; border-radius: 2px; overflow: hidden;"><div style="width: 72%; height: 100%; background: {BLUE};"></div></div>'
                 f'<span style="white-space: nowrap;">72% · 4.1 MB/s</span></div>')
-SPLIT = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "list", "Search homelab", split=True, mirror=False) + split_body + split_status)
+SPLIT = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True) + view_menu_open("mirror") + split_body + split_status)
 
 
 # ---------- Mirror workspace ----------

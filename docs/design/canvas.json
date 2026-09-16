@@ -26,7 +26,7 @@
     },
     {
       "file": "SplitView.dc.html",
-      "title": "Split · local | remote",
+      "title": "Mirror view (proposal) · replaces split + mirror toggles",
       "x": 3900,
       "y": 0,
       "w": 1200,
@@ -172,7 +172,7 @@
       "x": 3900,
       "y": 780,
       "w": 520,
-      "text": "Split: selecting a remote location opens it side by side. The left pane goes to the location's local path, the right to its remote path. Drag or Ctrl+C / Ctrl+V between panes transfers; transfers show in the status bar and are undoable. The split toggle in the toolbar turns it off (remote alone)."
+      "text": "Mirror view (proposal): split and the mirror toggle are gone from the toolbar. Mirror is the fourth entry in the view menu (Ctrl+4); a remote location opens in it by default, a local folder can switch to it. Left pane local, right pane remote; the bar above the panes names both sides, shows when they were last mirrored, and holds Swap sides and the Mirror… button that starts Configure → Review → Running (Ctrl+M). Drag or Ctrl+C / Ctrl+V between panes transfers as before."
     },
     {
       "id": "mirror-note",
