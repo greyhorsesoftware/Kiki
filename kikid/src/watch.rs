@@ -95,18 +95,18 @@ mod imp {
                         off += 16 + len;
                         let s = state().lock().unwrap();
                         if let Some((path, _)) = s.by_wd.get(&wd) {
-                            if mask & (libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_IGNORED) as u32 != 0 {
+                            if mask & (libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_IGNORED) != 0 {
                                 let p = path.clone();
                                 drop(s);
                                 gone(&p);
                                 continue;
                             }
                             let b = pending.entry(path.clone()).or_insert_with(|| Batch { at: Instant::now(), added: Vec::new(), removed: Vec::new(), modified: Vec::new(), rescan: false });
-                            if mask & libc::IN_Q_OVERFLOW as u32 != 0 || name.is_empty() {
+                            if mask & libc::IN_Q_OVERFLOW != 0 || name.is_empty() {
                                 b.rescan = true;
-                            } else if mask & (libc::IN_CREATE | libc::IN_MOVED_TO) as u32 != 0 {
+                            } else if mask & (libc::IN_CREATE | libc::IN_MOVED_TO) != 0 {
                                 b.added.push(name);
-                            } else if mask & (libc::IN_DELETE | libc::IN_MOVED_FROM) as u32 != 0 {
+                            } else if mask & (libc::IN_DELETE | libc::IN_MOVED_FROM) != 0 {
                                 b.removed.push(name);
                             } else {
                                 b.modified.push(name);

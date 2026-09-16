@@ -115,10 +115,10 @@ fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>
     let st = statx(&h.file, name, AtFlags::SYMLINK_NOFOLLOW | AtFlags::STATX_DONT_SYNC, mask).map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
     let mtime_ms = if st.stx_mtime.tv_sec <= 0 { 0 } else { st.stx_mtime.tv_sec as u64 * 1000 + (st.stx_mtime.tv_nsec / 1_000_000) as u64 };
     let mode = st.stx_mode as u32;
-    let kind = match mode & libc::S_IFMT as u32 {
-        m if m == libc::S_IFREG as u32 => EntryType::File,
-        m if m == libc::S_IFDIR as u32 => EntryType::Dir,
-        m if m == libc::S_IFLNK as u32 => EntryType::Link,
+    let kind = match mode & libc::S_IFMT {
+        m if m == libc::S_IFREG => EntryType::File,
+        m if m == libc::S_IFDIR => EntryType::Dir,
+        m if m == libc::S_IFLNK => EntryType::Link,
         _ => EntryType::Other,
     };
     Ok((Meta { size: st.stx_size, mtime_ms, mode: Some(mode & 0o7777), uid: Some(st.stx_uid), gid: Some(st.stx_gid) }, kind))
