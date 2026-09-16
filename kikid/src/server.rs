@@ -118,9 +118,21 @@ impl Client {
         let id = req.id;
         let b = &req.body;
         let result: Result<Option<Value>, (&str, String)> = match req.kind.as_str() {
-            "Hello" => Ok(Some(
+            "Hello" => {
+                if b.str_field("client") == Some("kiki") {
+                    crate::dbus::register_shell(self.tx.clone());
+                }
+                Ok(Some(
                 Value::obj().u("version", proto::PROTOCOL_VERSION).s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION"))).v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect())).done(),
-            )),
+            ))
+            }
+            "ChooserResult" => {
+                crate::dbus::chooser_result(b.str_field("token").unwrap_or(""), b.get("uris").cloned().unwrap_or(Value::Null));
+                Ok(Some(Value::obj().done()))
+            }
+            "Keymap" => Ok(Some(Value::obj().v("keys", crate::config::keymap()).done())),
+            "About" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).s("socket", crate::config::socket_path_string()).s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("helperDir", crate::helpers::helper_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("configDir", crate::config::config_dir().to_string_lossy()).done())),
+            "ResetSettings" => crate::config::reset_all().map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
             "Ping" => Ok(Some(Value::obj().done())),
             "Version" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).done())),
             "Open" => self.open(b),
@@ -165,6 +177,26 @@ impl Client {
                 let tx = self.tx.clone();
                 std::thread::spawn(move || { let r = crate::tree::arrange(&windows, width); let _ = tx.send(proto::ok(id, r)); });
                 Ok(None)
+            }
+            "SharePlugins" => Ok(Some(Value::obj().v("plugins", crate::share::list_json()).done())),
+            "ShareTargets" => match b.str_field("plugin") {
+                Some(p) => crate::share::targets(p, b.str_field("query")).map(|t| Some(Value::obj().v("targets", t).done())).map_err(vfs_err),
+                None => Err(("Protocol", "missing plugin".into())),
+            },
+            "ShareConfigure" => match b.str_field("plugin") {
+                Some(p) => crate::share::configure(p, b.get("config").unwrap_or(&Value::Null), b.get("secrets").unwrap_or(&Value::Null)).map(|_| Some(Value::obj().done())).map_err(vfs_err),
+                None => Err(("Protocol", "missing plugin".into())),
+            },
+            "Share" => {
+                let op = Value::obj().s("op", "share").s("plugin", b.str_field("plugin").unwrap_or("")).v("uris", b.get("uris").cloned().unwrap_or(Value::Arr(vec![]))).opt_s("target", b.str_field("target")).v("compose", b.get("compose").cloned().unwrap_or(Value::Null)).done();
+                crate::jobs::submit(op, Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done()))
+            }
+            "AiStatus" => Ok(Some(crate::ai::status())),
+            "AiConfigure" => crate::ai::configure(b.str_field("apiKey")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
+            "AiQuery" => {
+                let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
+                crate::ai::query(self.tx.clone(), id, b.str_field("session").unwrap_or("default").to_string(), uris, b.str_field("question").unwrap_or("").to_string(), b.get("history").cloned().unwrap_or(Value::Arr(vec![])));
+                Ok(Some(Value::obj().u("id", id).done()))
             }
             "Search" => self.search(b),
             "IndexStatus" => Ok(Some(crate::index::status_json())),

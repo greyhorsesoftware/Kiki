@@ -121,7 +121,7 @@ fn broadcast(v: Value) {
 pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
     let kind = op.str_field("op").ok_or(("Protocol", "missing op".to_string()))?.to_string();
     let title = title_for(&op);
-    let undoable = !matches!(kind.as_str(), "delete" | "mirrorScan" | "mirrorRun");
+    let undoable = !matches!(kind.as_str(), "delete" | "mirrorScan" | "mirrorRun" | "share");
     let (ptx, prx) = mpsc::channel();
     let job = {
         let mut q = queue().lock().unwrap();
@@ -228,7 +228,19 @@ impl Job {
         }
     }
 
-    fn set_totals(&self, total: u64, bytes_total: u64) {
+    pub fn set_progress(&self, done: u64, bytes: u64) {
+        let mut st = self.status.lock().unwrap();
+        st.done = done;
+        st.bytes = bytes;
+        let emit = st.last_emit.map(|t| t.elapsed() >= PROGRESS_EVERY).unwrap_or(true);
+        if emit {
+            st.last_emit = Some(Instant::now());
+            drop(st);
+            broadcast(self.event());
+        }
+    }
+
+    pub fn set_totals(&self, total: u64, bytes_total: u64) {
         let mut st = self.status.lock().unwrap();
         st.total = total;
         st.bytes_total = bytes_total;
@@ -539,6 +551,13 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let created: Vec<PathBuf> = top.iter().map(|t| dest.join(t)).collect();
             Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
         }
+        "share" => {
+            let plugin = op.str_field("plugin").ok_or(VfsError::Io("missing plugin".into()))?.to_string();
+            let uris: Vec<Uri> = op.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
+            let r = crate::share::run(job, &plugin, &uris, op.str_field("target"), op.get("compose").unwrap_or(&Value::Null), &cancel)?;
+            broadcast(proto::event("Toast").u("job", job.id).s("text", format!("Shared via {}: {}", plugin, r.str_field("result").unwrap_or("done"))).b("undoable", false).done());
+            None
+        }
         "mirrorScan" => {
             let mut spec = crate::mirror::Spec::from_json(op.get("spec").ok_or(VfsError::Io("missing spec".into()))?).map_err(VfsError::Io)?;
             let plan = crate::mirror::scan(&mut spec, &cancel)?;
@@ -599,6 +618,7 @@ fn title_for(op: &Value) -> String {
         "rmdirIfEmpty" => "Remove folder".into(),
         "chmod" => format!("Change permissions of {what}"),
         "compress" => format!("Compress {what}"),
+        "share" => format!("Share via {}", op.str_field("plugin").unwrap_or("")),
         "mirrorScan" => "Mirror preflight".into(),
         "mirrorRun" => "Mirror".into(),
         "extract" => "Extract archive".into(),

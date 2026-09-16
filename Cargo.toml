@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps", "helpers/kiki-helper-dbus", "helpers/kiki-helper-highlight"]
+members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps", "helpers/kiki-helper-dbus", "helpers/kiki-helper-highlight", "share/kiki-share-mail", "share/kiki-share-messages", "share/kiki-share-tailscale", "share/kiki-share-airdrop", "share/kiki-share-localsend", "helpers/kiki-helper-ai"]
 
 [workspace.package]
 version = "0.1.0"

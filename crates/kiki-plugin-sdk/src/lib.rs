@@ -431,3 +431,146 @@ fn result(id: u64, r: Result<()>) -> Value {
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+
+// ================================================================ share plugins (plan 18)
+
+pub struct ShareDescribe {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub icon: &'static str,
+    pub version: &'static str,
+    pub accepts_files: bool,
+    pub accepts_folders: bool,
+    pub accepts_multiple: bool,
+    pub max_bytes: Option<u64>,
+    /// "list" | "search" | "none"
+    pub targets: &'static str,
+    pub form: Vec<Value>,
+    pub secret_fields: Vec<&'static str>,
+    pub compose: Vec<Value>,
+}
+
+impl ShareDescribe {
+    fn to_json(&self) -> Value {
+        Value::obj()
+            .s("id", self.id)
+            .s("name", self.name)
+            .s("icon", self.icon)
+            .s("version", self.version)
+            .v("accepts", Value::obj().b("files", self.accepts_files).b("folders", self.accepts_folders).b("multiple", self.accepts_multiple).v("maxBytes", self.max_bytes.map(Value::Uint).unwrap_or(Value::Null)).done())
+            .s("targets", self.targets)
+            .v("form", Value::Arr(self.form.clone()))
+            .v("secretFields", Value::Arr(self.secret_fields.iter().map(|s| Value::Str(s.to_string())).collect()))
+            .v("compose", Value::Arr(self.compose.clone()))
+            .done()
+    }
+}
+
+pub struct Target {
+    pub id: String,
+    pub name: String,
+    pub detail: String,
+    pub online: bool,
+    pub icon: String,
+}
+
+pub struct ShareProgress<'a> {
+    pub id: u64,
+    out: &'a mut dyn Write,
+}
+
+impl<'a> ShareProgress<'a> {
+    pub fn report(&mut self, done: u64, total: u64, bytes: u64, bytes_total: u64, status: &str) {
+        let _ = write_json(self.out, &Value::obj().u("id", self.id).s("event", "Progress").u("done", done).u("total", total).u("bytes", bytes).u("bytesTotal", bytes_total).s("status", status).done());
+    }
+}
+
+pub struct ShareResult {
+    /// "sent" | "opened" | "queued"
+    pub result: &'static str,
+    pub detail: Option<String>,
+}
+
+#[allow(unused_variables)]
+pub trait ShareHandler {
+    fn describe(&self) -> ShareDescribe;
+    fn configure(&mut self, config: &Value, secrets: &Value) -> Result<()> {
+        Ok(())
+    }
+    fn targets(&mut self, config: &Value, secrets: &Value, query: Option<&str>) -> Result<Vec<Target>> {
+        Ok(Vec::new())
+    }
+    /// `files` are local paths (the daemon has already fetched remote files and zipped folders unless accepted).
+    fn share(&mut self, config: &Value, secrets: &Value, files: &[String], target: Option<&str>, compose: &Value, progress: &mut ShareProgress) -> Result<ShareResult>;
+}
+
+pub fn detected(bin: &str) -> bool {
+    std::env::var_os("PATH").map(|p| std::env::split_paths(&p).any(|d| d.join(bin).is_file())).unwrap_or(false)
+}
+
+/// The dispatch loop for a share plugin.
+pub fn run_share(handler: &mut dyn ShareHandler) -> io::Result<()> {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut stdin = stdin.lock();
+    let mut stdout = stdout.lock();
+    while let Some((kind, payload)) = read_frame(&mut stdin)? {
+        if kind != 0 {
+            continue;
+        }
+        let v = match kiki_json::parse(&payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let id = v.u64_field("id").unwrap_or(0);
+        let config = v.get("config").cloned().unwrap_or(Value::Null);
+        let secrets = v.get("secrets").cloned().unwrap_or(Value::Null);
+        let reply = match v.str_field("type").unwrap_or("") {
+            "Describe" => ok(id, handler.describe().to_json()),
+            "Ping" => ok(id, Value::obj().done()),
+            "Shutdown" => {
+                write_json(&mut stdout, &ok(id, Value::obj().done()))?;
+                return Ok(());
+            }
+            "Configure" => result(id, handler.configure(&config, &secrets)),
+            "Targets" => match handler.targets(&config, &secrets, v.str_field("query")) {
+                Ok(t) => ok(id, Value::obj().v("targets", Value::Arr(t.into_iter().map(|t| Value::obj().s("id", t.id).s("name", t.name).s("detail", t.detail).b("online", t.online).s("icon", t.icon).done()).collect())).done()),
+                Err(e) => err(id, &e),
+            },
+            "Share" => {
+                let files: Vec<String> = v.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|u| u.as_str()).map(|u| if let Some(p) = u.strip_prefix("file://") { percent_decode(p) } else { u.to_string() }).collect()).unwrap_or_default();
+                let compose = v.get("compose").cloned().unwrap_or(Value::Null);
+                let r = {
+                    let mut p = ShareProgress { id, out: &mut stdout };
+                    handler.share(&config, &secrets, &files, v.str_field("target"), &compose, &mut p)
+                };
+                match r {
+                    Ok(r) => ok(id, Value::obj().s("result", r.result).opt_s("detail", r.detail.as_deref()).done()),
+                    Err(e) => err(id, &e),
+                }
+            }
+            "Cancel" => ok(id, Value::obj().done()),
+            _ => err(id, &PluginError::unsupported()),
+        };
+        write_json(&mut stdout, &reply)?;
+    }
+    Ok(())
+}
+
+pub fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}

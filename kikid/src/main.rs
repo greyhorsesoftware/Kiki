@@ -40,6 +40,7 @@ fn serve() {
             l
         }
     };
+    kikid::dbus::start();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));
         kikid::index::rebuild_async();

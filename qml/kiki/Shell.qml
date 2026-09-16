@@ -103,11 +103,44 @@ FloatingWindow {
     }
     function leaveProject() { projectMode = false; win.width = savedWidth; pane.open(projectRoot) }
 
+    // Share (plan 18)
+    property var sharePlugins: []
+    function loadShare() { Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sharePlugins = ok.plugins.filter(p => p.enabled !== false) }) }
+    function shareMenu() {
+        const uris = selectedUris(); if (!uris.length) return
+        const items = sharePlugins.map(p => ({ label: p.name, action: () => { if (p.targets === "none") shareSheet.open(p, null, uris); else shareTargets(p, uris) } }))
+        if (!items.length) items.push({ label: "No share plugins installed", enabled: false, action: () => {} })
+        menu.open(items, Qt.point(toolbar.width - 200 + 224, 44))
+    }
+    function shareTargets(p, uris) {
+        Kiki.Daemon.request("ShareTargets", { plugin: p.id }, (ok, err) => {
+            if (err) { Kiki.Jobs.showToast({ text: err.message, undoable: false }); return }
+            const items = ok.targets.map(t => ({ label: t.name + (t.online ? "" : "  (offline)") + (t.detail ? "  ·  " + t.detail : ""), enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
+            if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
+            menu.open(items, Qt.point(toolbar.width - 200 + 224, 44))
+        })
+    }
+    // AI (plan 19)
+    property bool aiOpen: false
+    property var aiStatus: ({ configured: false })
+    function loadAi() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) aiStatus = ok }) }
+    function aiQuery() { const u = selectedUris(); if (!u.length) return; if (!aiStatus.configured) { settingsWin.open("ai"); return } aiOpen = true; inspector = false; aiPanel.openFor(u) }
+    function aiCanned(q) { aiQuery(); if (aiOpen) aiPanel.ask(q) }
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
     Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); win.searching = false } }
-    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn() } }
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
+    function showItems(msg) {
+        const uris = msg.uris || []; if (!uris.length) return
+        const first = uris[0]
+        if (msg.folders) { win.pane.open(first); return }
+        const parent = first.replace(/\/[^/]*$/, "") || first
+        win.pane.open(parent)
+        const name = decodeURIComponent(first.split("/").pop())
+        Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } })
+        if (msg.properties) win.inspector = true
+    }
     // The inspected item follows the selection's current row.
     property string inspectedUri: ""
     property var inspectedRow: null
@@ -162,6 +195,10 @@ FloatingWindow {
             { label: "Extract to…", enabled: r && r.kind === "archive", action: () => { const folder = r.name.replace(/\.(tar\.(gz|xz|zst|bz2)|tgz|txz|tzst|zip|7z|tar)$/i, ""); Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(folder) }, ok => { if (ok) Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.childUri(folder) }) }) } },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
             { label: "Open in…", enabled: win.openInTools.length > 0, action: () => win.openInMenu() },
+            { label: "Share…", key: "Alt+S", enabled: sel && win.sharePlugins.length > 0, action: () => win.shareMenu() },
+            { label: win.aiStatus.configured ? "AI: Query…" : "AI: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
+            { label: "AI: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
+            { label: "AI: Explain this file", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Explain what this file does and how it is structured.") },
             { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
         return items
@@ -189,7 +226,7 @@ FloatingWindow {
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(next)
     }
 
-    Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
+    Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged") win.loadSidebar() } }
 
     // Keymap (plan 02). Every action here is also reachable over IPC.
@@ -213,7 +250,6 @@ FloatingWindow {
             case Qt.Key_Left: if (alt) pane.back(); else return; break
             case Qt.Key_Right: if (alt) pane.forward(); else return; break
             case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
-            case Qt.Key_S: if (ctrl && shift) win.split = !win.split; else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_F2: win.renameSelected(); break
             case Qt.Key_Delete: win.trashSelection(); break
@@ -230,8 +266,11 @@ FloatingWindow {
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
             case Qt.Key_E: win.editSelected(); break
+            case Qt.Key_Comma: if (ctrl) settingsWin.open("general"); else return; break
+            case Qt.Key_Question: settingsWin.open("keys"); break
             case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
-            case Qt.Key_Q: if (alt) Kiki.Jobs.showToast({ text: "AI query is plan 19", undoable: false }); else return; break
+            case Qt.Key_Q: if (alt) win.aiQuery(); else return; break
+            case Qt.Key_S: if (alt) win.shareMenu(); else if (ctrl && shift) win.split = !win.split; else return; break
             default: return
             }
             event.accepted = true
@@ -255,6 +294,10 @@ FloatingWindow {
         function edit(uri: string, line: string): void { win.editAt(uri, parseInt(line) || 1) }
         function reveal(uri: string): void { if (win.projectMode) projectTree.reveal(uri); else { const p = uri.replace(/\/[^/]*$/, ""); win.pane.open(p); const name = decodeURIComponent(uri.split("/").pop()); Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } }) } }
         function saved(uri: string): void { win.pane.listing.refresh() }
+        function share(plugin: string, target: string): void { win.shareMenu() }
+        function aiQuery(uri: string, question: string): void { win.pane.selection.clear(); win.aiOpen = true; aiPanel.openFor([uri]); if (question) aiPanel.ask(question) }
+        function aiClose(): void { win.aiOpen = false }
+        function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else settingsWin.visible = false }
         function mirror(on: string): void { win.mirrorOpen = on === "open" && win.split }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
@@ -310,6 +353,7 @@ FloatingWindow {
                 onScopeMenu: win.scopeMenu()
                 onOpenIn: id => win.openIn(id)
                 onOpenInMenu: win.openInMenu()
+                onShare: win.shareMenu()
                 onToggleInspector: win.inspector = !win.inspector
                 onToggleSplit: win.split = !win.split
                 onToggleMirror: win.toggleMirror()
@@ -335,7 +379,7 @@ FloatingWindow {
                 width: parent.width; height: parent.height - toolbar.height - bar.height
                 // Left pane (the only pane when not split)
                 Column {
-                    width: (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0); height: parent.height
+                    width: (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0); height: parent.height
                     UI.PaneHeader { visible: win.split; width: parent.width; pane: win.left; home: win.home; onClicked: win.focusPane(win.left) }
                     Loader {
                         id: viewLoader
@@ -357,10 +401,11 @@ FloatingWindow {
                         onLoaded: item.pane = win.right
                     }
                 }
+                UI.AiPanel { id: aiPanel; visible: win.aiOpen; width: 420; height: parent.height; home: win.home; onClose: win.aiOpen = false }
                 UI.Inspector {
                     id: inspectorPanel
                     // Columns view supplies its own inspector column; icon and list use the toggle.
-                    visible: win.pane.view !== "columns" && win.inspector && win.inspectedUri !== ""
+                    visible: !win.aiOpen && win.pane.view !== "columns" && win.inspector && win.inspectedUri !== ""
                     width: Kiki.Theme.inspectorWidth; height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onOpen: win.openSelected()
@@ -387,6 +432,9 @@ FloatingWindow {
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
     UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar() }
+    UI.PortalDialog { id: portal; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
+    UI.SettingsWindow { id: settingsWin }
+    UI.ShareSheet { id: shareSheet; anchors.fill: parent }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }
     UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
     Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri); onEdit: (u, line) => win.editAt(u, line) } }

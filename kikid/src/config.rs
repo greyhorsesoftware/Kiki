@@ -118,6 +118,35 @@ pub fn set_settings(patch: &Value) -> std::io::Result<()> {
     write_toml("settings.toml", &Value::Obj(cur))
 }
 
+pub fn socket_path_string() -> String {
+    std::env::var("KIKI_SOCKET").unwrap_or_else(|_| format!("{}/kiki.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into())))
+}
+
+pub fn reset_all() -> std::io::Result<()> {
+    for f in ["settings.toml", "favorites.toml", "open-in.toml", "filters.toml"] {
+        let p = config_dir().join(f);
+        if p.exists() {
+            std::fs::remove_file(p)?;
+        }
+    }
+    Ok(())
+}
+
+/// The keymap, served from one table so the cheat sheet and the Settings page agree.
+pub fn keymap() -> Value {
+    let rows: &[(&str, &str, &str)] = &[
+        ("/", "search", "02"), ("Ctrl+L", "edit path", "02"), ("Ctrl+1 / 2 / 3", "icon / list / columns", "02"),
+        ("h j k l, arrows", "move selection; h/l pop and push columns", "02"), ("Enter", "open", "02"), ("Backspace, Alt+Left", "back", "02"),
+        ("F5", "refresh", "02"), ("Ctrl+I", "inspector", "03"), ("Ctrl+C / X / V", "copy, cut, paste", "04"), ("F2", "rename", "04"),
+        ("Del", "move to trash", "04"), ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"), ("Ctrl+Shift+N", "new folder", "04"),
+        ("Ctrl+Shift+S", "split", "07"), ("Tab", "switch pane (split)", "07"), ("F6", "move across (split)", "07"), ("Ctrl+M", "mirror", "08"),
+        ("Tab (in search)", "cycle scope", "12"), ("e", "edit file / project mode on a folder", "13"), ("Alt+Enter", "open in default tool", "14"),
+        ("Alt+Shift+Enter", "open in… list", "14"), ("Ctrl+Shift+P", "project mode", "16"), ("Alt+S", "share", "18"), ("Alt+Q", "AI query", "19"),
+        ("Ctrl+,", "settings", "20"), ("?", "keybinding cheat sheet", "10"),
+    ];
+    Value::Arr(rows.iter().map(|(k, a, p)| Value::obj().s("key", *k).s("action", *a).s("plan", *p).done()).collect())
+}
+
 // ---------------------------------------------------------------- volumes
 
 pub fn volumes() -> Value {

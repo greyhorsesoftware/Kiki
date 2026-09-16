@@ -1,0 +1,13 @@
+[package]
+name = "kiki-share-messages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "kiki share plugin: messages"
+
+[[bin]]
+name = "kiki-share-messages"
+path = "src/main.rs"
+
+[dependencies]
+kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }

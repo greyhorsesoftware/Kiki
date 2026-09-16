@@ -36,14 +36,15 @@ package() {
   install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
   install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
-  install -Dm755 "${t}/kiki-plugin-ptp"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ptp"
-  install -Dm755 "${t}/kiki-plugin-mtp"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-mtp"
-  install -Dm755 "${t}/kiki-plugin-afc"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-afc"
-  install -Dm755 "${t}/kiki-share-mail"      "${pkgdir}/usr/lib/kiki/share/kiki-share-mail"
-  install -Dm755 "${t}/kiki-share-messages"  "${pkgdir}/usr/lib/kiki/share/kiki-share-messages"
-  install -Dm755 "${t}/kiki-share-tailscale" "${pkgdir}/usr/lib/kiki/share/kiki-share-tailscale"
-  install -Dm755 "${t}/kiki-share-localsend" "${pkgdir}/usr/lib/kiki/share/kiki-share-localsend"
-  install -Dm755 "${t}/kiki-share-airdrop"   "${pkgdir}/usr/lib/kiki/share/kiki-share-airdrop"
+  install -Dm755 "${t}/kiki-helper-dbus"      "${pkgdir}/usr/lib/kiki/helpers/kiki-helper-dbus"
+  install -Dm755 "${t}/kiki-helper-highlight" "${pkgdir}/usr/lib/kiki/helpers/kiki-helper-highlight"
+  for s in mail messages tailscale localsend airdrop; do
+    [ -x "${t}/kiki-share-$s" ] && install -Dm755 "${t}/kiki-share-$s" "${pkgdir}/usr/lib/kiki/share/kiki-share-$s"
+  done
+  for p in ptp mtp afc; do
+    [ -x "${t}/kiki-plugin-$p" ] && install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
+  done
+  true
   install -Dm755 "${_srcdir}/packaging/bin/kiki" "${pkgdir}/usr/bin/kiki"
 
   install -d "${pkgdir}/usr/share/kiki"

@@ -36,8 +36,9 @@ var paths = {
   "sort-up": "<path d=\"m4 9 4-4 4 4\"></path>"
 };
 
+var aliases = { share: "arr-u", mail: "doc", message: "doc", phone: "hdd", terminal: "code", sparkle: "info" };
 function svg(name, color, size, strokeWidth) {
-    var p = paths[name] || paths["file"];
+    var p = paths[name] || paths[aliases[name]] || paths["file"];
     var sw = strokeWidth || 1.5;
     var s = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 16 16" fill="none" stroke="' + color + '" stroke-width="' + sw + '" stroke-linecap="round" stroke-linejoin="round">' + p + '</svg>';
     return "data:image/svg+xml;utf8," + encodeURIComponent(s);

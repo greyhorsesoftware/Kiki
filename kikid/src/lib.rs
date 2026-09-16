@@ -1,7 +1,9 @@
 //! kikid as a library: the daemon's modules, so tests and the stub plugin can use them.
 
+pub mod ai;
 pub mod archive;
 pub mod config;
+pub mod dbus;
 pub mod jobs;
 pub use kiki_json as json;
 pub mod kinds;
@@ -11,6 +13,7 @@ pub mod ops;
 pub mod preview;
 pub mod proto;
 pub mod server;
+pub mod share;
 pub mod string_pool;
 pub mod thumbs;
 pub mod toml;
