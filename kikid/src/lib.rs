@@ -11,6 +11,7 @@ pub use kiki_json as json;
 pub mod git;
 pub mod helpers;
 pub mod index;
+pub mod integrate;
 pub mod kinds;
 pub mod listing;
 pub mod locations;

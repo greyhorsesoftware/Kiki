@@ -37,7 +37,7 @@ FloatingWindow {
 
     readonly property var pages: [
         { id: "general", label: "General" }, { id: "keys", label: "Keys" }, { id: "locations", label: "Locations" }, { id: "search", label: "Search" },
-        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "plugins", label: "Plugins" }, { id: "about", label: "About" }
+        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "plugins", label: "Plugins" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
     ]
 
     Row {
@@ -64,7 +64,7 @@ FloatingWindow {
             Column {
                 id: body; x: 28; y: 24; width: parent.width - 56; spacing: 18
                 Text { text: sw.pages.find(p => p.id === sw.page).label; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-                Loader { width: parent.width; sourceComponent: { general: general, keys: keys, locations: locs, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, plugins: pluginsPage, about: about }[sw.page] }
+                Loader { width: parent.width; sourceComponent: { general: general, keys: keys, locations: locs, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, plugins: pluginsPage, omarchy: omarchyPage, about: about }[sw.page] }
             }
         }
     }
@@ -138,6 +138,29 @@ FloatingWindow {
             Text { width: 70; anchors.verticalCenter: parent.verticalCenter; text: modelData.role || ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Text { width: 300; anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight; text: modelData.enabled ? modelData.command : modelData.reason; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
         Text { text: "Edit ~/.config/kiki/open-in.toml to add or override tools; the list reloads on save."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+    } }
+    property var integration: ({})
+    function loadIntegration() { Kiki.Daemon.request("Integration", {}, ok => { if (ok) sw.integration = ok }) }
+    Component { id: omarchyPage; Column { spacing: 12
+        Component.onCompleted: sw.loadIntegration()
+        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Per-user integration with Omarchy. Each line can be applied or removed on its own; Remove all puts every file back the way it was."; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Repeater {
+            model: [
+                { id: "mime", label: "Default folder handler", file: sw.integration.mimeapps },
+                { id: "dbus", label: "\"Show in folder\" (FileManager1)", file: sw.integration.services },
+                { id: "hypr", label: "Hyprland keys and chooser rule", file: sw.integration.bindings },
+                { id: "portal", label: "Open / Save dialogs (portal)", file: sw.integration.portals },
+            ]
+            delegate: Row2 { required property var modelData; label: modelData.label
+                Text { width: 90; anchors.verticalCenter: parent.verticalCenter; text: sw.integration[modelData.id] ? "on" : "off"; color: sw.integration[modelData.id] ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                Button { text: sw.integration[modelData.id] ? "Remove" : "Apply"; onClicked: Kiki.Daemon.request(sw.integration[modelData.id] ? "Unintegrate" : "Integrate", { parts: [modelData.id] }, ok => { if (ok) { sw.integration = ok.status; const r = ok.results[0]; sw.flash = r.ok ? r.message : "Failed: " + r.message; flashTimer.restart() } }) }
+                Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.file || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+        }
+        Text { visible: sw.integration.hyprConfigErrors && sw.integration.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland config errors: " + (sw.integration.hyprConfigErrors || []).join("; "); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Row { spacing: 8
+            Button { text: "Make kiki the default"; primary: true; onClicked: Kiki.Daemon.request("Integrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = ok.results.every(r => r.ok) ? "kiki is the default" : "Some steps failed: " + ok.results.filter(r => !r.ok).map(r => r.part + ": " + r.message).join("; "); flashTimer.restart() } }) }
+            Button { text: "Remove kiki from Omarchy"; onClicked: Kiki.Daemon.request("Unintegrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = "integration removed"; flashTimer.restart() } }) }
+        }
     } }
     Component { id: git; Column { spacing: 12
         Row2 { label: "Show git status"; Switch { on: Kiki.Settings.git.enabled !== false; onToggled: sw.set("git", "enabled", !on) } }

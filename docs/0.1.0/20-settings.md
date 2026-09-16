@@ -15,6 +15,7 @@ A separate 900×640 window (so it can stay open beside the main one) with a page
 | **General** | default view; sort and order; folders first; show hidden files; inspector on by default; confirm before remote delete; theme: follow Omarchy or pick from the eight themes; font size | `settings.toml [view]`, `[theme]` |
 | **Keys** | the keymap as a read-only table with a search box; a note that rebinding is a later version | plan 02's table |
 | **Locations** | the saved locations with edit and remove; Add opens plan 06's dialog | `locations.toml`, keyring |
+| **Omarchy** | the four integration items (folder handler, Show in folder, Hyprland keys and chooser rule, portal dialogs) with on/off state, per-item Apply/Remove, Make kiki the default, Remove kiki from Omarchy | plan 09 `Integration` / `Integrate` / `Unintegrate` |
 | **Search** | index roots (add a folder or a volume), excludes list, index status with size and age, Rebuild | `settings.toml [index]`, plan 12 messages |
 | **Open in** | the merged tool list: detected state, drag to reorder, editor radio, agent radio, inline field edit, add from preset, Test | `open-in.toml`, plan 14 |
 | **Share** | installed share plugins: enabled switch, each plugin's form, reorder | share configs, plan 18 |

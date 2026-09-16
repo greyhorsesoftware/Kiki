@@ -52,6 +52,7 @@ package() {
   install -Dm644 "${_srcdir}/packaging/systemd/kikid.service" "${pkgdir}/usr/lib/systemd/user/kikid.service"
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.service"  "${pkgdir}/usr/share/dbus-1/services/org.kiki.App.service"
+  install -Dm644 "${_srcdir}/packaging/org.freedesktop.impl.portal.desktop.kiki.service" "${pkgdir}/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.kiki.service"
   install -Dm644 "${_srcdir}/packaging/kiki.portal"           "${pkgdir}/usr/share/xdg-desktop-portal/portals/kiki.portal"
   install -Dm644 "${_srcdir}/packaging/kiki-portals.conf"     "${pkgdir}/usr/share/xdg-desktop-portal/kiki-portals.conf"
   install -Dm644 "${_srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"

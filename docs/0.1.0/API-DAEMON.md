@@ -174,6 +174,9 @@ Events:
 | `ViewPrefs` | | `{ folders: { <uri>: { view, sort, order } } }` per-folder view memory |
 | `SetViewPref` | `uri`, `view`, `sort`, `order` | `{}`; emits `ViewPrefsChanged { uri }` |
 | `ClearViewPrefs` | | `{}` |
+| `Integration` | | `{ mime, dbus, hypr, portal: bool, hyprlandAvailable, hyprConfigErrors: [string], mimeapps, bindings, portals, services: path }` (plan 09) |
+| `Integrate` | `parts?: ["mime" \| "dbus" \| "hypr" \| "portal"]` | `{ results: [{ part, ok, message }], status }`; all parts when omitted |
+| `Unintegrate` | `parts?` | same shape; removes exactly kiki's entries |
 | `Volumes` | | `{ items: [{ name, uri, device, fsType, free: u64, total: u64, removable: bool, mounted: bool, size? }] }` — unmounted filesystems (from `lsblk`) have `mounted: false`, an empty `uri` and their `size` string |
 | `Mount` | `device` | `{ uri, mountPoint }` via `udisksctl mount`; emits `VolumesChanged` |
 | `Unmount` | `device` | `{}` |

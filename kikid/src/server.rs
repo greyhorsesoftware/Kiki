@@ -364,6 +364,9 @@ impl Client {
             "TrashInfo" => Ok(Some(Value::obj().v("items", Value::Arr(crate::ops::trash_infos().into_iter().map(|(n, p, d)| Value::obj().s("name", n).s("path", p).s("deleted", d).done()).collect())).done())),
             "Settings" => Ok(Some(crate::config::settings())),
             "ViewPrefs" => Ok(Some(Value::obj().v("folders", crate::config::view_prefs()).done())),
+            "Integration" => Ok(Some(crate::integrate::status_json())),
+            "Integrate" => Ok(Some(crate::integrate::apply(b.get("parts")))),
+            "Unintegrate" => Ok(Some(crate::integrate::remove(b.get("parts")))),
             "SetViewPref" => {
                 let uri = b.str_field("uri").unwrap_or("");
                 if uri.is_empty() {
