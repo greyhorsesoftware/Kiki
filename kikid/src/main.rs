@@ -1,6 +1,6 @@
 //! kikid: the kiki file manager daemon. See docs/0.1.0/01-daemon-and-listing.md.
 
-use kikid::{listing, server, vfs};
+use kikid::server;
 
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -9,9 +9,9 @@ fn main() {
     tune_allocator();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("bench") => bench(args.get(2).map(PathBuf::from)),
+        Some("bench") => bench(&args[2..]),
         Some("--version") | Some("-V") => println!("kikid {}", env!("CARGO_PKG_VERSION")),
-        Some("--help") | Some("-h") => println!("usage: kikid [bench <dir>]"),
+        Some("--help") | Some("-h") => println!("usage: kikid [bench gen|run|compare …]"),
         _ => serve(),
     }
 }
@@ -83,52 +83,56 @@ fn tune_allocator() {
     }
 }
 
-/// `kikid bench <dir>`: time phase 1 and a full enrichment of one directory.
-fn bench(dir: Option<PathBuf>) {
-    use std::time::{Duration, Instant};
-    let dir = dir.unwrap_or_else(|| std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/")));
-    let uri = vfs::uri::Uri::from_path(&dir);
-    let t0 = Instant::now();
-    let (l, _) = match listing::open(&uri) {
-        Ok(x) => x,
-        Err(e) => {
-            eprintln!("open: {}", e.message());
-            std::process::exit(1)
-        }
+/// `kikid bench gen <profile> <dir>` | `bench run <dir> [--json out]` | `bench compare <base> <new> [--tolerance pct]` | `bench <dir>`
+fn bench(args: &[String]) {
+    let usage = || {
+        eprintln!("usage: kikid bench gen <flat10k|flat200k|deep100k|photos|all> <dir>\n       kikid bench run <dir> [--json <out>]\n       kikid bench compare <baseline.json> <results.json> [--tolerance <pct>]");
+        std::process::exit(2)
     };
-    let (tx, rx) = std::sync::mpsc::channel();
-    l.subscribe(listing::Subscriber { client: 0, lid: 1, tx, first: 0, count: 60 });
-    let mut first_chunk = None;
-    let mut done = None;
-    while done.is_none() {
-        match rx.recv_timeout(Duration::from_secs(60)) {
-            Ok(ev) => {
-                if ev.str_field("event") == Some("Count") {
-                    if first_chunk.is_none() {
-                        first_chunk = Some(t0.elapsed());
-                    }
-                    if ev.get("done").and_then(|d| d.as_bool()) == Some(true) {
-                        done = Some(t0.elapsed());
-                    }
-                }
+    match args.first().map(String::as_str) {
+        Some("gen") => {
+            let (Some(profile), Some(dir)) = (args.get(1), args.get(2)) else { usage() };
+            if let Err(e) = kikid::bench::gen(profile, &PathBuf::from(dir)) {
+                eprintln!("gen: {e}");
+                std::process::exit(1)
             }
-            Err(_) => break,
+        }
+        Some("run") | Some(_) | None => {
+            let dir = if args.first().map(String::as_str) == Some("run") { args.get(1) } else { args.first() };
+            let dir = dir.map(PathBuf::from).unwrap_or_else(|| std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/")));
+            if args.first().map(String::as_str) == Some("compare") {
+                let (Some(b), Some(n)) = (args.get(1), args.get(2)) else { usage() };
+                let tol: f64 = args.iter().position(|a| a == "--tolerance").and_then(|i| args.get(i + 1)).and_then(|t| t.parse().ok()).unwrap_or(25.0);
+                let read = |p: &String| {
+                    kikid::json::parse(&std::fs::read(p).unwrap_or_else(|e| {
+                        eprintln!("{p}: {e}");
+                        std::process::exit(1)
+                    }))
+                    .unwrap_or_else(|_| {
+                        eprintln!("{p}: not JSON");
+                        std::process::exit(1)
+                    })
+                };
+                let regressions = kikid::bench::compare(&read(b), &read(n), tol);
+                for (p, k, bv, nv) in &regressions {
+                    println!("REGRESSION {p}.{k}: {bv} -> {nv} (+{:.0}%)", (nv / bv - 1.0) * 100.0);
+                }
+                if regressions.is_empty() {
+                    println!("no regressions beyond {tol}%");
+                } else {
+                    std::process::exit(1)
+                }
+                return;
+            }
+            let v = kikid::bench::run(&dir);
+            kikid::bench::print_table(&v);
+            if let Some(out) = args.iter().position(|a| a == "--json").and_then(|i| args.get(i + 1)) {
+                if let Err(e) = std::fs::write(out, kikid::json::to_string(&v)) {
+                    eprintln!("{out}: {e}");
+                    std::process::exit(1)
+                }
+                eprintln!("wrote {out}");
+            }
         }
     }
-    let (n, _) = l.count();
-    let t1 = Instant::now();
-    let w = l.window(0, 1, 0, 60);
-    let window_ms = t1.elapsed();
-    let rows = w.get("rows").and_then(|r| r.as_arr()).map(|a| a.len()).unwrap_or(0);
-    let t2 = Instant::now();
-    let (etx, erx) = std::sync::mpsc::channel();
-    l.enrich(Some((etx, 1)));
-    let _ = erx.recv_timeout(Duration::from_secs(600));
-    let enrich = t2.elapsed();
-    println!("dir            {}", dir.display());
-    println!("entries        {n}");
-    println!("first chunk    {:?}", first_chunk.unwrap_or_default());
-    println!("phase 1 done   {:?}", done.unwrap_or_default());
-    println!("window(0,60)   {:?} ({rows} rows)", window_ms);
-    println!("enrich all     {:?}", enrich);
 }

@@ -70,6 +70,7 @@ Each step ships on its own and is verified before the next starts.
 | 23 | `23-ui-refinement.md` | 2, 20, 21 | One view button with a menu, hidden files per pane, settings gear, relative Modified dates, keyboard coverage audit |
 | 24 | `24-mirror-view.md` | 7, 8, 21, 23 | Mirror is the fourth view: two panes with a mirror bar; remote locations open in it; picture folders open in icon view |
 | 25 | `25-smb.md` | 6, 8, 9, 24 | SMB (and WebDAV, AFP) locations through one GIO/GVfs plugin: mounts, discovery, attribute-rich listings, mirror; `smb://` handler |
+| 26 | `26-benchmarks.md` | 1, 11 | Synthetic trees, one timed pass over the daemon's hot paths, JSON results, baselines, CI comparison |
 | 15 | `15-git-status.md` | 1, 2, 3 | Git badges in every view from `git status --porcelain=v2`, branch chip in the breadcrumb, inspector git detail (ships after 3, any time before 10) |
 | 16 | `16-project-mode.md` | 2, 9, 13, 14, 15 | `e` on a folder: kiki becomes a narrow project tree and arranges editor and agent beside it through Hyprland (ships after 15, before 10) |
 | 14 | `13-code-viewer-and-editor.md` | 3, 14 | Highlighted code viewer in the inspector; the editor bridge as the Open in entry marked `role = "editor"` (ships after Open in, before 10) |

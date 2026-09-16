@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
 
 env:
   CARGO_TERM_COLOR: always
@@ -133,3 +135,37 @@ jobs:
         with:
           name: e2e-diffs
           path: tests/e2e/out/**
+
+  bench:
+    name: Benchmarks (x86_64)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    needs: rust
+    steps:
+      - name: Install toolchain
+        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf libmtp libgphoto2 libimobiledevice usbmuxd
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build kikid (release)
+        run: cargo build --release -p kikid
+      - name: Generate trees and measure
+        run: |
+          target/release/kikid bench gen all /tmp/kiki-bench
+          target/release/kikid bench run /tmp/kiki-bench --json bench-linux-x86_64.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-linux-x86_64
+          path: bench-linux-x86_64.json
+      - name: Compare with the checked-in baseline
+        run: |
+          if [ -f bench/baseline-linux-x86_64.json ]; then
+            target/release/kikid bench compare bench/baseline-linux-x86_64.json bench-linux-x86_64.json --tolerance 40
+          else
+            echo "no baseline yet; copy the artifact to bench/baseline-linux-x86_64.json to start comparing"
+          fi

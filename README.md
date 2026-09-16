@@ -25,6 +25,8 @@ KIKI_PLUGIN_DIR=target/release target/release/kikid &
 qs -p qml/shell.qml
 ```
 
+Benchmarks: `kikid bench gen all /tmp/kb && kikid bench run /tmp/kb --json out.json`, then `kikid bench compare bench/baseline-<os>-<arch>.json out.json` (plan 26).
+
 Tests: `cargo test --workspace`, `/usr/lib/qt6/bin/qmltestrunner -import tests/qml/stubs -input tests/qml`, `tests/e2e/run.sh` (needs `cage`).
 
 Packaging: `cd packaging && makepkg -f`. See `docs/0.1.0/10-polish-and-packaging.md`.

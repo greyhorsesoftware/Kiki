@@ -179,6 +179,15 @@ fn cache() -> &'static Mutex<Cache> {
 }
 
 /// Opens (or reuses) the listing for a local path. `cached` tells whether it was served from memory.
+/// Drop a cached listing so the next open reads the directory again (benchmarks, tests).
+pub fn forget(uri: &Uri) {
+    let mut c = cache().lock().unwrap();
+    if let Some(l) = c.map.remove(&uri.to_string()) {
+        let n = l.inner.lock().unwrap().pool.len();
+        c.entries = c.entries.saturating_sub(n);
+    }
+}
+
 pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
     let key = uri.to_string();
     let trash = uri.scheme == "trash";
