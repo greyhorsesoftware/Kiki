@@ -6,7 +6,7 @@ Mockups: `AddLocationSFTP.dc.html`, `AddLocationFTPS.dc.html`; the Locations sec
 
 ## Goal
 
-Remote location types are plugin processes. kikid ships two in 0.1.0, `kiki-plugin-sftp` and `kiki-plugin-ftps`, added from the sidebar's `+` button, with credentials in the Omarchy keyring. Each location has a remote URI and a local URI; the local URI is what split mode (plan 07) and mirror (plan 08) open on the left. Adding a third protocol later (S3, WebDAV, SMB) means shipping a binary that speaks the protocol below, in any language, without touching the daemon or the UI.
+Remote location types are plugin processes. kikid ships two in 0.1.0, `kiki-plugin-sftp` and `kiki-plugin-ftps`, added from the sidebar's `+` button, with credentials in the Omarchy keyring. Each location has a remote URI and a local URI; the local URI is what split mode (plan 07) and mirror (plan 08) open on the left. Adding a third protocol later (SMB in plan 25; S3, WebDAV after) means shipping a binary that speaks the protocol below, in any language, without touching the daemon or the UI.
 
 ## Plugin processes
 
