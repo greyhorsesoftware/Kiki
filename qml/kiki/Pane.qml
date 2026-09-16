@@ -29,16 +29,24 @@ QtObject {
         uri = target
         filterText = ""
         selection.clear()
+        // Per-folder memory (plan 02): restore this folder's view and sort, else keep the current ones.
+        const pref = Kiki.Settings.viewPref(target.replace(/\/+$/, "") || target)
+        _applying = true
+        if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc" }
+        _applying = false
         listing.open(target)
         if (sortRole !== "name" || sortOrder !== "asc") listing.sort(sortRole, sortOrder)
         navigated(target)
     }
+    property bool _applying: false
+    function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder) }
+    onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }
     function canForward() { return historyIndex < history.length - 1 }
     function back() { if (canBack()) { historyIndex--; open(history[historyIndex], false) } }
     function forward() { if (canForward()) { historyIndex++; open(history[historyIndex], false) } }
     function up() { const p = parentOf(uri); if (p) open(p) }
-    function setSort(role, order) { sortRole = role; sortOrder = order; listing.sort(role, order) }
+    function setSort(role, order) { sortRole = role; sortOrder = order; listing.sort(role, order); _remember() }
     function setFilter(text) { filterText = text; listing.filter(text) }
 
     function parentOf(u) {

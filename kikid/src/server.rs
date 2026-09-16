@@ -363,6 +363,26 @@ impl Client {
             "Mount" | "Unmount" | "Eject" | "OpenWith" | "Launch" | "Devices" | "RenameDevice" => self.misc_op(&req.kind, b),
             "TrashInfo" => Ok(Some(Value::obj().v("items", Value::Arr(crate::ops::trash_infos().into_iter().map(|(n, p, d)| Value::obj().s("name", n).s("path", p).s("deleted", d).done()).collect())).done())),
             "Settings" => Ok(Some(crate::config::settings())),
+            "ViewPrefs" => Ok(Some(Value::obj().v("folders", crate::config::view_prefs()).done())),
+            "SetViewPref" => {
+                let uri = b.str_field("uri").unwrap_or("");
+                if uri.is_empty() {
+                    Err(("Protocol", "missing uri".into()))
+                } else {
+                    crate::config::set_view_pref(uri, b.str_field("view").unwrap_or("list"), b.str_field("sort").unwrap_or("name"), b.str_field("order").unwrap_or("asc"))
+                        .map(|_| {
+                            crate::jobs::broadcast(proto::event("ViewPrefsChanged").s("uri", uri).done());
+                            Some(Value::obj().done())
+                        })
+                        .map_err(|e| ("Io", e.to_string()))
+                }
+            }
+            "ClearViewPrefs" => crate::config::clear_view_prefs()
+                .map(|_| {
+                    crate::jobs::broadcast(proto::event("ViewPrefsChanged").done());
+                    Some(Value::obj().done())
+                })
+                .map_err(|e| ("Io", e.to_string())),
             "SetSettings" => match b.get("patch") {
                 Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing patch".into())),

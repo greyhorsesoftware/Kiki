@@ -116,9 +116,10 @@ fn scan_impl(h: &DirHandle, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize
 #[cfg(target_os = "linux")]
 fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
     use rustix::fs::{statx, AtFlags, StatxFlags};
-    let mask = StatxFlags::SIZE | StatxFlags::MTIME | StatxFlags::MODE | StatxFlags::TYPE | StatxFlags::UID | StatxFlags::GID;
+    let mask = StatxFlags::SIZE | StatxFlags::MTIME | StatxFlags::ATIME | StatxFlags::MODE | StatxFlags::TYPE | StatxFlags::UID | StatxFlags::GID;
     let st = statx(&h.file, name, AtFlags::SYMLINK_NOFOLLOW | AtFlags::STATX_DONT_SYNC, mask).map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
     let mtime_ms = if st.stx_mtime.tv_sec <= 0 { 0 } else { st.stx_mtime.tv_sec as u64 * 1000 + (st.stx_mtime.tv_nsec / 1_000_000) as u64 };
+    let atime_ms = if st.stx_atime.tv_sec <= 0 { 0 } else { st.stx_atime.tv_sec as u64 * 1000 + (st.stx_atime.tv_nsec / 1_000_000) as u64 };
     let mode = st.stx_mode as u32;
     let kind = match mode & libc::S_IFMT {
         m if m == libc::S_IFREG => EntryType::File,
@@ -126,7 +127,7 @@ fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>
         m if m == libc::S_IFLNK => EntryType::Link,
         _ => EntryType::Other,
     };
-    Ok((Meta { size: st.stx_size, mtime_ms, mode: Some(mode & 0o7777), uid: Some(st.stx_uid), gid: Some(st.stx_gid) }, kind))
+    Ok((Meta { size: st.stx_size, mtime_ms, atime_ms, mode: Some(mode & 0o7777), uid: Some(st.stx_uid), gid: Some(st.stx_gid) }, kind))
 }
 
 // ---------------------------------------------------------------- portable fallback (used for native tests on macOS)
@@ -174,7 +175,8 @@ fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>
         EntryType::Other
     };
     let mtime_ms = if md.mtime() <= 0 { 0 } else { md.mtime() as u64 * 1000 + (md.mtime_nsec() / 1_000_000) as u64 };
-    Ok((Meta { size: md.size(), mtime_ms, mode: Some(md.mode() & 0o7777), uid: Some(md.uid()), gid: Some(md.gid()) }, kind))
+    let atime_ms = if md.atime() <= 0 { 0 } else { md.atime() as u64 * 1000 + (md.atime_nsec() / 1_000_000) as u64 };
+    Ok((Meta { size: md.size(), mtime_ms, atime_ms, mode: Some(md.mode() & 0o7777), uid: Some(md.uid()), gid: Some(md.gid()) }, kind))
 }
 
 #[cfg(not(target_os = "linux"))]

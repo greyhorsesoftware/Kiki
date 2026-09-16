@@ -92,8 +92,16 @@ FloatingWindow {
 
     Component { id: general; Column { spacing: 12
         Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
-        Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
+        Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
         Row2 { label: "Inspector on by default"; Switch { on: Kiki.Settings.view.inspector === true; onToggled: sw.set("view", "inspector", !on) } }
+        Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
+            Button { text: "Forget all"; onClicked: { Kiki.Daemon.request("ClearViewPrefs", {}); sw.saved() } } }
+        Row2 { label: "List columns"; Row { spacing: 12; anchors.verticalCenter: parent.verticalCenter
+            Repeater { model: [["mtime", "Modified"], ["size", "Size"], ["kind", "Kind"], ["atime", "Accessed"]]
+                delegate: Row { required property var modelData; spacing: 6
+                    Switch { on: (Kiki.Settings.view.columns || []).indexOf(modelData[0]) >= 0; onToggled: { const cols = ["mtime", "size", "kind", "atime"].filter(c => c === modelData[0] ? !on : (Kiki.Settings.view.columns || []).indexOf(c) >= 0); sw.set("view", "columns", cols) } }
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } } } }
+        Row2 { label: ""; Text { width: 520; wrapMode: Text.WordWrap; text: "Accessed shows when a file was last read, with a heat colour fading over a year. On the default relatime mount option Linux updates it at most once a day unless the file changed; mount with strictatime for minute accuracy."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         Row2 { label: "Theme"; Choice { options: ["follow Omarchy", "Tokyo Night"]; value: Kiki.Settings.view.theme || "follow Omarchy"; onPicked: v => sw.set("view", "theme", v) } }
         Row2 { label: "Toast duration (ms)"; NumberBox { value: Kiki.Settings.timers.toastMs; onEdited: v => sw.set("timers", "toastMs", v) } }
     } }

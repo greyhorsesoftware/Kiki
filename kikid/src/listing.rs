@@ -56,6 +56,7 @@ pub enum SortRole {
     Kind,
     Size,
     Mtime,
+    Atime,
 }
 
 impl SortRole {
@@ -65,11 +66,12 @@ impl SortRole {
             "kind" => SortRole::Kind,
             "size" => SortRole::Size,
             "mtime" => SortRole::Mtime,
+            "atime" => SortRole::Atime,
             _ => return None,
         })
     }
     fn needs_meta(self) -> bool {
-        matches!(self, SortRole::Size | SortRole::Mtime)
+        matches!(self, SortRole::Size | SortRole::Mtime | SortRole::Atime)
     }
 }
 
@@ -837,6 +839,7 @@ impl Inner {
                     SortRole::Kind => (pool.kind(a) as u8).cmp(&(pool.kind(b) as u8)),
                     SortRole::Size => meta[a as usize].as_ref().map(|m| m.size).unwrap_or(0).cmp(&meta[b as usize].as_ref().map(|m| m.size).unwrap_or(0)),
                     SortRole::Mtime => meta[a as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0).cmp(&meta[b as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)),
+                    SortRole::Atime => meta[a as usize].as_ref().map(|m| m.atime_ms).unwrap_or(0).cmp(&meta[b as usize].as_ref().map(|m| m.atime_ms).unwrap_or(0)),
                 };
                 base.then(by_role).then_with(|| pool.key(a).cmp(pool.key(b)))
             };
@@ -895,7 +898,7 @@ impl Inner {
 pub fn meta_json(m: &Meta) -> Value {
     let owner = m.uid.and_then(names::user);
     let group = m.gid.and_then(names::group);
-    let o: Obj = Value::obj().u("size", m.size).u("mtime", m.mtime_ms);
+    let o: Obj = Value::obj().u("size", m.size).u("mtime", m.mtime_ms).u("atime", m.atime_ms);
     let o = match m.mode {
         Some(mode) => o.u("mode", mode as u64),
         None => o.v("mode", Value::Null),

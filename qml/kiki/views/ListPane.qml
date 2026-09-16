@@ -9,7 +9,10 @@ Item {
     signal activate(int index)
     signal contextMenu(int index, point pos)
     property int headerHeight: 30
-    readonly property var columns: [{ role: "name", label: "Name" }, { role: "mtime", label: "Modified", w: 160 }, { role: "size", label: "Size", w: 80 }, { role: "kind", label: "Kind", w: 120 }]
+    // Optional columns come from Settings (General → Columns); Name is always first.
+    readonly property var allColumns: ({ mtime: { role: "mtime", label: "Modified", w: 160 }, size: { role: "size", label: "Size", w: 80 }, kind: { role: "kind", label: "Kind", w: 120 }, atime: { role: "atime", label: "Accessed", w: 150 } })
+    readonly property var columns: [{ role: "name", label: "Name" }].concat((Kiki.Settings.view.columns || ["mtime", "size", "kind"]).map(c => allColumns[c]).filter(c => c))
+    readonly property int valueWidth: columns.slice(1).reduce((a, c) => a + c.w + 12, 0)
 
     function ensureVisible(i) { view.positionViewAtIndex(i, ListView.Contain) }
 
@@ -23,7 +26,7 @@ Item {
                 delegate: Item {
                     required property var modelData
                     required property int index
-                    width: modelData.w || (root.width - 24 - 36 - 160 - 80 - 120)
+                    width: modelData.w || (root.width - 24 - root.valueWidth)
                     height: root.headerHeight
                     Row {
                         anchors.verticalCenter: parent.verticalCenter; spacing: 6
@@ -51,6 +54,7 @@ Item {
             pane: root.pane
             rowIndex: index
             width: view.width
+            columns: root.columns; valueWidth: root.valueWidth
             onActivate: root.activate(index)
             onContextMenu: pos => root.contextMenu(index, pos)
         }

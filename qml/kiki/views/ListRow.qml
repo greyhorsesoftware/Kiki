@@ -10,6 +10,18 @@ Rectangle {
     property bool selected: pane ? pane.selection.has(rowIndex) : false
     signal activate()
     signal contextMenu(point pos)
+    property var columns: [{ role: "name" }, { role: "mtime", w: 160 }, { role: "size", w: 80 }, { role: "kind", w: 120 }]
+    property int valueWidth: 160 + 80 + 120 + 36
+    function cell(role) {
+        if (!row) return ""
+        switch (role) {
+        case "mtime": return row.meta ? Kiki.Format.date(row.meta.mtime) : "…"
+        case "size": return row.meta ? (row.isDir ? "—" : Kiki.Format.bytes(row.meta.size)) : ""
+        case "kind": return Kiki.Format.kindLabel(row.kind)
+        case "atime": return row.meta ? Kiki.Format.relative(row.meta.atime) : "…"
+        }
+        return ""
+    }
     height: Kiki.Theme.rowHeight
     color: selected ? Kiki.Theme.accent : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
     Connections { target: r.pane ? r.pane.listing : null; function onRowsUpdated(first, n) { if (r.rowIndex >= first && r.rowIndex < first + n) r.row = r.pane.listing.row(r.rowIndex) } function onReset() { r.row = r.pane.listing.row(r.rowIndex) } }
@@ -21,7 +33,7 @@ Rectangle {
     Row {
         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
         Row {
-            width: r.width - 24 - 36 - 160 - 80 - 120; height: parent.height; spacing: 8
+            width: r.width - 24 - r.valueWidth; height: parent.height; spacing: 8
             Item {
                 width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
                 UI.Icon { visible: !(r.row && r.row.thumb); name: r.row ? r.row.kind : "file"; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
@@ -30,14 +42,21 @@ Rectangle {
             Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (r.row && r.row.git && r.row.git.state !== "clean" ? 20 : 0); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (r.row.git && r.row.git.state === "ignored" && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { visible: r.row && r.row.git && r.row.git.state !== "clean" && r.row.git.state !== "ignored"; anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(r.row ? r.row.git : null); color: r.selected ? Kiki.Theme.bg : Kiki.Format.gitColor(r.row ? r.row.git : null); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
         }
-        Text { width: 160; anchors.verticalCenter: parent.verticalCenter; text: r.row && r.row.meta ? Kiki.Format.date(r.row.meta.mtime) : (r.row ? "…" : ""); color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-        Text { width: 80; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; text: r.row && r.row.meta ? (r.row.isDir ? "—" : Kiki.Format.bytes(r.row.meta.size)) : ""; color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-        Text { width: 120; anchors.verticalCenter: parent.verticalCenter; text: r.row ? Kiki.Format.kindLabel(r.row.kind) : ""; color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Repeater {
+            model: r.columns.slice(1)
+            delegate: Item {
+                required property var modelData
+                width: modelData.w; height: r.height
+                // Accessed: a heat swatch behind the text, bright for files touched recently.
+                Rectangle { visible: modelData.role === "atime" && !r.selected && r.row && r.row.meta && r.row.meta.atime > 0; anchors.fill: parent; anchors.topMargin: 3; anchors.bottomMargin: 3; anchors.rightMargin: 6; radius: 2; color: r.row && r.row.meta ? Kiki.Format.heat(r.row.meta.atime, Kiki.Theme.accent) : "transparent" }
+                Text { anchors.fill: parent; anchors.leftMargin: modelData.role === "atime" ? 6 : 0; verticalAlignment: Text.AlignVCenter; horizontalAlignment: modelData.role === "size" ? Text.AlignRight : Text.AlignLeft; text: r.cell(modelData.role); color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12; elide: Text.ElideRight }
+            }
+        }
     }
     // Inline rename (F2): a text input over the name column.
     Rectangle {
         visible: r.pane && r.pane.renamingIndex === r.rowIndex
-        x: 40; y: 2; width: r.width - 24 - 36 - 160 - 80 - 120 - 24; height: parent.height - 4; radius: 2
+        x: 40; y: 2; width: r.width - 24 - r.valueWidth - 24; height: parent.height - 4; radius: 2
         color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent; z: 2
         onVisibleChanged: if (visible) { edit.text = r.row ? r.row.name : ""; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
         TextInput {

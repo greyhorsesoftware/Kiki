@@ -32,7 +32,7 @@ Error codes: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `Unsupported`, `Cancell
 
 - **Uri**: string. `file:///home/david/Projects`, `sftp://homelab/srv/kiki`, `ftps://nas/volume1`. Percent-encoded, absolute. A bare absolute path is accepted where a Uri is expected and treated as `file://`.
 - **Kind**: `"folder" | "file" | "link" | "image" | "video" | "audio" | "document" | "pdf" | "text" | "code" | "archive" | "other"`. Folders and links come from `d_type`; the rest from the extension in phase 1 and the mime type once phase 2 has run.
-- **Meta**: `{ "size": u64, "mtime": u64 (ms since epoch, 0 = unknown), "mode": u32 | null, "owner": string | null, "group": string | null, "digest": { "kind": "md5", "hex": string } | null }`
+- **Meta**: `{ "size": u64, "mtime": u64 (ms since epoch, 0 = unknown), "atime": u64 (last access, ms, 0 = unknown; local files only, as fresh as the mount's atime policy), "mode": u32 | null, "owner": string | null, "group": string | null, "digest": { "kind": "md5", "hex": string } | null }`
 - **Row**: `{ "name": string, "kind": Kind, "isDir": bool, "isLink": bool, "meta": Meta | null, "thumb": string | null, "git": Git | null }`. `thumb` is an absolute path into the thumbnail cache; `null` until generated, `""` if generation failed. `git` is `null` outside a repository or before status has run.
 - **Git**: `{ "state": "modified" | "added" | "deleted" | "renamed" | "conflicted" | "untracked" | "ignored" | "clean", "staged": bool }`
 - **Job**: `{ "id": u64, "op": string, "state": "queued" | "running" | "done" | "failed" | "cancelled", "done": u64, "total": u64, "bytes": u64, "bytesTotal": u64, "title": string, "error": string | null, "undoable": bool }`
@@ -55,7 +55,7 @@ A listing is opened with a client-chosen `lid` so that `Open` and the first `Win
 |---|---|---|
 | `Open` | `lid: u32`, `uri: Uri` | `{ cached: bool }` |
 | `Window` | `lid`, `first: u32`, `count: u32` (max 512) | `{ first, rows: [Row], n: u32, done: bool }` in the current sort and filter; becomes the connection's live window for this `lid` |
-| `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
+| `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime" \| "atime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
 | `Filter` | `lid`, `text: string` (substring, case-insensitive; empty clears) | `{ n }` then `Reset` |
 | `Enrich` | `lid` | `{}` when every row has `meta`; `Progress` events meanwhile |
 | `Close` | `lid` | `{}` |
@@ -171,6 +171,9 @@ Events:
 |---|---|---|
 | `Favorites` | | `{ items: [{ name, uri }] }` |
 | `SetFavorites` | `items` | `{}` |
+| `ViewPrefs` | | `{ folders: { <uri>: { view, sort, order } } }` per-folder view memory |
+| `SetViewPref` | `uri`, `view`, `sort`, `order` | `{}`; emits `ViewPrefsChanged { uri }` |
+| `ClearViewPrefs` | | `{}` |
 | `Volumes` | | `{ items: [{ name, uri, device, fsType, free: u64, total: u64, removable: bool, mounted: bool, size? }] }` — unmounted filesystems (from `lsblk`) have `mounted: false`, an empty `uri` and their `size` string |
 | `Mount` | `device` | `{ uri, mountPoint }` via `udisksctl mount`; emits `VolumesChanged` |
 | `Unmount` | `device` | `{}` |

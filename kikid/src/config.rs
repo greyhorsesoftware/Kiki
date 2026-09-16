@@ -84,7 +84,17 @@ pub fn settings() -> Value {
     let v = read_toml("settings.toml");
     // Defaults the shell relies on; the file overrides key by key.
     let mut m = BTreeMap::new();
-    m.insert("view".into(), Value::obj().s("default", "list").s("sort", "name").s("order", "asc").b("inspector", false).done());
+    m.insert(
+        "view".into(),
+        Value::obj()
+            .s("default", "list")
+            .s("sort", "name")
+            .s("order", "asc")
+            .b("inspector", false)
+            .b("rememberPerFolder", true)
+            .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
+            .done(),
+    );
     m.insert("timers".into(), Value::obj().u("toastMs", 8000).u("searchDebounceMs", 150).u("mirrorPollMs", 400).done());
     m.insert("editor".into(), Value::obj().s("terminal", "auto").s("placement", "right").u("tabWidth", 4).done());
     m.insert("git".into(), Value::obj().b("enabled", true).s("showIgnored", "dim").s("folders", "aggregate").done());
@@ -278,6 +288,48 @@ pub fn eject(device: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------- per-folder view memory (plan 02)
+
+/// How many folders keep their own view and sort; the least recently set fall off the end.
+pub const VIEW_PREFS_CAP: usize = 1000;
+
+/// `views.toml`: `[[folder]] uri, view, sort, order, at`.
+pub fn view_prefs() -> Value {
+    let v = read_named("views.toml");
+    let mut out = std::collections::BTreeMap::new();
+    if let Some(Value::Arr(a)) = v.get("folder") {
+        for f in a {
+            if let Some(uri) = f.str_field("uri") {
+                out.insert(uri.to_string(), Value::obj().s("view", f.str_field("view").unwrap_or("list")).s("sort", f.str_field("sort").unwrap_or("name")).s("order", f.str_field("order").unwrap_or("asc")).done());
+            }
+        }
+    }
+    Value::Obj(out)
+}
+
+pub fn set_view_pref(uri: &str, view: &str, sort: &str, order: &str) -> std::io::Result<()> {
+    let v = read_named("views.toml");
+    let mut list: Vec<Value> = match v.get("folder") {
+        Some(Value::Arr(a)) => a.iter().filter(|f| f.str_field("uri") != Some(uri)).cloned().collect(),
+        _ => Vec::new(),
+    };
+    list.push(Value::obj().s("uri", uri).s("view", view).s("sort", sort).s("order", order).u("at", crate::ops::unix_now()).done());
+    if list.len() > VIEW_PREFS_CAP {
+        list.sort_by_key(|f| f.u64_field("at").unwrap_or(0));
+        let drop = list.len() - VIEW_PREFS_CAP;
+        list.drain(..drop);
+    }
+    let mut m = BTreeMap::new();
+    m.insert("folder".to_string(), Value::Arr(list));
+    write_named("views.toml", &Value::Obj(m))
+}
+
+pub fn clear_view_prefs() -> std::io::Result<()> {
+    let mut m = BTreeMap::new();
+    m.insert("folder".to_string(), Value::Arr(vec![]));
+    write_named("views.toml", &Value::Obj(m))
+}
+
 pub fn fs_space(path: &str) -> (u64, u64) {
     let c = match std::ffi::CString::new(path) {
         Ok(c) => c,
@@ -328,5 +380,28 @@ mod volume_tests {
         assert_eq!(v[0].str_field("device"), Some("/dev/sdb1"));
         assert_eq!(v[0].get("removable"), Some(&crate::json::Value::Bool(true)));
         assert_eq!(v[0].get("mounted"), Some(&crate::json::Value::Bool(false)));
+    }
+}
+
+#[cfg(test)]
+mod view_pref_tests {
+    #[test]
+    fn remembers_per_folder_and_caps() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-views-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::env::set_var("KIKI_CONFIG_DIR", &d);
+        super::set_view_pref("file:///a", "icon", "mtime", "desc").unwrap();
+        super::set_view_pref("file:///b", "columns", "name", "asc").unwrap();
+        super::set_view_pref("file:///a", "list", "size", "asc").unwrap(); // overwrite, not duplicate
+        let p = super::view_prefs();
+        assert_eq!(p.get("file:///a").unwrap().str_field("view"), Some("list"));
+        assert_eq!(p.get("file:///a").unwrap().str_field("sort"), Some("size"));
+        assert_eq!(p.get("file:///b").unwrap().str_field("view"), Some("columns"));
+        assert!(matches!(&p, crate::json::Value::Obj(m) if m.len() == 2));
+        super::clear_view_prefs().unwrap();
+        assert!(matches!(super::view_prefs(), crate::json::Value::Obj(m) if m.is_empty()));
+        std::env::remove_var("KIKI_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

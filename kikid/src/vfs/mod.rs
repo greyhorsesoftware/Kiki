@@ -12,6 +12,9 @@ pub struct Meta {
     pub size: u64,
     /// Milliseconds since the epoch; 0 when unknown.
     pub mtime_ms: u64,
+    /// Last access, milliseconds since the epoch; 0 when unknown. Only as fresh as the
+    /// filesystem keeps it (`relatime` updates it at most once a day unless the file changed).
+    pub atime_ms: u64,
     pub mode: Option<u32>,
     pub uid: Option<u32>,
     pub gid: Option<u32>,
