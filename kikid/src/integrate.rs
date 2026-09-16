@@ -86,6 +86,37 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+// ---------------------------------------------------------------- backup of what we replaced
+
+/// `~/.config/kiki/integration.toml`: the values each part replaced, written on the first
+/// apply only (a second apply never overwrites the true original) and restored on remove.
+fn backup_all() -> Value {
+    crate::config::read_named("integration.toml")
+}
+
+fn backup_get(part: &str) -> Option<Value> {
+    backup_all().get(part).cloned()
+}
+
+fn backup_set(part: &str, v: Value) {
+    let mut all = match backup_all() {
+        Value::Obj(m) => m,
+        _ => Default::default(),
+    };
+    if all.contains_key(part) {
+        return;
+    }
+    all.insert(part.to_string(), v);
+    let _ = crate::config::write_named("integration.toml", &Value::Obj(all));
+}
+
+fn backup_clear(part: &str) {
+    if let Value::Obj(mut m) = backup_all() {
+        m.remove(part);
+        let _ = crate::config::write_named("integration.toml", &Value::Obj(m));
+    }
+}
+
 // ---------------------------------------------------------------- 1. mime
 
 const MIME_TYPES: [&str; 3] = ["inode/directory", "x-scheme-handler/sftp", "x-scheme-handler/ftps"];
@@ -166,6 +197,13 @@ fn mime_status() -> bool {
 }
 
 fn mime_apply() -> Result<String, String> {
+    // Remember what each type pointed at ("" = no entry) so Remove can put it back.
+    let before = std::fs::read_to_string(mimeapps()).unwrap_or_default();
+    let mut prev = Value::obj();
+    for m in MIME_TYPES {
+        prev = prev.s(m, ini_get(&before, "Default Applications", m).unwrap_or_default());
+    }
+    backup_set("mime", prev.done());
     // Prefer xdg-mime (it also knows about other mimeapps locations), then verify by reading back.
     for m in MIME_TYPES {
         let _ = run("xdg-mime", &["default", DESKTOP_ID, m]);
@@ -186,19 +224,29 @@ fn mime_apply() -> Result<String, String> {
 fn mime_remove() -> Result<String, String> {
     let path = mimeapps();
     let Ok(text) = std::fs::read_to_string(&path) else { return Ok("nothing to remove".into()) };
+    let prev = backup_get("mime");
     let mut out = text.clone();
-    for section in ["Default Applications", "Added Associations"] {
-        for m in MIME_TYPES {
-            if let Some(v) = ini_get(&out, section, m) {
-                let rest = v.split(';').filter(|d| !d.is_empty() && *d != DESKTOP_ID).collect::<Vec<&str>>().join(";");
-                out = ini_set(&out, section, m, if rest.is_empty() { None } else { Some(rest.as_str()) });
-            }
+    for m in MIME_TYPES {
+        // Put back what was there before kiki; without a record, just drop kiki from the line.
+        let restored: Option<String> = match prev.as_ref().and_then(|p| p.str_field(m)) {
+            Some("") => None,
+            Some(v) => Some(v.to_string()),
+            None => ini_get(&out, "Default Applications", m).map(|v| v.split(';').filter(|d| !d.is_empty() && *d != DESKTOP_ID).collect::<Vec<&str>>().join(";")).filter(|s| !s.is_empty()),
+        };
+        out = ini_set(&out, "Default Applications", m, restored.as_deref());
+        if let Some(v) = ini_get(&out, "Added Associations", m) {
+            let rest = v.split(';').filter(|d| !d.is_empty() && *d != DESKTOP_ID).collect::<Vec<&str>>().join(";");
+            out = ini_set(&out, "Added Associations", m, if rest.is_empty() { None } else { Some(rest.as_str()) });
         }
     }
     if out != text {
         write_atomic(&path, &out).map_err(|e| e.to_string())?;
     }
-    Ok("folder handler released".into())
+    backup_clear("mime");
+    Ok(match prev.as_ref().and_then(|p| p.str_field("inode/directory")).filter(|v| !v.is_empty()) {
+        Some(v) => format!("folders open with {v} again"),
+        None => "folder handler released".into(),
+    })
 }
 
 // ---------------------------------------------------------------- 2. dbus
@@ -217,6 +265,13 @@ fn dbus_status() -> bool {
 }
 
 fn dbus_apply() -> Result<String, String> {
+    let mut prev = Value::obj();
+    for (p, _) in service_files() {
+        if let Ok(existing) = std::fs::read_to_string(&p) {
+            prev = prev.s(&p.file_name().unwrap().to_string_lossy(), existing);
+        }
+    }
+    backup_set("dbus", prev.done());
     for (p, text) in service_files() {
         write_atomic(&p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
     }
@@ -226,11 +281,19 @@ fn dbus_apply() -> Result<String, String> {
 }
 
 fn dbus_remove() -> Result<String, String> {
+    let prev = backup_get("dbus");
     for (p, _) in service_files() {
-        if p.exists() {
-            std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        match prev.as_ref().and_then(|v| v.str_field(&name)) {
+            Some(original) => write_atomic(&p, original).map_err(|e| format!("{}: {e}", p.display()))?,
+            None => {
+                if p.exists() {
+                    std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                }
+            }
         }
     }
+    backup_clear("dbus");
     let _ = run("dbus-send", &["--session", "--dest=org.freedesktop.DBus", "--type=method_call", "/org/freedesktop/DBus", "org.freedesktop.DBus.ReloadConfig"]);
     Ok("D-Bus activation files removed".into())
 }
@@ -340,6 +403,7 @@ fn portal_status() -> bool {
 fn portal_apply() -> Result<String, String> {
     let text = std::fs::read_to_string(portals_conf()).unwrap_or_default();
     let current = ini_get(&text, "preferred", "org.freedesktop.impl.portal.FileChooser").unwrap_or_default();
+    backup_set("portal", Value::obj().s("fileChooser", current.clone()).done());
     // Keep whatever was there as the fallback chain, gtk last so dialogs never vanish.
     let mut chain: Vec<String> = vec!["kiki".into()];
     for b in current.split(';').filter(|b| !b.is_empty() && *b != "kiki") {
@@ -360,8 +424,13 @@ fn portal_remove() -> Result<String, String> {
     let path = portals_conf();
     let Ok(text) = std::fs::read_to_string(&path) else { return Ok("nothing to remove".into()) };
     let current = ini_get(&text, "preferred", "org.freedesktop.impl.portal.FileChooser").unwrap_or_default();
-    let rest = current.split(';').filter(|b| !b.is_empty() && *b != "kiki").collect::<Vec<&str>>().join(";");
+    // The recorded original wins; without one, drop kiki from the chain and keep the rest.
+    let rest = match backup_get("portal").and_then(|p| p.str_field("fileChooser").map(str::to_string)) {
+        Some(original) => original,
+        None => current.split(';').filter(|b| !b.is_empty() && *b != "kiki").collect::<Vec<&str>>().join(";"),
+    };
     let new = ini_set(&text, "preferred", "org.freedesktop.impl.portal.FileChooser", if rest.is_empty() { None } else { Some(rest.as_str()) });
+    backup_clear("portal");
     if new != text {
         write_atomic(&path, &new).map_err(|e| e.to_string())?;
     }
@@ -484,7 +553,8 @@ mod tests {
         std::fs::write(d.join(".config/hypr/bindings.conf"), "bindd = SUPER, RETURN, Terminal, exec, alacritty\n").unwrap();
         std::fs::create_dir_all(d.join(".config/xdg-desktop-portal")).unwrap();
         std::fs::write(d.join(".config/xdg-desktop-portal/portals.conf"), "[preferred]\ndefault=hyprland;gtk\norg.freedesktop.impl.portal.FileChooser=gtk\n").unwrap();
-        std::fs::write(d.join(".config/mimeapps.list"), "[Default Applications]\ntext/plain=nvim.desktop\n").unwrap();
+        std::fs::write(d.join(".config/mimeapps.list"), "[Default Applications]\ntext/plain=nvim.desktop\ninode/directory=org.gnome.Nautilus.desktop\n").unwrap();
+        std::env::set_var("KIKI_CONFIG_DIR", d.join(".config/kiki"));
 
         let r = apply(None);
         let results = r.get("results").unwrap().as_arr().unwrap();
@@ -511,7 +581,13 @@ mod tests {
         }
         assert_eq!(std::fs::read_to_string(d.join(".config/hypr/bindings.conf")).unwrap(), "bindd = SUPER, RETURN, Terminal, exec, alacritty\n");
         assert_eq!(std::fs::read_to_string(d.join(".config/xdg-desktop-portal/portals.conf")).unwrap(), "[preferred]\ndefault=hyprland;gtk\norg.freedesktop.impl.portal.FileChooser=gtk\n");
-        assert_eq!(std::fs::read_to_string(d.join(".config/mimeapps.list")).unwrap(), "[Default Applications]\ntext/plain=nvim.desktop\n");
+        assert_eq!(
+            std::fs::read_to_string(d.join(".config/mimeapps.list")).unwrap(),
+            "[Default Applications]\ntext/plain=nvim.desktop\ninode/directory=org.gnome.Nautilus.desktop\n",
+            "the previous folder handler is back"
+        );
+        assert!(!d.join(".config/kiki/integration.toml").exists() || !std::fs::read_to_string(d.join(".config/kiki/integration.toml")).unwrap().contains("mime"), "backup cleared");
+        std::env::remove_var("KIKI_CONFIG_DIR");
         assert!(!d.join(".local/share/dbus-1/services/org.freedesktop.FileManager1.service").exists());
         done(&d);
     }
