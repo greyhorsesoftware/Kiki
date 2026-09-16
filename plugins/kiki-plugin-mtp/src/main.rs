@@ -434,7 +434,7 @@ impl Handler for Mtp {
             }
             let (storage, parent) = Mtp::resolve(s, &dir)?;
             let c = CString::new(name).map_err(|_| PluginError::invalid("path", "bad name"))?;
-            let id = unsafe { LIBMTP_Create_Folder(s.dev, c.as_ptr() as *mut c_char, parent, storage) };
+            let id = unsafe { LIBMTP_Create_Folder(s.dev, c.as_ptr().cast_mut(), parent, storage) };
             if id == 0 {
                 return Err(PluginError::network("device refused to create the folder"));
             }

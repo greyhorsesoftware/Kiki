@@ -308,7 +308,7 @@ impl Handler for Afc {
                         return Err(sdk::cancel_error());
                     }
                     let mut got: u32 = 0;
-                    let r = unsafe { afc_file_read(s.afc, h, buf.as_mut_ptr() as *mut c_char, buf.len() as u32, &mut got) };
+                    let r = unsafe { afc_file_read(s.afc, h, buf.as_mut_ptr().cast::<c_char>(), buf.len() as u32, &mut got) };
                     if r != AFC_E_SUCCESS {
                         return Err(afc_err(r));
                     }
@@ -344,7 +344,7 @@ impl Handler for Afc {
                         break;
                     }
                     let mut written: u32 = 0;
-                    let r = unsafe { afc_file_write(s.afc, h, buf.as_ptr() as *const c_char, n as u32, &mut written) };
+                    let r = unsafe { afc_file_write(s.afc, h, buf.as_ptr().cast::<c_char>(), n as u32, &mut written) };
                     if r != AFC_E_SUCCESS {
                         return Err(afc_err(r));
                     }

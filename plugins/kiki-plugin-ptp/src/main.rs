@@ -209,7 +209,7 @@ impl Ptp {
             let mut data: *const c_char = std::ptr::null();
             let mut size: c_ulong = 0;
             gp_file_get_data_and_size(f, &mut data, &mut size);
-            let bytes = std::slice::from_raw_parts(data as *const u8, size as usize);
+            let bytes = std::slice::from_raw_parts(data.cast::<u8>(), size as usize);
             let w = out.write_all(bytes);
             gp_file_unref(f);
             w.map_err(PluginError::io)
@@ -350,8 +350,8 @@ impl Handler for Ptp {
                 let mut f: *mut CameraFile = std::ptr::null_mut();
                 gp_file_new(&mut f);
                 // gp_file_set_data_and_size takes ownership of a malloc'd buffer.
-                let buf = malloc(bytes.len().max(1)) as *mut c_char;
-                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, bytes.len());
+                let buf = malloc(bytes.len().max(1)).cast::<c_char>();
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.cast::<u8>(), bytes.len());
                 gp_file_set_data_and_size(f, buf, bytes.len() as c_ulong);
                 let r = gp_camera_folder_put_file(s.cam, cf.as_ptr(), cn.as_ptr(), GP_FILE_TYPE_NORMAL, f, s.ctx);
                 gp_file_unref(f);
