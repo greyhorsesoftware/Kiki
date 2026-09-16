@@ -38,6 +38,7 @@ package() {
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
   install -Dm755 "${t}/kiki-helper-dbus"      "${pkgdir}/usr/lib/kiki/helpers/kiki-helper-dbus"
   install -Dm755 "${t}/kiki-helper-highlight" "${pkgdir}/usr/lib/kiki/helpers/kiki-helper-highlight"
+  install -Dm755 "${t}/kiki-helper-ai"        "${pkgdir}/usr/lib/kiki/helpers/kiki-helper-ai"
   for s in mail messages tailscale localsend airdrop; do
     [ -x "${t}/kiki-share-$s" ] && install -Dm755 "${t}/kiki-share-$s" "${pkgdir}/usr/lib/kiki/share/kiki-share-$s"
   done

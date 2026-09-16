@@ -2,6 +2,8 @@
 
 Builds on: `06-remote-locations.md` (plugin processes, plugin API), `01-daemon-and-listing.md` (windows, previews), `03-inspector.md` (thumbnails), `04-operations-and-undo.md` (jobs).
 
+**Status**: specified, not yet generated. The plugins link C libraries that are not available on the planning machine; build them first on Omarchy with `libmtp`, `libgphoto2` and `libimobiledevice` installed.
+
 ## Goal
 
 A plugged-in Android phone (MTP), iPhone (AFC) or camera (PTP) appears in a **Devices** section of the sidebar within a second, browses like any other location with thumbnails and previews, supports copy in both directions and delete where the protocol allows, and disappears cleanly on unplug or eject. Each protocol is a plugin process; the daemon adds hotplug detection and nothing device-specific.
