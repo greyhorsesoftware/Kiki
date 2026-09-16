@@ -116,7 +116,7 @@ pub fn query(tx: Sender<Value>, id: u64, session: String, uris: Vec<Uri>, questi
                 let _ = tx.send(proto::event("AiDone").u("id", id).s("text", a).b("local", true).v("usage", Value::obj().u("input", 0).u("output", 0).done()).done());
                 return;
             }
-            let helper = match crate::helpers::get("kiki-helper-ai") {
+            let helper = match crate::helpers::get("kiki-plugin-ai") {
                 Ok(h) => h,
                 Err(e) => {
                     let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", e.message()).done());

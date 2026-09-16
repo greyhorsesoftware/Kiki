@@ -120,6 +120,7 @@ pub struct Describe {
 impl Describe {
     fn to_json(&self) -> Value {
         Value::obj()
+            .s("kind", "location")
             .s("scheme", self.scheme)
             .s("displayName", self.display_name)
             .s("version", self.version)
@@ -453,6 +454,7 @@ pub struct ShareDescribe {
 impl ShareDescribe {
     fn to_json(&self) -> Value {
         Value::obj()
+            .s("kind", "share")
             .s("id", self.id)
             .s("name", self.name)
             .s("icon", self.icon)
@@ -573,4 +575,9 @@ pub fn percent_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A service plugin's Describe (dbus, highlight, ai): fixed-name plugins the daemon uses itself.
+pub fn service_describe(id: &str, name: &str, version: &str, requests: &[&str]) -> Value {
+    Value::obj().s("kind", "service").s("id", id).s("name", name).s("version", version).v("requests", Value::Arr(requests.iter().map(|r| Value::Str(r.to_string())).collect())).done()
 }

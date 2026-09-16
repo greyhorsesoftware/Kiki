@@ -1,4 +1,4 @@
-//! Helper processes (highlight, dbus, ai): plugin framing, found under the helper directories.
+//! Service plugins (highlight, dbus, ai): fixed-name plugins the daemon uses itself. Same directory as every other plugin.
 
 use crate::plugin::Plugin;
 use crate::vfs::VfsError;
@@ -7,12 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 pub fn helper_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Ok(d) = std::env::var("KIKI_HELPER_DIR") {
-        v.push(PathBuf::from(d));
-    }
-    v.push(crate::config::home().join(".local/lib/kiki/helpers"));
-    v.push(PathBuf::from("/usr/lib/kiki/helpers"));
-    v
+    crate::plugin::plugin_dirs()
 }
 
 pub fn find(name: &str) -> Option<PathBuf> {
@@ -33,10 +28,17 @@ pub fn get(name: &str) -> Result<Arc<Plugin>, VfsError> {
     }
     let bin = find(name).ok_or_else(|| VfsError::Io(format!("{name} is not installed")))?;
     let p = Plugin::spawn_path(&bin, name)?;
+    if let Ok(d) = p.request(crate::json::Value::obj().s("type", "Describe").done()) {
+        let _ = p.set_describe(d);
+    }
     running().lock().unwrap().insert(name.to_string(), Arc::clone(&p));
     Ok(p)
 }
 
 pub fn highlight() -> Result<Arc<Plugin>, VfsError> {
-    get("kiki-helper-highlight")
+    get("kiki-plugin-highlight")
+}
+
+pub fn running_named(name: &str) -> bool {
+    running().lock().unwrap().get(name).map(|p| p.alive()).unwrap_or(false)
 }

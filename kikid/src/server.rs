@@ -131,7 +131,7 @@ impl Client {
                 Ok(Some(Value::obj().done()))
             }
             "Keymap" => Ok(Some(Value::obj().v("keys", crate::config::keymap()).done())),
-            "About" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).s("socket", crate::config::socket_path_string()).s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("helperDir", crate::helpers::helper_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("configDir", crate::config::config_dir().to_string_lossy()).done())),
+            "About" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).s("socket", crate::config::socket_path_string()).s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("configDir", crate::config::config_dir().to_string_lossy()).done())),
             "ResetSettings" => crate::config::reset_all().map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
             "Ping" => Ok(Some(Value::obj().done())),
             "Version" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).done())),
@@ -281,6 +281,8 @@ impl Client {
                 Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing patch".into())),
             },
+            "PluginStatus" => Ok(Some(Value::obj().v("plugins", crate::plugin::status_json()).done())),
+            "PluginPing" => self.plugin_ping(b),
             "Plugins" => Ok(Some(Value::obj().v("plugins", Value::Arr(crate::plugin::describe_all())).done())),
             "Locations" => Ok(Some(Value::obj().v("locations", crate::locations::json_list()).done())),
             "TestLocation" => match b.get("location") {
@@ -507,6 +509,17 @@ impl Client {
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
         let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
         Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::current().built_at)).done()))
+    }
+
+    fn plugin_ping(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let n = b.str_field("name").ok_or(("Protocol", "missing name".to_string()))?;
+        let bin = crate::plugin::inventory().into_iter().find(|(x, _)| x == n).map(|(_, p)| p).ok_or(("NotFound", "no such plugin".to_string()))?;
+        let start = std::time::Instant::now();
+        let p = crate::plugin::Plugin::spawn_path(&bin, n).map_err(vfs_err)?;
+        let d = p.request(Value::obj().s("type", "Describe").done()).map_err(vfs_err)?;
+        p.request(Value::obj().s("type", "Ping").done()).map_err(vfs_err)?;
+        p.shutdown();
+        Ok(Some(Value::obj().u("ms", start.elapsed().as_millis() as u64).v("describe", d).done()))
     }
 
     fn tree_expand(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {

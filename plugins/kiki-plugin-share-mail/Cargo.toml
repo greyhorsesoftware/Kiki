@@ -1,14 +1,13 @@
 [package]
-name = "kiki-helper-ai"
+name = "kiki-plugin-share-mail"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Claude queries for kiki's AI panel, over raw HTTPS"
+description = "kiki share plugin: mail"
 
 [[bin]]
-name = "kiki-helper-ai"
+name = "kiki-plugin-share-mail"
 path = "src/main.rs"
 
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
-ureq = { version = "2", default-features = false, features = ["tls"] }

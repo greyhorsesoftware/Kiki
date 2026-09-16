@@ -1,12 +1,12 @@
 [package]
-name = "kiki-share-localsend"
+name = "kiki-plugin-share-tailscale"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "kiki share plugin: localsend"
+description = "kiki share plugin: tailscale"
 
 [[bin]]
-name = "kiki-share-localsend"
+name = "kiki-plugin-share-tailscale"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,12 +1,12 @@
 [package]
-name = "kiki-share-messages"
+name = "kiki-plugin-share-messages"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "kiki share plugin: messages"
 
 [[bin]]
-name = "kiki-share-messages"
+name = "kiki-plugin-share-messages"
 path = "src/main.rs"
 
 [dependencies]

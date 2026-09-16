@@ -10,9 +10,7 @@ index, git badges, project mode beside your editor and agent, sharing, and an AI
 |---|---|
 | `kikid/` | the daemon: string-pool listings, windows, jobs and undo, archives, mirror, index, git, plugin and helper hosts |
 | `crates/kiki-json`, `crates/kiki-plugin-sdk` | the shared JSON reader/writer and the SDK for location and share plugins |
-| `plugins/` | `kiki-plugin-sftp`, `kiki-plugin-ftps`; the stub plugin lives in `kikid/src/bin/` |
-| `helpers/` | `kiki-helper-dbus` (Show in folder, portal chooser), `kiki-helper-highlight` (code viewer), `kiki-helper-ai` (Claude) |
-| `share/` | share plugins: mail, messages, tailscale, localsend, airdrop |
+| `plugins/` | every plugin, one process each: locations (`sftp`, `ftps`), services (`dbus`, `highlight`, `ai`), share (`share-mail`, `share-messages`, `share-tailscale`, `share-localsend`, `share-airdrop`); the stub lives in `kikid/src/bin/` |
 | `qml/` | the Quickshell shell |
 | `tests/` | QML component tests and the e2e harness (`tests/e2e/run.sh`) |
 | `docs/0.1.0/` | the core plan, feature plans and the two API documents |
@@ -23,7 +21,7 @@ index, git badges, project mode beside your editor and agent, sharing, and an AI
 
 ```
 cargo build --release --workspace
-KIKI_HELPER_DIR=target/release KIKI_PLUGIN_DIR=target/release target/release/kikid &
+KIKI_PLUGIN_DIR=target/release target/release/kikid &
 qs -p qml/shell.qml
 ```
 

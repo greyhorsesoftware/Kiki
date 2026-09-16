@@ -8,7 +8,7 @@ Select files or folders, open Share, pick a destination, done. Destinations are 
 
 ## Share plugin contract
 
-A share plugin is an executable named `kiki-share-<id>` in `/usr/lib/kiki/share/` or `~/.local/lib/kiki/share/`, spawned on first use, idle-exit after 5 minutes, with the framing and request/reply rules of `API-PLUGIN.md`. Environment: `KIKI_PLUGIN_PROTOCOL=1`, `KIKI_SHARE_ID=<id>`.
+A share plugin is an executable named `kiki-plugin-share-<id>` in the plugin directory, spawned on first use, idle-exit after 5 minutes, with the framing and request/reply rules of `API-PLUGIN.md`. Environment: `KIKI_PLUGIN_PROTOCOL=1`, `KIKI_SHARE_ID=<id>`.
 
 | Request | Fields | Reply |
 |---|---|---|

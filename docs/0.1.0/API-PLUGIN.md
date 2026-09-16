@@ -6,7 +6,7 @@ Protocol version: `1`.
 
 ## Discovery and lifecycle
 
-- Name: `kiki-plugin-<scheme>`, executable, in `/usr/lib/kiki/plugins/` or `~/.local/lib/kiki/plugins/` (user directory wins). The scheme is lowercase ASCII letters, digits, `+`, `-`, `.`.
+- Name: `kiki-plugin-<name>`, executable, in `/usr/lib/kiki/plugins/` or `~/.local/lib/kiki/plugins/` (user directory wins). `Describe` returns `kind`: `location` (then `<name>` is the URI scheme: lowercase ASCII letters, digits, `+`, `-`, `.`), `share` (`<name>` is `share-<id>`), or `service` (a fixed name the daemon uses: `dbus`, `highlight`, `ai`; their request sets are documented in plans 09, 13 and 19).
 - At daemon start, each plugin is spawned once, sent `Describe`, and exited. The result is cached until the plugin file's mtime changes.
 - The daemon spawns the plugin on the first request for its scheme and keeps one process per scheme. All locations of that scheme share it; the plugin keeps a session per `(location, role)`.
 - Environment: `KIKI_PLUGIN_PROTOCOL=1`, `KIKI_PLUGIN_SCHEME=<scheme>`, plus the user's environment. No arguments.
@@ -121,7 +121,7 @@ A stub plugin (`kiki-plugin-stub`, in the test tree) implements this protocol ov
 
 ## Share plugins
 
-A second plugin kind, `kiki-share-<id>` under `/usr/lib/kiki/share/` or `~/.local/lib/kiki/share/`, uses the same framing, lifecycle, error codes and `Field` type, with its own request set: `Describe`, `Configure`, `Targets`, `Share` (streamed `Progress`), `Cancel`, `Ping`, `Shutdown`. Files always arrive as local `file://` URIs; the daemon fetches remote and device files and compresses folders beforehand. The full contract is in `docs/0.1.0/18-share.md`.
+A second plugin kind, `kiki-plugin-share-<id>` in the same plugin directory, uses the same framing, lifecycle, error codes and `Field` type, with its own request set: `Describe`, `Configure`, `Targets`, `Share` (streamed `Progress`), `Cancel`, `Ping`, `Shutdown`. Files always arrive as local `file://` URIs; the daemon fetches remote and device files and compresses folders beforehand. The full contract is in `docs/0.1.0/18-share.md`.
 
 ## Compatibility rules
 

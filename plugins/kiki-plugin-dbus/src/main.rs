@@ -139,6 +139,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             if let Ok(v) = json::parse(&payload) {
+                // Requests from the daemon (Describe, Ping) versus replies to ours.
+                match v.str_field("type") {
+                    Some("Describe") => { let id = v.u64_field("id").unwrap_or(0); let mut o = b2.out.lock().unwrap(); let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", kiki_plugin_sdk::service_describe("dbus", "D-Bus: Show in folder and portal chooser", env!("CARGO_PKG_VERSION"), &[])).done()); continue }
+                    Some("Ping") => { let id = v.u64_field("id").unwrap_or(0); let mut o = b2.out.lock().unwrap(); let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", Value::obj().done()).done()); continue }
+                    _ => {}
+                }
                 if let Some(id) = v.u64_field("id") {
                     if let Some(tx) = b2.pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(v.get("ok").cloned().unwrap_or(Value::Null));

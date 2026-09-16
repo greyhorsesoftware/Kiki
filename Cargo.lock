@@ -1123,7 +1123,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiki-helper-ai"
+name = "kiki-json"
+version = "0.1.0"
+
+[[package]]
+name = "kiki-plugin-ai"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
@@ -1131,7 +1135,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiki-helper-dbus"
+name = "kiki-plugin-dbus"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
@@ -1140,7 +1144,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiki-helper-highlight"
+name = "kiki-plugin-ftps"
+version = "0.1.0"
+dependencies = [
+ "kiki-plugin-sdk",
+ "ring",
+ "rustls",
+ "suppaftp",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "kiki-plugin-highlight"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
@@ -1165,21 +1180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiki-json"
-version = "0.1.0"
-
-[[package]]
-name = "kiki-plugin-ftps"
-version = "0.1.0"
-dependencies = [
- "kiki-plugin-sdk",
- "ring",
- "rustls",
- "suppaftp",
- "webpki-roots 0.26.11",
-]
-
-[[package]]
 name = "kiki-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1197,35 +1197,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiki-share-airdrop"
+name = "kiki-plugin-share-airdrop"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
 ]
 
 [[package]]
-name = "kiki-share-localsend"
+name = "kiki-plugin-share-localsend"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
 ]
 
 [[package]]
-name = "kiki-share-mail"
+name = "kiki-plugin-share-mail"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
 ]
 
 [[package]]
-name = "kiki-share-messages"
+name = "kiki-plugin-share-messages"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
 ]
 
 [[package]]
-name = "kiki-share-tailscale"
+name = "kiki-plugin-share-tailscale"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",

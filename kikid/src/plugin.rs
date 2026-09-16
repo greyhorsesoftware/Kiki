@@ -28,7 +28,44 @@ pub fn find_binary(scheme: &str) -> Option<PathBuf> {
     plugin_dirs().into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
-/// Every plugin binary present, by scheme (user directory wins, first seen wins).
+const SERVICES: &[&str] = &["dbus", "highlight", "ai"];
+
+/// Every plugin binary present: (name suffix, path). User directory wins, first seen wins.
+pub fn inventory() -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for d in plugin_dirs() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if let Some(s) = name.strip_prefix("kiki-plugin-") {
+                    if !out.iter().any(|(x, _)| x == s) {
+                        out.push((s.to_string(), e.path()));
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Status of every plugin for the Settings page: kind, running, version, last Describe.
+pub fn status_json() -> Value {
+    let r = registry().lock().unwrap();
+    Value::Arr(
+        inventory()
+            .into_iter()
+            .map(|(name, path)| {
+                let kind = if name.starts_with("share-") { "share" } else if SERVICES.contains(&name.as_str()) { "service" } else { "location" };
+                let running = r.running.get(&name).map(|p| p.alive()).unwrap_or(false) || crate::helpers::running_named(&format!("kiki-plugin-{name}")) || crate::share::running_named(name.strip_prefix("share-").unwrap_or(""));
+                let described = r.described.get(&name).cloned();
+                Value::obj().s("name", name.clone()).s("kind", kind).s("path", path.to_string_lossy()).b("running", running).v("describe", described.unwrap_or(Value::Null)).done()
+            })
+            .collect(),
+    )
+}
+
+/// Location plugin schemes present (share and service plugins excluded).
 pub fn available() -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for d in plugin_dirs() {
@@ -36,6 +73,9 @@ pub fn available() -> Vec<String> {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if let Some(s) = name.strip_prefix("kiki-plugin-") {
+                    if s.starts_with("share-") || SERVICES.contains(&s) {
+                        continue;
+                    }
                     if !out.iter().any(|x| x == s) {
                         out.push(s.to_string());
                     }
@@ -134,6 +174,10 @@ impl Plugin {
 
     pub fn describe(&self) -> &Value {
         self.describe.get().expect("describe set at spawn")
+    }
+
+    pub fn set_describe(&self, d: Value) -> Result<(), Value> {
+        self.describe.set(d)
     }
 
     fn send(&self, v: &Value) -> Result<(), VfsError> {

@@ -16,6 +16,9 @@ FloatingWindow {
     property var tools: []
     property var index: ({})
     property var locations: []
+    property var plugins: []
+    property var sharePlugins: []
+    property var pingResult: ({})
     property string flash: ""
     function open(p) { if (p) page = p; visible = true; reload() }
     function reload() {
@@ -25,6 +28,8 @@ FloatingWindow {
         Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) tools = ok.tools })
         Kiki.Daemon.request("IndexStatus", {}, ok => { if (ok) index = ok })
         Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
+        Kiki.Daemon.request("PluginStatus", {}, ok => { if (ok) plugins = ok.plugins })
+        Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sharePlugins = ok.plugins })
     }
     function saved() { flash = "Saved"; flashTimer.restart() }
     Timer { id: flashTimer; interval: 1200; onTriggered: sw.flash = "" }
@@ -32,7 +37,7 @@ FloatingWindow {
 
     readonly property var pages: [
         { id: "general", label: "General" }, { id: "keys", label: "Keys" }, { id: "locations", label: "Locations" }, { id: "search", label: "Search" },
-        { id: "openin", label: "Open in" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "AI" }, { id: "about", label: "About" }
+        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "AI" }, { id: "plugins", label: "Plugins" }, { id: "about", label: "About" }
     ]
 
     Row {
@@ -59,7 +64,7 @@ FloatingWindow {
             Column {
                 id: body; x: 28; y: 24; width: parent.width - 56; spacing: 18
                 Text { text: sw.pages.find(p => p.id === sw.page).label; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-                Loader { width: parent.width; sourceComponent: { general: general, keys: keys, locations: locs, search: search, openin: openin, git: git, project: project, ai: ai, about: about }[sw.page] }
+                Loader { width: parent.width; sourceComponent: { general: general, keys: keys, locations: locs, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, plugins: pluginsPage, about: about }[sw.page] }
             }
         }
     }
@@ -139,8 +144,31 @@ FloatingWindow {
             Button { text: "Save to keyring"; primary: true; onClicked: Kiki.Daemon.request("AiConfigure", { apiKey: keyInput.text }, (ok, err) => { keyInput.text = ""; if (ok) { sw.saved(); Kiki.Daemon.request("AiStatus", {}, ok2 => { if (ok2) status = ok2 }) } }) } }
         Text { text: "Or log in with the Claude CLI (ant auth login); kiki uses that credential when no key is set. Pricing: anthropic.com/pricing"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
     } }
+    Component { id: sharePage; Column { spacing: 10
+        Repeater { model: sw.sharePlugins; delegate: Column { required property var modelData; spacing: 6; width: parent.width
+            Row { spacing: 14; height: 30
+                Switch { anchors.verticalCenter: parent.verticalCenter; on: modelData.enabled !== false; onToggled: { Kiki.Daemon.request("ShareConfigure", { plugin: modelData.id, config: Object.assign({}, modelData.config || {}, { enabled: !on }), secrets: {} }, () => sw.reload()); sw.saved() } }
+                Text { width: 200; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                Text { anchors.verticalCenter: parent.verticalCenter; text: "targets: " + modelData.targets + " · v" + modelData.version; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+            Repeater { model: modelData.form || []; delegate: FormField { required property var fieldData; property var f: fieldData; width: 420; field: f; value: (modelData.config || {})[f.key] || f.default || ""; onEdited: v => { const cfg = Object.assign({}, modelData.config || {}); cfg[f.key] = v; const secrets = {}; if ((modelData.secretFields || []).includes(f.key)) { secrets[f.key] = v; delete cfg[f.key] } Kiki.Daemon.request("ShareConfigure", { plugin: modelData.id, config: cfg, secrets: secrets }, () => sw.saved()) } }
+                property var fieldData: modelData }
+        } }
+        Text { visible: sw.sharePlugins.length === 0; text: "No share plugins found in the plugin directory."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+    } }
+    Component { id: pluginsPage; Column { spacing: 6
+        Text { text: "Every kiki-plugin-* binary found, with its kind and whether it is running now."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Repeater { model: sw.plugins; delegate: Row { required property var modelData; spacing: 12; height: 30
+            Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.gutter }
+            Text { width: 170; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { width: 70; anchors.verticalCenter: parent.verticalCenter; text: modelData.kind; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { width: 80; anchors.verticalCenter: parent.verticalCenter; text: modelData.describe ? "v" + (modelData.describe.version || "?") : ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { width: 120; anchors.verticalCenter: parent.verticalCenter; text: modelData.running ? "running" : "idle"; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Button { height: 24; text: "Ping"; onClicked: Kiki.Daemon.request("PluginPing", { name: modelData.name }, (ok, err) => { const r = Object.assign({}, sw.pingResult); r[modelData.name] = ok ? ok.ms + " ms" : (err ? err.message : "?"); sw.pingResult = r }) }
+            Text { anchors.verticalCenter: parent.verticalCenter; text: sw.pingResult[modelData.name] || ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
+        Text { visible: sw.plugins.length === 0; text: "No plugins found. Directories: " + (sw.about.pluginDir || ""); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; width: 560 }
+    } }
     Component { id: about; Column { spacing: 8
-        Repeater { model: [["Version", sw.about.version], ["Socket", sw.about.socket], ["Plugins", sw.about.pluginDir], ["Helpers", sw.about.helperDir], ["Config", sw.about.configDir]]; delegate: Row { required property var modelData; spacing: 14
+        Repeater { model: [["Version", sw.about.version], ["Socket", sw.about.socket], ["Plugins", sw.about.pluginDir], ["Config", sw.about.configDir]]; delegate: Row { required property var modelData; spacing: 14
             Text { width: 120; text: modelData[0]; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             Text { width: 520; wrapMode: Text.WrapAnywhere; text: modelData[1] || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } }
         Item { width: 1; height: 8 }

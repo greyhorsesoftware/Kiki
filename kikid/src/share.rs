@@ -11,12 +11,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 pub fn share_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    if let Ok(d) = std::env::var("KIKI_SHARE_DIR") {
-        v.push(PathBuf::from(d));
-    }
-    v.push(crate::config::home().join(".local/lib/kiki/share"));
-    v.push(PathBuf::from("/usr/lib/kiki/share"));
-    v
+    crate::plugin::plugin_dirs()
 }
 
 pub fn available() -> Vec<(String, PathBuf)> {
@@ -25,7 +20,7 @@ pub fn available() -> Vec<(String, PathBuf)> {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if let Some(id) = name.strip_prefix("kiki-share-") {
+                if let Some(id) = name.strip_prefix("kiki-plugin-share-") {
                     if !out.iter().any(|(i, _)| i == id) {
                         out.push((id.to_string(), e.path()));
                     }
@@ -182,4 +177,8 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
     });
     let _ = std::fs::remove_dir_all(&tmp);
     r
+}
+
+pub fn running_named(id: &str) -> bool {
+    registry().lock().unwrap().running.get(id).map(|p| p.alive()).unwrap_or(false)
 }

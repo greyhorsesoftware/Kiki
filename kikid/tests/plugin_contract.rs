@@ -17,6 +17,7 @@ fn setup() -> std::path::PathBuf {
     std::fs::create_dir_all(dir.join("plugins")).unwrap();
     std::fs::copy(&bin, dir.join("plugins/kiki-plugin-stub")).unwrap();
     std::env::set_var("KIKI_PLUGIN_DIR", dir.join("plugins"));
+    assert_eq!(plugin::inventory().len(), 1);
     std::env::set_var("KIKI_CONFIG_DIR", dir.join("config"));
     // No Secret Service in CI: a fake secret-tool that always succeeds and stores nothing.
     let fake = dir.join("secret-tool");

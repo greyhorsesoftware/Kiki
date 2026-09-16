@@ -28,7 +28,7 @@ pub fn register_shell(tx: Sender<Value>) {
 }
 
 pub fn start() {
-    let Some(bin) = crate::helpers::find("kiki-helper-dbus") else { return };
+    let Some(bin) = crate::helpers::find("kiki-plugin-dbus") else { return };
     let mut child = match Command::new(&bin).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn() {
         Ok(c) => c,
         Err(e) => {

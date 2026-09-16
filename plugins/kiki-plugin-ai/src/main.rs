@@ -76,6 +76,7 @@ fn main() {
         let id = v.u64_field("id").unwrap_or(0);
         let reply = match v.str_field("type").unwrap_or("") {
             "Ping" => Value::obj().u("id", id).v("ok", Value::obj().done()).done(),
+            "Describe" => Value::obj().u("id", id).v("ok", kiki_plugin_sdk::service_describe("ai", "Claude queries", env!("CARGO_PKG_VERSION"), &["Query"])).done(),
             "Shutdown" => {
                 let _ = write_json(&mut stdout, &Value::obj().u("id", id).v("ok", Value::obj().done()).done());
                 return;

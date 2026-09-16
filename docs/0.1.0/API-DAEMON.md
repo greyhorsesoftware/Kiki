@@ -222,6 +222,8 @@ Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action":
 | Request | Fields | Reply |
 |---|---|---|
 | `Keymap` | | `{ keys: [{ key, action, plan }] }` |
+| `PluginStatus` | | `{ plugins: [{ name, kind, path, running, describe }] }` |
+| `PluginPing` | `name` | `{ ms, describe }` (spawns, describes, pings, exits) |
 | `About` | | `{ version, socket, pluginDir, helperDir, configDir }` |
 | `ResetSettings` | | `{}` |
 | `ChooserResult` | `token`, `uris: [Uri] \| null` | `{}` (the shell's answer to `ShowChooser`) |

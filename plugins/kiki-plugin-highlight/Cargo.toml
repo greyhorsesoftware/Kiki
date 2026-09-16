@@ -1,12 +1,12 @@
 [package]
-name = "kiki-helper-highlight"
+name = "kiki-plugin-highlight"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Syntax highlighting for kiki's code viewer, via tree-sitter"
 
 [[bin]]
-name = "kiki-helper-highlight"
+name = "kiki-plugin-highlight"
 path = "src/main.rs"
 
 [dependencies]
