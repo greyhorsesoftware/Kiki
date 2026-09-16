@@ -22,6 +22,7 @@ Rectangle {
     }
     function finish(uris) { visible = false; Kiki.Daemon.request("ChooserResult", { token: req.token, uris: uris }) }
     function accept() {
+        if (req.mode === "saveFiles") { finish((req.files || []).map(n => pane.childUri(n))); return }
         if (req.mode === "open") {
             if (req.directory) { finish([pane.uri]); return }
             const sel = pane.selection.positions().map(p => pane.listing.row(p)).filter(r => r && !r.isDir).map(r => pane.childUri(r.name))
@@ -70,8 +71,9 @@ Rectangle {
                 Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Kiki.Theme.line }
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14; spacing: 8
+                    Text { visible: dlg.req && dlg.req.mode === "saveFiles"; anchors.verticalCenter: parent.verticalCenter; text: (dlg.req ? (dlg.req.files || []).length : 0) + " files will be saved here"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                     Rectangle {
-                        visible: dlg.req && dlg.req.mode !== "open"; anchors.verticalCenter: parent.verticalCenter; width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
+                        visible: dlg.req && dlg.req.mode === "save"; anchors.verticalCenter: parent.verticalCenter; width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
                         TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }
                     }
                     Rectangle {
@@ -83,7 +85,7 @@ Rectangle {
                     }
                     Item { width: parent.width - 700; height: 1 }
                     Button { anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; onClicked: dlg.finish(null) }
-                    Button { anchors.verticalCenter: parent.verticalCenter; text: dlg.req && dlg.req.mode === "open" ? (dlg.req.directory ? "Choose" : "Open") : "Save"; primary: true; onClicked: dlg.accept() }
+                    Button { anchors.verticalCenter: parent.verticalCenter; text: dlg.req && dlg.req.mode === "open" ? (dlg.req.directory ? "Choose" : "Open") : (dlg.req && dlg.req.mode === "saveFiles" ? "Save here" : "Save"); primary: true; onClicked: dlg.accept() }
                 }
             }
         }

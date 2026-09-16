@@ -159,6 +159,19 @@ impl Client {
                 }
                 self.window(b)
             }
+            "TextFind" => {
+                let lid = b.u64_field("lid").unwrap_or(0);
+                let needle = b.str_field("text").unwrap_or("").to_ascii_lowercase();
+                match self.texts.get(&lid) {
+                    Some(path) if !needle.is_empty() => {
+                        let text = std::fs::read_to_string(path).unwrap_or_default();
+                        let matches: Vec<Value> = text.lines().enumerate().filter(|(_, l)| l.to_ascii_lowercase().contains(&needle)).map(|(i, _)| Value::Uint(i as u64)).take(10_000).collect();
+                        Ok(Some(Value::obj().u("n", matches.len() as u64).v("lines", Value::Arr(matches)).done()))
+                    }
+                    Some(_) => Ok(Some(Value::obj().u("n", 0).v("lines", Value::Arr(vec![])).done())),
+                    None => Err(("NotFound", "no text view".into())),
+                }
+            }
             "OpenText" => self.open_text(b),
             "OpenTree" => match (b.u64_field("lid"), parse_uri(b, "uri")) {
                 (Some(lid), Ok(u)) => match crate::tree::Tree::open(&u) {
@@ -500,16 +513,17 @@ impl Client {
             out
         } else {
             crate::index::maybe_refresh();
-            let ix = crate::index::current();
-            let (hits, _capped) = crate::index::query(&ix, &q, mode);
-            hits.iter().map(|h| crate::index::hit_row(&ix, h)).collect()
+            crate::index::with_index(|ix| {
+                let (hits, _capped) = crate::index::query(ix, &q, mode);
+                hits.iter().map(|h| crate::index::hit_row(ix, h)).collect()
+            })
         };
         let n = rows.len() as u64;
         let capped = n as usize >= crate::index::MAX_RESULTS;
         self.searches.insert(lid, rows);
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
         let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
-        Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::current().built_at)).done()))
+        Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::with_index(|ix| ix.built_at))).done()))
     }
 
     fn plugin_ping(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {

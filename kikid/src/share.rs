@@ -181,3 +181,11 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
 pub fn running_named(id: &str) -> bool {
     registry().lock().unwrap().running.get(id).map(|p| p.alive()).unwrap_or(false)
 }
+
+pub fn reap_idle() {
+    let idle: Vec<(String, Arc<Plugin>)> = registry().lock().unwrap().running.iter().filter(|(_, p)| p.alive() && !p.busy() && p.idle_for() >= crate::plugin::IDLE_EXIT).map(|(k, p)| (k.clone(), Arc::clone(p))).collect();
+    for (k, p) in idle {
+        p.shutdown();
+        registry().lock().unwrap().running.remove(&k);
+    }
+}

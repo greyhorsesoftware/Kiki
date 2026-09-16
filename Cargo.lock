@@ -1053,6 +1053,7 @@ name = "kiki-plugin-sftp"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
+ "rand",
  "russh",
  "russh-sftp",
  "tokio",

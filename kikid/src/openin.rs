@@ -24,7 +24,7 @@ pub fn presets() -> Vec<Value> {
         t("gemini", "Gemini CLI", "gemini", "gemini", true, "both", None, None, false),
         t("aider", "Aider", "aider", "aider {files}", true, "both", None, None, false),
         t("opencode", "OpenCode", "opencode", "opencode", true, "both", None, None, false),
-        t("neovim", "Neovim", "nvim", "nvim --listen {socket} {file}", true, "file", Some("editor"), Some("nvim --server {socket} --remote-send ':e {file}<CR>:{line}<CR>'"), true),
+        t("neovim", "Neovim", "nvim", "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !qs -c kiki ipc call shell saved %:p' --cmd 'nnoremap <leader>k :silent! !qs -c kiki ipc call shell reveal %:p<CR>' +{line} {file}", true, "file", Some("editor"), Some("nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'"), true),
         t("helix", "Helix", "hx", "hx {file}:{line}", true, "file", None, None, false),
         t("vscode", "VS Code", "code", "code --new-window {dir}", false, "both", None, Some("code --reuse-window --goto {file}:{line}"), true),
         t("zed", "Zed", "zed", "zed {dir}", false, "both", None, Some("zed {file}:{line}"), true),

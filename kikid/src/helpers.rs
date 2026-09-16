@@ -41,3 +41,12 @@ pub fn highlight() -> Result<Arc<Plugin>, VfsError> {
 pub fn running_named(name: &str) -> bool {
     running().lock().unwrap().get(name).map(|p| p.alive()).unwrap_or(false)
 }
+
+pub fn reap_idle() {
+    // Service plugins other than dbus (which must stay up to serve the bus) idle out too.
+    let idle: Vec<(String, Arc<Plugin>)> = running().lock().unwrap().iter().filter(|(k, p)| !k.ends_with("dbus") && p.alive() && !p.busy() && p.idle_for() >= crate::plugin::IDLE_EXIT).map(|(k, p)| (k.clone(), Arc::clone(p))).collect();
+    for (k, p) in idle {
+        p.shutdown();
+        running().lock().unwrap().remove(&k);
+    }
+}

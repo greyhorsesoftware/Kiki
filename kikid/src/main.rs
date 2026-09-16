@@ -41,6 +41,7 @@ fn serve() {
         }
     };
     kikid::dbus::start();
+    kikid::plugin::start_reaper();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));
         kikid::index::rebuild_async();

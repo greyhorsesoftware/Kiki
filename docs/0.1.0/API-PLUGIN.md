@@ -48,7 +48,7 @@ Error codes the plugin may return: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `
 |---|---|---|
 | `Connect` | `location: string`, `role`, `config`, `secrets` | `{ "fingerprint": string \| null, "banner": string \| null }` or `Auth` / `Network` / `Invalid` |
 | `Disconnect` | `location`, `role` | `{}` |
-| `Capabilities` | `location` | `{ "trash": bool, "setMtime": bool, "mode": bool, "realDirs": bool, "digestKind": string \| null, "separator": string, "fastScan": string \| null }` (`fastScan` names an accelerated listing path the plugin probed, e.g. `"gnu"` for SSH exec with GNU find; informational; `partialRead: false` tells the daemon the backend cannot serve byte ranges, plan 17) |
+| `Capabilities` | `location` | `{ "trash": bool, "setMtime": bool, "mode": bool, "realDirs": bool, "digestKind": string \| null, "separator": string, "fastScan": string \| null }` (`fastScan` names the accelerated listing path the plugin probed: `"gnu"` for SSH exec with GNU find, `"posix"` for `find -exec stat`, `"none"`; informational; `partialRead: false` tells the daemon the backend cannot serve byte ranges, plan 17) |
 | `Ping` | | `{}` |
 | `Shutdown` | | `{}` then exit |
 

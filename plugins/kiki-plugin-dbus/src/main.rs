@@ -94,6 +94,7 @@ impl FileChooser {
             .opt_s("currentFolder", opt_bytes_path(&options, "current_folder").as_deref())
             .opt_s("currentName", opt_str(&options, "current_name").as_deref())
             .opt_s("parentWindow", if parent_window.is_empty() { None } else { Some(parent_window.as_str()) })
+            .v("files", Value::Arr(options.get("files").and_then(|v| <Vec<Vec<u8>>>::try_from(v.clone()).ok()).unwrap_or_default().into_iter().map(|b| Value::Str(String::from_utf8_lossy(b.strip_suffix(&[0]).unwrap_or(&b)).into_owned())).collect()))
             .done();
         let reply = self.bridge.call("ShowChooser", req).await;
         let mut results: HashMap<String, OwnedValue> = HashMap::new();

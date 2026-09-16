@@ -11,7 +11,7 @@ Automated coverage of behaviour, layout, appearance and performance, so a releas
 | Layer | What it covers | Runs where | Tool |
 |---|---|---|---|
 | Daemon | json.rs, string pool, two-phase scan, windows and phase-2 scheduling, cache, watch, previews, jobs, undo, archives, mirror engine, portal, FileManager1 | plain Rust tests plus a fuzz target for `json.rs` | `cargo test`, `cargo fuzz`, temp trees, `dbus-run-session` |
-| Plugins | every `kiki-plugin-*` binary through the pipe protocol, including the stub | Rust tests spawning the binary | local `sshd`, `vsftpd` |
+| Plugins | every `kiki-plugin-*` binary through the pipe protocol, including the stub | Rust tests spawning the binary | an in-process mock SSH/SFTP server (russh) for SFTP, local `sshd` and `vsftpd` on Omarchy |
 | Protocol | recorded request/response sequences over the socket, window semantics (count growth, `RowsChanged`, `Reset`), error typing | Rust tests against a running kikid | a socket client in the test crate |
 | Window cache | `WindowCache` and `Selection` in QML: padding, debounce, refetch on `RowsChanged`, clear on `Reset`, placeholder rows | Qt test runner with a fake socket | QtTest `TestCase` with `SignalSpy` |
 | Leaf components | rows, grids, tables, form controls, inspector fields, the plan sentence | Qt test runner, no compositor | `qmltestrunner`, QtTest `TestCase` |

@@ -64,6 +64,7 @@ impl StringPool {
             1 => EntryType::Dir,
             2 => EntryType::Link,
             3 => EntryType::Other,
+            255 => EntryType::Other,
             _ => EntryType::Unknown,
         }
     }
@@ -95,6 +96,19 @@ impl StringPool {
             return false;
         }
         n.windows(needle_lower.len()).any(|w| w.iter().zip(needle_lower).all(|(a, b)| a.to_ascii_lowercase() == *b))
+    }
+
+    /// Marks an entry removed; the index stays valid but views skip it.
+    pub fn remove(&mut self, i: u32) {
+        self.types[i as usize] = 255;
+    }
+
+    pub fn is_removed(&self, i: u32) -> bool {
+        self.types[i as usize] == 255
+    }
+
+    pub fn find(&self, name: &[u8]) -> Option<u32> {
+        (0..self.len() as u32).find(|&i| !self.is_removed(i) && self.name(i) == name)
     }
 
     pub fn bytes(&self) -> usize {

@@ -18,6 +18,37 @@ use std::time::Instant;
 pub const SMALL_DIR: usize = 2_000; // fully enriched right after phase 1
 pub const WINDOW_MAX: u32 = 512;
 pub const CACHE_ENTRIES: usize = 500_000;
+pub const PARALLEL_SORT_ABOVE: usize = 50_000;
+
+/// Sort in chunks across threads, then k-way merge (plan 01: above 50k entries).
+fn parallel_sort<F: Fn(&u32, &u32) -> std::cmp::Ordering + Sync>(v: &mut Vec<u32>, cmp: &F) {
+    let threads = thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(2, 8);
+    let chunk = v.len().div_ceil(threads);
+    let mut parts: Vec<Vec<u32>> = v.chunks(chunk).map(|c| c.to_vec()).collect();
+    thread::scope(|s| {
+        for p in parts.iter_mut() {
+            s.spawn(move || p.sort_unstable_by(cmp));
+        }
+    });
+    let mut out: Vec<u32> = Vec::with_capacity(v.len());
+    let mut idx = vec![0usize; parts.len()];
+    loop {
+        let mut best: Option<usize> = None;
+        for (i, p) in parts.iter().enumerate() {
+            if idx[i] < p.len() && best.map(|b| cmp(&p[idx[i]], &parts[b][idx[b]]) == std::cmp::Ordering::Less).unwrap_or(true) {
+                best = Some(i);
+            }
+        }
+        match best {
+            Some(b) => {
+                out.push(parts[b][idx[b]]);
+                idx[b] += 1;
+            }
+            None => break,
+        }
+    }
+    *v = out;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortRole {
@@ -406,6 +437,70 @@ impl Listing {
         }
     }
 
+    /// In-place patch from inotify (plan 01): added names are appended and stated, removed names
+    /// become tombstones, modified names lose their metadata and thumbnail so they refetch.
+    pub fn patch(self: &Arc<Self>, added: &[Vec<u8>], removed: &[Vec<u8>], modified: &[Vec<u8>]) {
+        let mut inner = self.inner.lock().unwrap();
+        let mut changed = false;
+        for name in removed {
+            if let Some(i) = inner.pool.find(name) {
+                inner.pool.remove(i);
+                changed = true;
+            }
+        }
+        let mut to_stat = Vec::new();
+        for name in added {
+            if inner.pool.find(name).is_some() {
+                continue;
+            }
+            let kind = match self.dir.stat_child(std::ffi::OsStr::from_bytes(name)) {
+                Ok((_, t)) => t,
+                Err(_) => continue, // vanished again
+            };
+            let idx = inner.pool.push(name, kind);
+            inner.meta.push(None);
+            inner.queued.push(false);
+            inner.thumb.push(None);
+            inner.thumb_queued.push(false);
+            inner.git.push(None);
+            inner.pos.push(u32::MAX);
+            to_stat.push(idx);
+            changed = true;
+        }
+        for name in modified {
+            if let Some(i) = inner.pool.find(name) {
+                inner.meta[i as usize] = None;
+                inner.thumb[i as usize] = None;
+                inner.thumb_queued[i as usize] = false;
+                if !inner.queued[i as usize] {
+                    inner.queued[i as usize] = true;
+                    to_stat.push(i);
+                }
+            }
+        }
+        if changed {
+            inner.rebuild_view();
+            inner.generation += 1;
+        }
+        let n = inner.view.len() as u64;
+        let subs = inner.subscribers.clone();
+        {
+            let c = &mut cache().lock().unwrap();
+            c.entries += added.len();
+        }
+        drop(inner);
+        if changed {
+            for s in &subs {
+                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+            }
+        }
+        if !to_stat.is_empty() {
+            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows: to_stat, low_priority: true });
+        }
+        self.git_status();
+        crate::index::patch_dir(&self.path);
+    }
+
     pub fn subscribe(&self, sub: Subscriber) {
         let mut inner = self.inner.lock().unwrap();
         inner.subscribers.retain(|s| !(s.client == sub.client && s.lid == sub.lid));
@@ -701,8 +796,8 @@ impl Inner {
     fn rebuild_view(&mut self) {
         let n = self.pool.len() as u32;
         let mut view: Vec<u32> = match &self.filter {
-            None => (0..n).collect(),
-            Some(f) => (0..n).filter(|&i| self.pool.name_contains(i, f)).collect(),
+            None => (0..n).filter(|&i| !self.pool.is_removed(i)).collect(),
+            Some(f) => (0..n).filter(|&i| !self.pool.is_removed(i) && self.pool.name_contains(i, f)).collect(),
         };
         if self.scan_done {
             let (role, asc) = self.sort;
@@ -710,19 +805,21 @@ impl Inner {
             let meta = &self.meta;
             // Folders first, then the role, then name as a tiebreak.
             let dir_rank = |i: u32| u8::from(pool.entry_type(i) != EntryType::Dir);
-            match role {
-                SortRole::Name => view.sort_unstable_by(|&a, &b| dir_rank(a).cmp(&dir_rank(b)).then_with(|| pool.key(a).cmp(pool.key(b)))),
-                SortRole::Kind => view.sort_unstable_by(|&a, &b| dir_rank(a).cmp(&dir_rank(b)).then_with(|| (pool.kind(a) as u8).cmp(&(pool.kind(b) as u8))).then_with(|| pool.key(a).cmp(pool.key(b)))),
-                SortRole::Size => view.sort_unstable_by(|&a, &b| {
-                    let sa = meta[a as usize].as_ref().map(|m| m.size).unwrap_or(0);
-                    let sb = meta[b as usize].as_ref().map(|m| m.size).unwrap_or(0);
-                    dir_rank(a).cmp(&dir_rank(b)).then_with(|| sa.cmp(&sb)).then_with(|| pool.key(a).cmp(pool.key(b)))
-                }),
-                SortRole::Mtime => view.sort_unstable_by(|&a, &b| {
-                    let ta = meta[a as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
-                    let tb = meta[b as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
-                    dir_rank(a).cmp(&dir_rank(b)).then_with(|| ta.cmp(&tb)).then_with(|| pool.key(a).cmp(pool.key(b)))
-                }),
+            let cmp = |a: &u32, b: &u32| -> std::cmp::Ordering {
+                let (a, b) = (*a, *b);
+                let base = dir_rank(a).cmp(&dir_rank(b));
+                let by_role = match role {
+                    SortRole::Name => std::cmp::Ordering::Equal,
+                    SortRole::Kind => (pool.kind(a) as u8).cmp(&(pool.kind(b) as u8)),
+                    SortRole::Size => meta[a as usize].as_ref().map(|m| m.size).unwrap_or(0).cmp(&meta[b as usize].as_ref().map(|m| m.size).unwrap_or(0)),
+                    SortRole::Mtime => meta[a as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0).cmp(&meta[b as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)),
+                };
+                base.then(by_role).then_with(|| pool.key(a).cmp(pool.key(b)))
+            };
+            if view.len() > PARALLEL_SORT_ABOVE {
+                parallel_sort(&mut view, &cmp);
+            } else {
+                view.sort_unstable_by(cmp);
             }
             if !asc {
                 // Keep folders first even when descending.

@@ -9,7 +9,7 @@ use crate::vfs::EntryType;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 pub const MAX_RESULTS: usize = 10_000;
@@ -26,6 +26,7 @@ pub struct Index {
     kinds: Vec<u8>,
     parents: Vec<u32>, // parent entry index; self for roots
     is_root: Vec<bool>,
+    removed: Vec<bool>,
     pub roots: Vec<PathBuf>,
     pub built_at: u64,
     dir_mtime: HashMap<u32, u64>, // entry index of a directory -> mtime seen at build
@@ -47,6 +48,7 @@ impl Index {
         self.kinds.push(kind as u8);
         self.parents.push(parent);
         self.is_root.push(root);
+        self.removed.push(false);
         i
     }
     pub fn name(&self, i: u32) -> &[u8] {
@@ -107,30 +109,109 @@ pub fn build(roots: &[PathBuf], excludes: &[String], cancel: &AtomicBool) -> Ind
             if cancel.load(Ordering::Relaxed) {
                 return ix;
             }
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-            if let Ok(md) = std::fs::symlink_metadata(&dir) {
-                let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-                ix.dir_mtime.insert(parent, mt);
-            }
-            for e in rd.flatten() {
-                let name = e.file_name();
-                let nb = name.as_bytes();
-                if excludes.iter().any(|x| x.as_bytes() == nb) || dir.join(".kiki-noindex").exists() {
-                    continue;
-                }
-                let ft = match e.file_type() {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                let t = if ft.is_dir() { EntryType::Dir } else if ft.is_symlink() { EntryType::Link } else { EntryType::File };
-                let i = ix.push(nb, Kind::guess(t, nb), parent, false);
-                if ft.is_dir() {
-                    stack.push((i, e.path()));
-                }
+            for (i, p) in ix.list_dir(parent, &dir, excludes) {
+                stack.push((i, p));
             }
         }
     }
     ix
+}
+
+impl Index {
+    /// Appends the children of `dir` under `parent`; returns the subdirectories (entry, path).
+    fn list_dir(&mut self, parent: u32, dir: &Path, excludes: &[String]) -> Vec<(u32, PathBuf)> {
+        use std::os::unix::ffi::OsStrExt;
+        let mut subdirs = Vec::new();
+        let Ok(rd) = std::fs::read_dir(dir) else { return subdirs };
+        if let Ok(md) = std::fs::symlink_metadata(dir) {
+            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            self.dir_mtime.insert(parent, mt);
+        }
+        if dir.join(".kiki-noindex").exists() {
+            return subdirs;
+        }
+        for e in rd.flatten() {
+            let name = e.file_name();
+            let nb = name.as_bytes();
+            if excludes.iter().any(|x| x.as_bytes() == nb) {
+                continue;
+            }
+            let ft = match e.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let t = if ft.is_dir() { EntryType::Dir } else if ft.is_symlink() { EntryType::Link } else { EntryType::File };
+            let i = self.push(nb, Kind::guess(t, nb), parent, false);
+            if ft.is_dir() {
+                subdirs.push((i, e.path()));
+            }
+        }
+        subdirs
+    }
+
+    fn find_dir(&self, path: &Path) -> Option<u32> {
+        // Walk from the root that contains the path.
+        let (ri, root) = self.roots.iter().enumerate().filter(|(_, r)| path.starts_with(r)).max_by_key(|(_, r)| r.as_os_str().len())?;
+        let root_entry = (0..self.len() as u32).filter(|&i| self.is_root[i as usize]).nth(ri)?;
+        let rel = path.strip_prefix(root).ok()?;
+        let mut cur = root_entry;
+        for comp in rel.components() {
+            use std::os::unix::ffi::OsStrExt;
+            let want = comp.as_os_str().as_bytes();
+            cur = (0..self.len() as u32).find(|&i| !self.removed[i as usize] && !self.is_root[i as usize] && self.parents[i as usize] == cur && self.name(i) == want)?;
+        }
+        Some(cur)
+    }
+
+    fn children(&self, parent: u32) -> Vec<u32> {
+        (0..self.len() as u32).filter(|&i| !self.removed[i as usize] && !self.is_root[i as usize] && self.parents[i as usize] == parent).collect()
+    }
+
+    /// Re-lists one directory: its direct children are replaced; new subdirectories are crawled.
+    fn relist(&mut self, dir_entry: u32, dir: &Path, excludes: &[String]) {
+        let old: Vec<u32> = self.children(dir_entry);
+        let old_names: std::collections::HashSet<Vec<u8>> = old.iter().map(|&i| self.name(i).to_vec()).collect();
+        // Remove children that no longer exist; keep the rest (and their subtrees).
+        let present: std::collections::HashSet<Vec<u8>> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| { use std::os::unix::ffi::OsStrExt; e.file_name().as_bytes().to_vec() }).collect()).unwrap_or_default();
+        for &i in &old {
+            if !present.contains(self.name(i)) {
+                self.remove_subtree(i);
+            }
+        }
+        // Add new ones.
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut stack = Vec::new();
+        for e in rd.flatten() {
+            use std::os::unix::ffi::OsStrExt;
+            let nb = e.file_name().as_bytes().to_vec();
+            if old_names.contains(&nb) || excludes.iter().any(|x| x.as_bytes() == nb.as_slice()) {
+                continue;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            let t = if ft.is_dir() { EntryType::Dir } else if ft.is_symlink() { EntryType::Link } else { EntryType::File };
+            let i = self.push(&nb, Kind::guess(t, &nb), dir_entry, false);
+            if ft.is_dir() {
+                stack.push((i, e.path()));
+            }
+        }
+        while let Some((p, d)) = stack.pop() {
+            for (i, sub) in self.list_dir(p, &d, excludes) {
+                stack.push((i, sub));
+            }
+        }
+        if let Ok(md) = std::fs::symlink_metadata(dir) {
+            let mt = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            self.dir_mtime.insert(dir_entry, mt);
+        }
+    }
+
+    fn remove_subtree(&mut self, i: u32) {
+        self.removed[i as usize] = true;
+        for c in self.children(i) {
+            self.remove_subtree(c);
+        }
+        self.dir_mtime.remove(&i);
+    }
 }
 
 // ---------------------------------------------------------------- query
@@ -157,7 +238,7 @@ pub fn query(ix: &Index, q: &str, mode: Mode) -> (Vec<Hit>, bool) {
         return (hits, false);
     }
     for i in 0..n {
-        if ix.is_root[i as usize] {
+        if ix.is_root[i as usize] || ix.removed[i as usize] {
             continue;
         }
         let name = ix.name(i);
@@ -224,14 +305,62 @@ fn fuzzy_rank(name: &[u8], lower: &[u8]) -> Option<u32> {
 // ---------------------------------------------------------------- service
 
 struct Service {
-    index: RwLock<Arc<Index>>,
+    index: RwLock<Index>,
     building: AtomicBool,
     last_refresh: Mutex<Instant>,
 }
 
 fn service() -> &'static Service {
     static S: OnceLock<Service> = OnceLock::new();
-    S.get_or_init(|| Service { index: RwLock::new(Arc::new(Index::default())), building: AtomicBool::new(false), last_refresh: Mutex::new(Instant::now()) })
+    S.get_or_init(|| Service { index: RwLock::new(Index::default()), building: AtomicBool::new(false), last_refresh: Mutex::new(Instant::now()) })
+}
+
+/// Runs `f` against the current index under a read lock.
+pub fn with_index<R>(f: impl FnOnce(&Index) -> R) -> R {
+    f(&service().index.read().unwrap())
+}
+
+/// A watched directory changed (plan 12): re-list just that directory in the index.
+pub fn patch_dir(dir: &Path) {
+    let mut ix = service().index.write().unwrap();
+    if ix.len() == 0 {
+        return;
+    }
+    let Some(entry) = ix.find_dir(dir) else { return };
+    let ex = excludes();
+    ix.relist(entry, dir, &ex);
+}
+
+/// The periodic walk: stat every indexed directory and re-list those whose mtime changed.
+pub fn refresh_walk() {
+    let s = service();
+    if s.building.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let ex = excludes();
+    let dirs: Vec<(u32, PathBuf, u64)> = {
+        let ix = s.index.read().unwrap();
+        ix.dir_mtime.iter().map(|(&e, &mt)| (e, ix.path(e), mt)).collect()
+    };
+    let mut changed = Vec::new();
+    for (e, p, mt) in dirs {
+        if let Ok(md) = std::fs::symlink_metadata(&p) {
+            let now = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+            if now != mt {
+                changed.push((e, p));
+            }
+        }
+    }
+    if !changed.is_empty() {
+        let mut ix = s.index.write().unwrap();
+        for (e, p) in changed {
+            if (e as usize) < ix.len() && !ix.removed[e as usize] {
+                ix.relist(e, &p, &ex);
+            }
+        }
+    }
+    *s.last_refresh.lock().unwrap() = Instant::now();
+    s.building.store(false, Ordering::Release);
 }
 
 pub fn roots() -> Vec<PathBuf> {
@@ -249,10 +378,6 @@ pub fn excludes() -> Vec<String> {
     s.get("index").and_then(|i| i.get("excludes")).and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).filter(|v: &Vec<String>| !v.is_empty()).unwrap_or_else(default_excludes)
 }
 
-pub fn current() -> Arc<Index> {
-    Arc::clone(&service().index.read().unwrap())
-}
-
 /// Builds in the background unless a build is already running.
 pub fn rebuild_async() {
     let s = service();
@@ -268,7 +393,7 @@ pub fn rebuild_async() {
             }
             let cancel = AtomicBool::new(false);
             let ix = build(&roots(), &excludes(), &cancel);
-            *service().index.write().unwrap() = Arc::new(ix);
+            *service().index.write().unwrap() = ix;
             *service().last_refresh.lock().unwrap() = Instant::now();
             service().building.store(false, Ordering::Release);
         })
@@ -277,14 +402,18 @@ pub fn rebuild_async() {
 
 pub fn maybe_refresh() {
     let s = service();
-    let due = s.last_refresh.lock().unwrap().elapsed() >= REFRESH_EVERY;
-    if due || s.index.read().unwrap().len() == 0 {
+    if s.index.read().unwrap().len() == 0 {
         rebuild_async();
+        return;
+    }
+    let due = s.last_refresh.lock().unwrap().elapsed() >= REFRESH_EVERY;
+    if due {
+        std::thread::Builder::new().name("index-walk".into()).spawn(refresh_walk).expect("spawn walk");
     }
 }
 
 pub fn status_json() -> Value {
-    let ix = current();
+    let ix = service().index.read().unwrap();
     Value::obj()
         .u("entries", ix.len() as u64)
         .u("bytes", ix.bytes() as u64)
@@ -337,6 +466,14 @@ mod tests {
         assert!(row.str_field("uri").unwrap().ends_with("/Projects/omarchy"));
         assert_eq!(query(&ix, "mainrs", Mode::Fuzzy).0.len(), 1);
         assert_eq!(query(&ix, "main", Mode::Prefix).0.len(), 1);
+        // patch: a new file in a known directory appears after relist; a removed one disappears
+        let mut ix = ix;
+        std::fs::write(d.join("Projects/omarchy/src/lib.rs"), b"").unwrap();
+        std::fs::remove_file(d.join("Projects/omarchy/src/main.rs")).unwrap();
+        let e = ix.find_dir(&d.join("Projects/omarchy/src")).unwrap();
+        ix.relist(e, &d.join("Projects/omarchy/src"), &default_excludes());
+        assert_eq!(query(&ix, "lib.rs", Mode::Prefix).0.len(), 1);
+        assert_eq!(query(&ix, "main.rs", Mode::Prefix).0.len(), 0);
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

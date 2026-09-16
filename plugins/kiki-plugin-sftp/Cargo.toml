@@ -14,3 +14,7 @@ kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
 tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros"] }
 russh = "0.52"
 russh-sftp = "2"
+
+[dev-dependencies]
+rand = "0.8"
+tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros", "sync"] }

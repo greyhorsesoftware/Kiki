@@ -42,7 +42,7 @@ capabilities() -> { trash, set_mtime, mode, real_dirs, digest_kind, separator }
 
 **Allocator tuning**: at startup kikid calls `mallopt` three times through `libc`: `M_MMAP_THRESHOLD` pinned to 131072 so the dynamic threshold never rises and freed large buffers return to the kernel, `M_ARENA_MAX` 2 so a dozen threads do not retain a dozen heaps, and `M_TRIM_THRESHOLD` 1 MiB so the main heap trims promptly. To keep the pinned threshold cheap, buffers used in loops are allocated once and reused: the `getdents` buffer per scanner, the copy buffer per job, the decode buffer per thumbnail worker. Kept only if the measurement below shows it matters.
 
-**Watch**: one inotify fd, one thread, events coalesced for 50 ms. In 0.1.0 a change triggers a rescan of that directory that keeps `Meta` for names still present and sends `Reset`; patching the pool in place instead of rescanning is a later optimisation and needs no protocol change.
+**Watch**: one inotify fd, one thread, events coalesced for 50 ms into a per-directory batch of added, removed and modified names. The batch patches the string pool in place: removed names are tombstoned, added names appended with their kind, modified names lose their `Meta` and thumbnail so the window re-stats them; then the view is rebuilt and `Reset` sent. A queue overflow or a batch above a few thousand names falls back to a rescan that keeps `Meta` for names still present. The same batch patches the search index for that directory (plan 12).
 
 **Protocol** (added by this plan; every message has a request id):
 - `Open { id, uri }` with a client-chosen id, so `Open` and the first `Window` go out in one write; then `Count { id, n, done }` events as phase 1 progresses

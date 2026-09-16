@@ -469,6 +469,23 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
     Ok(())
 }
 
+/// For a local side, compute MD5 for files whose counterpart has a digest and the same size.
+fn fill_local_digests(side: &Side, mine: &mut BTreeMap<String, Entry>, other: &BTreeMap<String, Entry>) {
+    let Side::Local(root) = side else { return };
+    for (rel, o) in other {
+        if o.is_dir || usable_md5(&o.digest).is_none() {
+            continue;
+        }
+        if let Some(e) = mine.get_mut(rel) {
+            if !e.is_dir && e.size == o.size && e.digest.is_none() {
+                if let Ok(bytes) = std::fs::read(root.join(rel)) {
+                    e.digest = Some(crate::md5::hex(&bytes));
+                }
+            }
+        }
+    }
+}
+
 pub fn pick_detector(spec: &Spec) -> Detector {
     if spec.detector != Detector::Auto {
         return spec.detector;
@@ -492,9 +509,13 @@ pub fn scan(spec: &mut Spec, cancel: &AtomicBool) -> Result<Plan, VfsError> {
     let master_side = side_for(&spec.master)?;
     let replica_side = side_for(&spec.replica)?;
     let mut filtered_count = 0;
-    let master = scan_side(&master_side, &rules, &mut filtered_count, cancel)?;
-    let replica = scan_side(&replica_side, &rules, &mut filtered_count, cancel)?;
+    let mut master = scan_side(&master_side, &rules, &mut filtered_count, cancel)?;
+    let mut replica = scan_side(&replica_side, &rules, &mut filtered_count, cancel)?;
     let detector = pick_detector(spec);
+    if detector == Detector::Digest {
+        fill_local_digests(&master_side, &mut master, &replica);
+        fill_local_digests(&replica_side, &mut replica, &master);
+    }
     if spec.clock_offset_auto && detector != Detector::Digest {
         spec.clock_offset_ms = auto_offset(&master, &replica);
     }

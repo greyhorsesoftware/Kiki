@@ -104,6 +104,7 @@ Git event: `RepoChanged { root }`.
 | Request | Fields | Reply |
 |---|---|---|
 | `OpenText` | `lid`, `uri` | `{ total, lang }`; lines are then served by `Window` on the `lid` as `{ n: u32, spans: [{ text, class }] }` rows |
+| `TextFind` | `lid`, `text` | `{ n, lines: [u32] }` — case-insensitive match over the whole file (capped at 10,000 lines), for find in file |
 
 Editor launch and sessions are the Open in messages above with the entry marked `role = "editor"`.
 
@@ -233,7 +234,7 @@ Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action":
 | `AiCancel` | `id` | `{ cancelled }` |
 | `AiQuery` | `session`, `uris`, `question`, `history: [{ role, text }]` | `{ id }` then events `AiDelta { id, text }`, `AiDone { id, text, local, usage }`, `AiError { id, code, message }` |
 
-Text views (plan 13): `OpenText { lid, uri } -> { total, lang }`; `Window` on that `lid` returns `{ n, spans: [{ text, class }] }` rows.
+Text views (plan 13): `OpenText { lid, uri } -> { total, lang }`; `Window` on that `lid` returns `{ n, spans: [{ text, class }] }` rows; `TextFind { lid, text } -> { n, lines }` scans the whole file.
 
 Tree views (plan 16): `OpenTree`, `TreeExpand`, `TreeFilter`, `TreeReveal`, `Arrange` as listed under Project mode; the tree's rows come through `Window`.
 

@@ -51,11 +51,7 @@ Item {
     function find(text) {
         findText = text; matches = []; matchIndex = -1
         if (!text) return
-        // Search what the cache holds around the viewport first; a full scan goes through the daemon in a later version.
-        const q = text.toLowerCase()
-        for (const k in lines._rows) { const r = lines._rows[k]; if (r.spans.map(s => s.text).join("").toLowerCase().includes(q)) matches.push(Number(k)) }
-        matches.sort((a, b) => a - b)
-        if (matches.length) { matchIndex = 0; go(matches[0]) }
+        Kiki.Daemon.request("TextFind", { lid: lines.lid, text: text }, ok => { if (!ok) return; matches = ok.lines; if (matches.length) { matchIndex = 0; go(matches[0]) } })
     }
     function nextMatch(d) { if (!matches.length) return; matchIndex = (matchIndex + d + matches.length) % matches.length; go(matches[matchIndex]) }
 

@@ -1,29 +1,52 @@
-//! SFTP location plugin. Listing prefers a single `find -printf` over an SSH exec channel when
-//! the server allows it (one round trip per directory or per tree); everything else is SFTP.
+//! SFTP location plugin. Listing prefers a single `find` over an SSH exec channel when the
+//! server allows it (one round trip per directory or per tree): GNU `find -printf` where present,
+//! otherwise `find -exec stat` (coreutils or BSD `stat`); everything else is SFTP. Reads keep
+//! `READ_IN_FLIGHT` requests outstanding on a dedicated channel.
 
 use kiki_plugin_sdk::json::Value;
 use kiki_plugin_sdk::{self as sdk, Describe, Entry, Features, Handler, Kind, Meta, Outgoing, PluginError, Result, WriteArgs};
 use russh::client::{self, Handle};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
 use russh::ChannelMsg;
-use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::FileType;
-use std::collections::HashMap;
+use russh_sftp::client::{RawSftpSession, SftpSession};
+use russh_sftp::protocol::{FileType, OpenFlags};
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// SFTP throughput is bounded by round trips, not bandwidth, with one outstanding request.
+const READ_IN_FLIGHT: usize = 16;
+const READ_CHUNK: u32 = 256 * 1024;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FastScan {
+    /// GNU findutils: `find -printf` with NUL-separated fields.
     Gnu,
+    /// A `find` without `-printf` plus coreutils-style `stat -c`.
+    PosixStatC,
+    /// A `find` without `-printf` plus BSD-style `stat -f`.
+    PosixStatF,
     None,
+}
+
+impl FastScan {
+    fn label(self) -> &'static str {
+        match self {
+            FastScan::Gnu => "gnu",
+            FastScan::PosixStatC | FastScan::PosixStatF => "posix",
+            FastScan::None => "none",
+        }
+    }
 }
 
 struct Session {
     handle: Handle<ClientHandler>,
     sftp: SftpSession,
+    /// Second SFTP channel used only for pipelined reads.
+    raw: Arc<RawSftpSession>,
     fast: FastScan,
     fingerprint: Option<String>,
 }
@@ -97,8 +120,12 @@ impl Sftp {
     }
 
     /// Run one command over an exec channel; returns (stdout, exit status).
-    fn exec(&self, sess: &Session, cmd: &str, mut on_data: impl FnMut(&[u8])) -> Result<u32> {
-        self.rt.block_on(async {
+    fn exec(&self, sess: &Session, cmd: &str, on_data: impl FnMut(&[u8])) -> Result<u32> {
+        self.rt.block_on(self.exec_async(sess, cmd, on_data))
+    }
+
+    async fn exec_async(&self, sess: &Session, cmd: &str, mut on_data: impl FnMut(&[u8])) -> Result<u32> {
+        {
             let mut ch = sess.handle.channel_open_session().await.map_err(net)?;
             ch.exec(true, cmd).await.map_err(net)?;
             let mut status = 0u32;
@@ -106,87 +133,185 @@ impl Sftp {
                 match ch.wait().await {
                     Some(ChannelMsg::Data { data }) => on_data(&data),
                     Some(ChannelMsg::ExitStatus { exit_status }) => status = exit_status,
+                    Some(ChannelMsg::Failure) => {
+                        // exec refused (ForceCommand internal-sftp, restricted shell): the server
+                        // leaves the channel open, so close it ourselves.
+                        let _ = ch.close().await;
+                        return Err(PluginError::unsupported());
+                    }
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
                     Some(_) => {}
                     None => break,
                 }
             }
             Ok(status)
-        })
+        }
+    }
+
+    /// The probe must never stall a Connect: 3 s and it is `none`.
+    fn exec_timeout(&self, sess: &Session, cmd: &str, on_data: impl FnMut(&[u8])) -> Result<u32> {
+        self.rt.block_on(async { tokio::time::timeout(Duration::from_secs(3), self.exec_async(sess, cmd, on_data)).await.unwrap_or_else(|_| Err(PluginError::network("probe timed out"))) })
     }
 
     fn probe(&self, sess: &Session) -> FastScan {
         let mut out = Vec::new();
-        match self.exec(sess, "command -v find >/dev/null 2>&1 && find --version 2>/dev/null | head -1", |d| out.extend_from_slice(d)) {
-            Ok(0) if String::from_utf8_lossy(&out).contains("GNU") => FastScan::Gnu,
+        match self.exec_timeout(sess, "command -v find >/dev/null 2>&1 && find --version 2>/dev/null | head -1", |d| out.extend_from_slice(d)) {
+            Ok(0) if String::from_utf8_lossy(&out).contains("GNU") => return FastScan::Gnu,
+            Ok(_) => {}
+            Err(_) => return FastScan::None,
+        }
+        // No GNU find: a plain find plus a stat we can format still beats READDIR round trips.
+        out.clear();
+        let cmd = "command -v find stat >/dev/null 2>&1 || exit 3; if stat -c '%F' / >/dev/null 2>&1; then echo statc; elif stat -f '%HT' / >/dev/null 2>&1; then echo statf; fi";
+        match self.exec_timeout(sess, cmd, |d| out.extend_from_slice(d)) {
+            Ok(0) => match String::from_utf8_lossy(&out).trim() {
+                "statc" => FastScan::PosixStatC,
+                "statf" => FastScan::PosixStatF,
+                _ => FastScan::None,
+            },
             _ => FastScan::None,
         }
     }
 
-    /// GNU find with NUL-separated records: type, link target type, size, mtime, mode, user, group, name.
+    /// One `find` over exec. Entries are held back until the command finishes so a stream that
+    /// dies half way never leaks a partial listing: the caller falls back to SFTP and sends the
+    /// full listing once.
     fn fast_scan(&self, sess: &Session, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
         let depth = if recursive { "" } else { "-maxdepth 1 " };
-        let fmt = if recursive { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%P\\0" } else { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%f\\0" };
-        let cmd = format!("find {} -mindepth 1 {}-printf '{}'", sdk::shell_quote(path), depth, fmt);
-        let mut buf: Vec<u8> = Vec::new();
-        let mut count = 0u64;
-        let mut batch: Vec<Entry> = Vec::with_capacity(1024);
-        let mut flush = |batch: &mut Vec<Entry>, sink: &mut dyn FnMut(Vec<Entry>)| {
-            if !batch.is_empty() {
-                sink(std::mem::take(batch));
+        let q = sdk::shell_quote(path);
+        let cmd = match sess.fast {
+            FastScan::Gnu => {
+                let fmt = if recursive { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%P\\0" } else { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%f\\0" };
+                format!("find {q} -mindepth 1 {depth}-printf '{fmt}'")
             }
+            // One `stat` line per entry (type|size|mtime|mode|user|group) followed by the NUL-terminated
+            // path, so names containing newlines or quotes survive.
+            FastScan::PosixStatC => format!("find {q} -mindepth 1 {depth}-exec sh -c 'for f; do stat -c \"%F|%s|%Y|%a|%U|%G\" \"$f\" 2>/dev/null || echo \"?|0|0|0||\"; printf \"%s\\\\0\" \"$f\"; done' sh {{}} +"),
+            FastScan::PosixStatF => format!("find {q} -mindepth 1 {depth}-exec sh -c 'for f; do stat -f \"%HT|%z|%m|%OLp|%Su|%Sg\" \"$f\" 2>/dev/null || echo \"?|0|0|0||\"; printf \"%s\\\\0\" \"$f\"; done' sh {{}} +"),
+            FastScan::None => return Err(PluginError::unsupported()),
         };
+        let mut buf: Vec<u8> = Vec::new();
+        let mut entries: Vec<Entry> = Vec::new();
+        let gnu = sess.fast == FastScan::Gnu;
         let status = self.exec(sess, &cmd, |data| {
             buf.extend_from_slice(data);
-            // Parse complete 8-field records.
-            loop {
-                let mut fields = Vec::with_capacity(8);
-                let mut pos = 0;
-                let mut ok = true;
-                for _ in 0..8 {
-                    match buf[pos..].iter().position(|&b| b == 0) {
-                        Some(i) => {
-                            fields.push(buf[pos..pos + i].to_vec());
-                            pos += i + 1;
+            while let Some(e) = if gnu { parse_gnu_record(&mut buf, recursive) } else { parse_stat_record(&mut buf, path, recursive) } {
+                entries.push(e);
+            }
+        })?;
+        // GNU find exits 1 when some entry could not be read but still prints everything else;
+        // that is a listing, not a failure. Anything else (killed, 126, 127) is.
+        if status > 1 || (status == 1 && !buf.is_empty()) {
+            return Err(PluginError::io(format!("find exited with {status}")));
+        }
+        let n = entries.len() as u64;
+        let mut it = entries.into_iter().peekable();
+        while it.peek().is_some() {
+            sink(it.by_ref().take(1024).collect());
+        }
+        Ok(n)
+    }
+
+    /// Pipelined download: `READ_IN_FLIGHT` chunk requests outstanding on the raw channel,
+    /// delivered in order.
+    fn read_pipelined(&self, raw: &Arc<RawSftpSession>, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
+        self.rt.block_on(async {
+            let handle = raw.open(path, OpenFlags::READ, Default::default()).await.map_err(sftp_err)?.handle;
+            let size = raw.fstat(handle.clone()).await.ok().and_then(|a| a.attrs.size);
+            let mut inflight: VecDeque<tokio::task::JoinHandle<std::result::Result<Vec<u8>, russh_sftp::client::error::Error>>> = VecDeque::new();
+            let mut next = offset;
+            let mut eof = false;
+            let issue = |raw: &Arc<RawSftpSession>, handle: &str, off: u64| {
+                let raw = Arc::clone(raw);
+                let h = handle.to_string();
+                tokio::task::spawn(async move { raw.read(h, off, READ_CHUNK).await.map(|d| d.data) })
+            };
+            let result: Result<()> = async {
+                loop {
+                    while !eof && inflight.len() < READ_IN_FLIGHT && size.map_or(true, |s| next < s) {
+                        inflight.push_back(issue(raw, &handle, next));
+                        next += READ_CHUNK as u64;
+                    }
+                    let Some(job) = inflight.pop_front() else { break };
+                    match job.await.map_err(PluginError::io)? {
+                        Ok(data) if data.is_empty() => eof = true,
+                        Ok(data) => {
+                            let short = (data.len() as u32) < READ_CHUNK;
+                            out.write_all(&data).map_err(PluginError::io)?;
+                            if short {
+                                eof = true;
+                            }
                         }
-                        None => {
-                            ok = false;
-                            break;
+                        Err(russh_sftp::client::error::Error::Status(st)) if st.status_code == russh_sftp::protocol::StatusCode::Eof => eof = true,
+                        Err(e) => return Err(sftp_err(e)),
+                    }
+                    if eof {
+                        // Drain whatever is still in flight; those chunks are past the end.
+                        while let Some(j) = inflight.pop_front() {
+                            let _ = j.await;
                         }
                     }
                 }
-                if !ok {
-                    break;
-                }
-                buf.drain(..pos);
-                let s = |i: usize| String::from_utf8_lossy(&fields[i]).into_owned();
-                let kind = match fields[0].first() {
-                    Some(b'd') => Kind::Dir,
-                    Some(b'f') => Kind::File,
-                    Some(b'l') => Kind::Link,
-                    _ => Kind::Other,
-                };
-                let mtime_ms = s(3).parse::<f64>().map(|t| (t * 1000.0) as u64).unwrap_or(0);
-                let rel = s(7);
-                let name = rel.rsplit('/').next().unwrap_or("").to_string();
-                batch.push(Entry {
-                    name,
-                    kind,
-                    meta: Some(Meta { size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }),
-                    rel: if recursive { rel } else { String::new() },
-                });
-                count += 1;
-                if batch.len() >= 1024 {
-                    flush(&mut batch, sink);
-                }
+                Ok(())
             }
-        })?;
-        flush(&mut batch, sink);
-        if status != 0 {
-            return Err(PluginError::io(format!("find exited with {status}")));
-        }
-        Ok(count)
+            .await;
+            let _ = raw.close(handle).await;
+            result
+        })
     }
+}
+
+/// GNU `-printf` record: type, link target type, size, mtime, mode, user, group, name/rel path.
+fn parse_gnu_record(buf: &mut Vec<u8>, recursive: bool) -> Option<Entry> {
+    let mut fields = Vec::with_capacity(8);
+    let mut pos = 0;
+    for _ in 0..8 {
+        let i = buf[pos..].iter().position(|&b| b == 0)?;
+        fields.push(buf[pos..pos + i].to_vec());
+        pos += i + 1;
+    }
+    buf.drain(..pos);
+    let s = |i: usize| String::from_utf8_lossy(&fields[i]).into_owned();
+    let kind = match fields[0].first() {
+        Some(b'd') => Kind::Dir,
+        Some(b'f') => Kind::File,
+        Some(b'l') => Kind::Link,
+        _ => Kind::Other,
+    };
+    let mtime_ms = s(3).parse::<f64>().map(|t| (t * 1000.0) as u64).unwrap_or(0);
+    let rel = s(7);
+    let name = rel.rsplit('/').next().unwrap_or("").to_string();
+    Some(Entry { name, kind, meta: Some(Meta { size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }), rel: if recursive { rel } else { String::new() } })
+}
+
+/// `stat` record: `type|size|mtime|mode|user|group\n<path>\0`.
+fn parse_stat_record(buf: &mut Vec<u8>, root: &str, recursive: bool) -> Option<Entry> {
+    let nl = buf.iter().position(|&b| b == b'\n')?;
+    let nul = buf[nl + 1..].iter().position(|&b| b == 0)?;
+    let line = String::from_utf8_lossy(&buf[..nl]).into_owned();
+    let full = String::from_utf8_lossy(&buf[nl + 1..nl + 1 + nul]).into_owned();
+    buf.drain(..nl + 1 + nul + 1);
+    let f: Vec<&str> = line.splitn(6, '|').collect();
+    let get = |i: usize| f.get(i).copied().unwrap_or("");
+    let t = get(0).to_ascii_lowercase();
+    let kind = if t.starts_with("dir") {
+        Kind::Dir
+    } else if t.starts_with("regular") {
+        Kind::File
+    } else if t.starts_with("symbolic") {
+        Kind::Link
+    } else {
+        Kind::Other
+    };
+    let name = full.rsplit('/').next().unwrap_or("").to_string();
+    let prefix = format!("{}/", root.trim_end_matches('/'));
+    let rel = if recursive { full.strip_prefix(&prefix).unwrap_or(&full).to_string() } else { String::new() };
+    Some(Entry {
+        name,
+        kind,
+        meta: Some(Meta { size: get(1).parse().unwrap_or(0), mtime_ms: get(2).parse::<u64>().unwrap_or(0) * 1000, mode: u32::from_str_radix(get(3), 8).ok(), owner: Some(get(4).to_string()), group: Some(get(5).to_string()) }),
+        rel,
+    })
 }
 
 impl Handler for Sftp {
@@ -241,7 +366,7 @@ impl Handler for Sftp {
         let seen = Arc::new(Mutex::new(None));
         let password = secrets.str_field("password").map(str::to_string);
         let passphrase = secrets.str_field("passphrase").map(str::to_string);
-        let (handle, sftp) = self.rt.block_on(async {
+        let (handle, sftp, raw) = self.rt.block_on(async {
             let config = Arc::new(client::Config { inactivity_timeout: Some(Duration::from_secs(300)), keepalive_interval: Some(Duration::from_secs(30)), ..Default::default() });
             let handler = ClientHandler { pinned: pinned.clone(), seen: Arc::clone(&seen) };
             let mut handle = client::connect(config, (host.as_str(), port), handler).await.map_err(|e| PluginError::network(format!("{host}:{port}: {e}")))?;
@@ -272,10 +397,14 @@ impl Handler for Sftp {
             let ch = handle.channel_open_session().await.map_err(net)?;
             ch.request_subsystem(true, "sftp").await.map_err(net)?;
             let sftp = SftpSession::new(ch.into_stream()).await.map_err(sftp_err)?;
-            Ok::<_, PluginError>((handle, sftp))
+            let ch2 = handle.channel_open_session().await.map_err(net)?;
+            ch2.request_subsystem(true, "sftp").await.map_err(net)?;
+            let raw = RawSftpSession::new(ch2.into_stream());
+            raw.init().await.map_err(sftp_err)?;
+            Ok::<_, PluginError>((handle, sftp, Arc::new(raw)))
         })?;
         let fingerprint = seen.lock().unwrap().clone();
-        let mut sess = Session { handle, sftp, fast: FastScan::None, fingerprint: fingerprint.clone() };
+        let mut sess = Session { handle, sftp, raw, fast: FastScan::None, fingerprint: fingerprint.clone() };
         if role == "browse" {
             sess.fast = self.probe(&sess);
         }
@@ -291,12 +420,12 @@ impl Handler for Sftp {
 
     fn capabilities(&mut self, location: &str) -> Result<Value> {
         let fast = self.session(location)?.fast;
-        Ok(Value::obj().b("trash", false).b("setMtime", true).b("mode", true).b("realDirs", true).v("digestKind", Value::Null).s("separator", "/").opt_s("fastScan", if fast == FastScan::Gnu { Some("gnu") } else { None }).b("partialRead", true).done())
+        Ok(Value::obj().b("trash", false).b("setMtime", true).b("mode", true).b("realDirs", true).v("digestKind", Value::Null).s("separator", "/").s("fastScan", fast.label()).b("partialRead", true).done())
     }
 
     fn scan(&mut self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
         let fast = self.session(location)?.fast;
-        if fast == FastScan::Gnu {
+        if fast != FastScan::None {
             let r = {
                 let sess = self.session(location)?;
                 self.fast_scan(sess, path, recursive, sink)
@@ -346,24 +475,8 @@ impl Handler for Sftp {
     }
 
     fn read(&mut self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
-        let sess = self.session(location)?;
-        let sftp = &sess.sftp;
-        self.rt.block_on(async {
-            let mut f = sftp.open(path).await.map_err(sftp_err)?;
-            if offset > 0 {
-                use tokio::io::AsyncSeekExt;
-                f.seek(std::io::SeekFrom::Start(offset)).await.map_err(PluginError::io)?;
-            }
-            let mut buf = vec![0u8; 256 * 1024];
-            loop {
-                let n = f.read(&mut buf).await.map_err(PluginError::io)?;
-                if n == 0 {
-                    break;
-                }
-                out.write_all(&buf[..n]).map_err(PluginError::io)?;
-            }
-            Ok(())
-        })
+        let raw = Arc::clone(&self.session(location)?.raw);
+        self.read_pipelined(&raw, path, offset, out)
     }
 
     fn write(&mut self, location: &str, path: &str, mut args: WriteArgs) -> Result<u64> {

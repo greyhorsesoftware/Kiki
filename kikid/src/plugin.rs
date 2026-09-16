@@ -100,7 +100,10 @@ pub struct Plugin {
     stream: Mutex<Option<u64>>,
     next_id: AtomicU64,
     describe: OnceLock<Value>,
+    last_used: Mutex<std::time::Instant>,
 }
+
+pub const IDLE_EXIT: Duration = Duration::from_secs(300);
 
 impl Plugin {
     pub fn spawn(scheme: &str) -> Result<Arc<Plugin>, VfsError> {
@@ -131,6 +134,7 @@ impl Plugin {
             stream: Mutex::new(None),
             next_id: AtomicU64::new(1),
             describe: OnceLock::new(),
+            last_used: Mutex::new(std::time::Instant::now()),
         });
         let p2 = Arc::clone(&plugin);
         std::thread::Builder::new()
@@ -195,6 +199,7 @@ impl Plugin {
     }
 
     fn begin(&self, mut req: Value, streaming: bool) -> Result<(u64, Receiver<Msg>), VfsError> {
+        *self.last_used.lock().unwrap() = std::time::Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         if let Value::Obj(m) = &mut req {
             m.insert("id".into(), Value::Uint(id));
@@ -275,6 +280,14 @@ impl Plugin {
         let _ = c.wait();
     }
 
+    pub fn idle_for(&self) -> Duration {
+        self.last_used.lock().unwrap().elapsed()
+    }
+
+    pub fn busy(&self) -> bool {
+        !self.pending.lock().unwrap().is_empty()
+    }
+
     pub fn alive(&self) -> bool {
         matches!(self.child.lock().unwrap().try_wait(), Ok(None))
     }
@@ -298,6 +311,23 @@ struct Registry {
 fn registry() -> &'static Mutex<Registry> {
     static R: OnceLock<Mutex<Registry>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(Registry { running: HashMap::new(), described: HashMap::new() }))
+}
+
+/// Reaper: every minute, shut down plugins idle for longer than `IDLE_EXIT` (they respawn on use).
+pub fn start_reaper() {
+    std::thread::Builder::new()
+        .name("plugin-reaper".into())
+        .spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(60));
+            let idle: Vec<(String, Arc<Plugin>)> = registry().lock().unwrap().running.iter().filter(|(_, p)| p.alive() && !p.busy() && p.idle_for() >= IDLE_EXIT).map(|(k, p)| (k.clone(), Arc::clone(p))).collect();
+            for (k, p) in idle {
+                p.shutdown();
+                registry().lock().unwrap().running.remove(&k);
+            }
+            crate::share::reap_idle();
+            crate::helpers::reap_idle();
+        })
+        .expect("spawn reaper");
 }
 
 /// The running plugin for a scheme, spawning it on first use or after a crash.

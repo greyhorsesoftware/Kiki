@@ -115,6 +115,12 @@ FloatingWindow {
     Component { id: search; Column { spacing: 12
         Text { text: (sw.index.entries || 0).toLocaleString() + " names indexed · " + Kiki.Format.bytes(sw.index.bytes || 0) + (sw.index.refreshing ? " · refreshing" : ""); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
         Column { spacing: 4; Repeater { model: sw.index.roots || []; delegate: Text { required property string modelData; text: Kiki.Format.display(modelData, Quickshell.env("HOME")); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } }
+        Row2 { label: "Roots (one per line)"; Rectangle { width: 420; height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+            TextEdit { anchors.fill: parent; anchors.margins: 8; text: (sw.index.roots || []).map(r => Kiki.Format.display(r, Quickshell.env("HOME"))).join("\n"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
+                onEditingFinished: { const roots = text.split("\n").map(s => s.trim()).filter(s => s).map(s => "file://" + encodeURI(s.replace(/^~/, Quickshell.env("HOME")))); Kiki.Daemon.request("SetIndexRoots", { roots: roots }, () => { sw.saved(); sw.reload() }) } } } }
+        Row2 { label: "Excludes (names, one per line)"; Rectangle { width: 420; height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+            TextEdit { anchors.fill: parent; anchors.margins: 8; text: (Kiki.Settings.index && Kiki.Settings.index.excludes ? Kiki.Settings.index.excludes : [".cache", ".git", "node_modules", "__pycache__", ".Trash", "target"]).join("\n"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
+                onEditingFinished: { const ex = text.split("\n").map(s => s.trim()).filter(s => s); Kiki.Daemon.request("SetSettings", { patch: { index: { excludes: ex } } }, () => { Kiki.Settings.load(); Kiki.Daemon.request("IndexRebuild", {}); sw.saved() }) } } } }
         Button { text: "Rebuild index"; onClicked: { Kiki.Daemon.request("IndexRebuild", {}); sw.saved() } }
     } }
     Component { id: openin; Column { spacing: 6

@@ -40,7 +40,7 @@ Spec ─▶ scan ─▶ master map + replica map ─▶ diff (pure) ─▶ Plan 
 **Detectors** (`fn is_changed(master, replica, spec) -> bool`, files only):
 - `SizeMtime` (default): size differs → changed; either mtime unknown → unchanged; `|master.mtime − offset − replica.mtime| > 2000 ms` → changed (boundary inclusive).
 - `SizeOnly`: for FTPS uploads, where the remote mtime cannot be set.
-- `Digest` (not shipped): the S3 ETag strategy from the original, kept as a `DetectorKind` variant so an object-store plugin can select it later by returning it from `change_detector`. The engine falls back to `SizeMtime` when a digest is missing.
+- `Digest`: selected when a plugin's `change_detector` asks for it. Before the diff, any local side computes an MD5 for files whose counterpart carries a usable digest and has the same size, so a local ↔ digest-bearing remote compares content without mtimes. The engine falls back to `SizeMtime` when a digest is missing on either side.
 - Selector: the remote side's plugin answers `change_detector(direction)`: SFTP → SizeMtime either way; FTPS upload → SizeOnly, download → SizeMtime; a local-only mirror → SizeMtime. The UI offers Automatic plus manual override of the two shipped detectors.
 
 **Clock offset** (auto): for every path on both sides that is a file, same size, both mtimes known, collect `master.mtime − replica.mtime`; fewer than three samples → 0; else the median. Manual override in whole hours ±24. A plugin whose detector is `Digest` disables it.

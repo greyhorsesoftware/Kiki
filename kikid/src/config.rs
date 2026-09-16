@@ -93,6 +93,7 @@ pub fn settings() -> Value {
     m.insert("git".into(), Value::obj().b("enabled", true).s("showIgnored", "dim").s("folders", "aggregate").done());
     m.insert("project".into(), Value::obj().u("width", 320).b("arrange", true).b("agent", true).done());
     m.insert("jarvis".into(), Value::obj().s("provider", "omarchy").s("cliCommand", "").done());
+    m.insert("index".into(), Value::obj().v("roots", Value::Arr(vec![])).v("excludes", Value::Arr(vec![])).done());
     merge(&mut m, &v);
     Value::Obj(m)
 }

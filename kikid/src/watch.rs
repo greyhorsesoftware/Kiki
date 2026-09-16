@@ -68,7 +68,14 @@ mod imp {
 
     fn reader(raw: i32) {
         let mut buf = vec![0u8; 64 * 1024];
-        let mut pending: HashMap<PathBuf, Instant> = HashMap::new();
+        struct Batch {
+            at: Instant,
+            added: Vec<Vec<u8>>,
+            removed: Vec<Vec<u8>>,
+            modified: Vec<Vec<u8>>,
+            rescan: bool,
+        }
+        let mut pending: HashMap<PathBuf, Batch> = HashMap::new();
         loop {
             // Poll with a short timeout so coalesced events flush even when quiet.
             let mut pfd = libc::pollfd { fd: raw, events: libc::POLLIN, revents: 0 };
@@ -82,6 +89,8 @@ mod imp {
                         let wd = i32::from_ne_bytes([buf[off], buf[off + 1], buf[off + 2], buf[off + 3]]);
                         let mask = u32::from_ne_bytes([buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]]);
                         let len = u32::from_ne_bytes([buf[off + 12], buf[off + 13], buf[off + 14], buf[off + 15]]) as usize;
+                        let name_bytes = &buf[off + 16..off + 16 + len];
+                        let name: Vec<u8> = name_bytes.iter().take_while(|&&b| b != 0).copied().collect();
                         off += 16 + len;
                         let s = state().lock().unwrap();
                         if let Some((path, _)) = s.by_wd.get(&wd) {
@@ -91,17 +100,30 @@ mod imp {
                                 gone(&p);
                                 continue;
                             }
-                            pending.entry(path.clone()).or_insert_with(Instant::now);
+                            let b = pending.entry(path.clone()).or_insert_with(|| Batch { at: Instant::now(), added: Vec::new(), removed: Vec::new(), modified: Vec::new(), rescan: false });
+                            if mask & libc::IN_Q_OVERFLOW as u32 != 0 || name.is_empty() {
+                                b.rescan = true;
+                            } else if mask & (libc::IN_CREATE | libc::IN_MOVED_TO) as u32 != 0 {
+                                b.added.push(name);
+                            } else if mask & (libc::IN_DELETE | libc::IN_MOVED_FROM) as u32 != 0 {
+                                b.removed.push(name);
+                            } else {
+                                b.modified.push(name);
+                            }
                         }
                     }
                 }
             }
             let now = Instant::now();
-            let due: Vec<PathBuf> = pending.iter().filter(|(_, t)| now.duration_since(**t) >= Duration::from_millis(50)).map(|(p, _)| p.clone()).collect();
+            let due: Vec<PathBuf> = pending.iter().filter(|(_, b)| now.duration_since(b.at) >= Duration::from_millis(50)).map(|(p, _)| p.clone()).collect();
             for p in due {
-                pending.remove(&p);
+                let b = pending.remove(&p).unwrap();
                 if let Some(l) = crate::listing::find(&p) {
-                    l.rescan();
+                    if b.rescan || b.added.len() + b.removed.len() > 5_000 {
+                        l.rescan();
+                    } else {
+                        l.patch(&b.added, &b.removed, &b.modified);
+                    }
                 }
             }
         }
