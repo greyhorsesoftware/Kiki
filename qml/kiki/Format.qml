@@ -1,7 +1,7 @@
 pragma Singleton
 import QtQuick
 
-Singleton {
+QtObject {
     function bytes(n) {
         if (n === undefined || n === null) return ""
         if (n < 1024) return n + " B"

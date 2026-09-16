@@ -3,7 +3,7 @@ import QtQuick
 import "." as Kiki
 
 // settings.toml as served by the daemon, with the same defaults it applies.
-Singleton {
+QtObject {
     id: settings
     property var view: ({ "default": "list", sort: "name", order: "asc", inspector: false, rememberPerFolder: true, columns: ["mtime", "size", "kind"] })
     // Per-folder view memory (plan 02): uri -> { view, sort, order }

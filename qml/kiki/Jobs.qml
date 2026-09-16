@@ -3,7 +3,7 @@ import QtQuick
 import "." as Kiki
 
 // Jobs as the daemon reports them, plus toasts and collision prompts.
-Singleton {
+QtObject {
     id: jobs
     property var list: []            // [Job]
     property var toast: null         // { job, text, undoable, until }

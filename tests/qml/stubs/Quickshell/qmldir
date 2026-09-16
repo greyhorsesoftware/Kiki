@@ -2,4 +2,5 @@
 # the kiki module without Quickshell installed. Passed to qmltestrunner with -import.
 module Quickshell
 singleton Quickshell 1.0 Quickshell.qml
+Singleton 1.0 Singleton.qml
 FileView 1.0 FileView.qml
