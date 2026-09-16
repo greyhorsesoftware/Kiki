@@ -64,6 +64,11 @@ fn scan_impl(h: &DirHandle, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize
     const BUF: usize = 1 << 20; // 1 MiB: a handful of syscalls for 100k entries
     const CHUNK: usize = 1024;
     let fd = h.file.as_raw_fd();
+    // The directory fd lives as long as the listing (phase 2 stats relative to it), so a rescan
+    // must rewind it or getdents64 answers end-of-directory at once.
+    if unsafe { libc::lseek(fd, 0, libc::SEEK_SET) } < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
     let mut buf = vec![0u8; BUF];
     let mut total = 0usize;
     let mut chunk: Vec<RawEntry> = Vec::with_capacity(CHUNK);
