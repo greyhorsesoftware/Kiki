@@ -64,6 +64,8 @@ struct Inner {
     queued: Vec<bool>,
     thumb: Vec<Option<String>>,
     thumb_queued: Vec<bool>,
+    git: Vec<Option<crate::git::Entry>>,
+    git_done: bool,
     scan_done: bool,
     scan_error: Option<String>,
     /// Display order after sort and filter; index into the pool.
@@ -171,6 +173,8 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             queued: Vec::new(),
             thumb: Vec::new(),
             thumb_queued: Vec::new(),
+            git: Vec::new(),
+            git_done: false,
             scan_done: false,
             scan_error: None,
             view: Vec::new(),
@@ -270,6 +274,7 @@ impl Listing {
                 inner.queued.push(false);
                 inner.thumb.push(None);
                 inner.thumb_queued.push(false);
+                inner.git.push(None);
                 inner.pos.push(u32::MAX);
                 if inner.filter.is_none() {
                     inner.view.push(idx);
@@ -310,7 +315,49 @@ impl Listing {
         if total <= SMALL_DIR {
             self.enrich_all(true);
         }
+        self.git_status();
         evict_if_needed();
+    }
+
+    /// Git badges for a local directory inside a repository (plan 15), on a worker, pushed as rows.
+    fn git_status(self: &Arc<Self>) {
+        if !self.uri.is_local() || !crate::git::enabled() || crate::git::repo_root(&self.path).is_none() {
+            return;
+        }
+        let me = Arc::clone(self);
+        thread::Builder::new()
+            .name("git".into())
+            .spawn(move || {
+                crate::git::invalidate(&me.path);
+                if crate::git::status(&me.path).is_none() {
+                    return;
+                }
+                let names: Vec<(u32, String, bool)> = {
+                    let inner = me.inner.lock().unwrap();
+                    (0..inner.pool.len() as u32).map(|i| (i, String::from_utf8_lossy(inner.pool.name(i)).into_owned(), inner.pool.entry_type(i) == EntryType::Dir)).collect()
+                };
+                let mut changed = Vec::new();
+                {
+                    let mut inner = me.inner.lock().unwrap();
+                    for (i, name, is_dir) in names {
+                        if (i as usize) >= inner.git.len() {
+                            break;
+                        }
+                        let e = crate::git::state_for(&me.path, &name, is_dir);
+                        if e.as_ref().map(|e| e.state != crate::git::State::Clean).unwrap_or(false) {
+                            changed.push(i);
+                        }
+                        inner.git[i as usize] = e;
+                    }
+                    inner.git_done = true;
+                }
+                me.push_rows(&changed);
+                let subs = me.inner.lock().unwrap().subscribers.clone();
+                for s in subs {
+                    let _ = s.tx.send(proto::event("RepoChanged").s("root", Uri::from_path(&crate::git::repo_root(&me.path).unwrap_or_default()).to_string()).u("lid", s.lid).done());
+                }
+            })
+            .expect("spawn git");
     }
 
     /// Re-enumerate after a change, keeping metadata for names that still exist.
@@ -335,6 +382,8 @@ impl Listing {
         inner.queued = vec![false; n];
         inner.thumb = vec![None; n];
         inner.thumb_queued = vec![false; n];
+        inner.git = vec![None; n];
+        inner.git_done = false;
         inner.pos = vec![u32::MAX; n];
         inner.pool = pool;
         inner.meta = meta;
@@ -705,7 +754,7 @@ impl Inner {
             .b("isLink", t == EntryType::Link)
             .v("meta", meta)
             .v("thumb", match &self.thumb[idx as usize] { Some(p) => Value::Str(p.clone()), None => Value::Null })
-            .v("git", Value::Null)
+            .v("git", match &self.git[idx as usize] { Some(e) => crate::git::entry_json(e), None => Value::Null })
             .done()
     }
 }

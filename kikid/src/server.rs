@@ -34,6 +34,8 @@ struct Client {
     listings: HashMap<u64, Arc<Listing>>,
     /// Mirror plans served as windowed views: lid -> (job, reason filter)
     plans: HashMap<u64, (u64, String)>,
+    /// Search results served as windowed views: lid -> rows
+    searches: HashMap<u64, Vec<Value>>,
 }
 
 impl Client {
@@ -71,7 +73,7 @@ impl Client {
                 }
             })
             .expect("spawn writer");
-        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new() };
+        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new() };
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -125,9 +127,62 @@ impl Client {
                     if self.plans.contains_key(&lid) {
                         return self.reply(id, self.plan_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
                     }
+                    if let Some(rows) = self.searches.get(&lid) {
+                        let first = b.u64_field("first").unwrap_or(0) as usize;
+                        let count = b.u64_field("count").unwrap_or(60).min(512) as usize;
+                        let slice: Vec<Value> = rows.iter().skip(first).take(count).cloned().collect();
+                        return self.reply(id, Ok(Value::obj().u("first", first as u64).u("n", rows.len() as u64).b("done", true).v("rows", Value::Arr(slice)).done()));
+                    }
                 }
                 self.window(b)
             }
+            "Search" => self.search(b),
+            "IndexStatus" => Ok(Some(crate::index::status_json())),
+            "IndexRebuild" => { crate::index::rebuild_async(); Ok(Some(Value::obj().done())) }
+            "IndexRoots" => Ok(Some(Value::obj().v("roots", Value::Arr(crate::index::roots().iter().map(|r| Value::Str(Uri::from_path(r).to_string())).collect())).done())),
+            "SetIndexRoots" => match b.get("roots") {
+                Some(r) => crate::config::set_settings(&Value::obj().v("index", Value::obj().v("roots", r.clone()).done()).done()).map(|_| { crate::index::rebuild_async(); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string())),
+                None => Err(("Protocol", "missing roots".into())),
+            },
+            "OpenInList" => Ok(Some(Value::obj().v("tools", crate::openin::list_json()).done())),
+            "OpenIn" => {
+                let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
+                let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
+                crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).done())).map_err(|e| ("Invalid", e))
+            }
+            "OpenInTest" => {
+                let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
+                let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
+                match crate::openin::find(&key) {
+                    Some(t) => crate::openin::prepare(&t, &uris, b.u64_field("line"), t.str_field("command").unwrap_or("")).map(|p| Some(Value::obj().s("command", p.command).s("cwd", p.cwd.to_string_lossy()).done())).map_err(|e| ("Invalid", e)),
+                    None => Err(("NotFound", "no such tool".into())),
+                }
+            }
+            "OpenInSessions" => Ok(Some(Value::obj().v("sessions", crate::openin::sessions_json()).done())),
+            "OpenInClose" => match b.str_field("id") {
+                Some(i) if crate::openin::close(i) => Ok(Some(Value::obj().done())),
+                Some(_) => Err(("NotFound", "no session".into())),
+                None => Err(("Protocol", "missing id".into())),
+            },
+            "SetOpenIn" => match b.get("tools").and_then(Value::as_arr) {
+                Some(t) => crate::openin::write_tools(t).map(|_| { let _ = self.tx.send(proto::event("OpenInChanged").done()); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string())),
+                None => Err(("Protocol", "missing tools".into())),
+            },
+            "Repo" => match parse_uri(b, "uri") {
+                Ok(u) if u.is_local() => Ok(Some(crate::git::repo_json(&u.to_path()))),
+                Ok(_) => Ok(Some(Value::Null)),
+                Err(e) => Err(e),
+            },
+            "GitStatus" => match parse_uri(b, "uri") {
+                Ok(u) if u.is_local() => Ok(Some(crate::git::file_json(&u.to_path()))),
+                Ok(_) => Ok(Some(Value::Null)),
+                Err(e) => Err(e),
+            },
+            "GitRefresh" => match parse_uri(b, "uri") {
+                Ok(u) if u.is_local() => { crate::git::invalidate(&u.to_path()); if let Some(l) = crate::listing::find(&u.to_path()) { l.rescan(); } Ok(Some(Value::obj().done())) }
+                Ok(_) => Ok(Some(Value::obj().done())),
+                Err(e) => Err(e),
+            },
             "MirrorPlan" => self.mirror_plan(b),
             "MirrorFilter" => self.mirror_filter(b),
             "MirrorCheck" => self.mirror_check(b),
@@ -303,6 +358,8 @@ impl Client {
         if let Some(l) = self.listings.remove(&lid) {
             l.unsubscribe(self.id, lid);
         }
+        self.plans.remove(&lid);
+        self.searches.remove(&lid);
         Ok(Some(Value::obj().done()))
     }
 
@@ -340,6 +397,52 @@ impl Client {
         let p = stored.plan.lock().unwrap();
         let rows: Vec<Value> = idx.iter().skip(first).take(count.min(512)).map(|&i| crate::mirror::action_json(&p.actions[i])).collect();
         Ok(Value::obj().u("first", first as u64).u("n", idx.len() as u64).b("done", true).v("rows", Value::Arr(rows)).done())
+    }
+
+    fn search(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let q = b.str_field("query").unwrap_or("").to_string();
+        let mode = match b.str_field("mode") {
+            Some("prefix") => crate::index::Mode::Prefix,
+            Some("fuzzy") => crate::index::Mode::Fuzzy,
+            _ => crate::index::Mode::Substring,
+        };
+        let scope = b.str_field("scope").unwrap_or("everywhere");
+        let rows: Vec<Value> = if scope == "location" {
+            // Remote walk: recursive scan through the plugin, filtered by substring.
+            let uri = parse_uri(b, "uri")?;
+            let (session, path) = crate::locations::resolve(&uri).map_err(vfs_err)?;
+            let lower = q.to_ascii_lowercase();
+            let mut out = Vec::new();
+            let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", path.clone()).b("recursive", true).done();
+            let base = uri.clone();
+            session.plugin.request_stream(req, |m| {
+                if let crate::plugin::Msg::Json(v) = m {
+                    if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
+                        for e in entries {
+                            let rel = e.str_field("rel").or(e.str_field("name")).unwrap_or("");
+                            let name = rel.rsplit('/').next().unwrap_or("");
+                            if !lower.is_empty() && !name.to_ascii_lowercase().contains(&lower) { continue; }
+                            let kind = e.str_field("kind").unwrap_or("file");
+                            let full = base.join(rel);
+                            out.push(Value::obj().s("name", name).s("kind", if kind == "dir" { "folder" } else { "file" }).b("isDir", kind == "dir").b("isLink", kind == "link").v("meta", e.get("meta").cloned().unwrap_or(Value::Null)).v("thumb", Value::Null).v("git", Value::Null).s("parent", full.parent().map(|p| p.to_string()).unwrap_or_default()).s("uri", full.to_string()).done());
+                        }
+                    }
+                }
+            }).map_err(vfs_err)?;
+            out
+        } else {
+            crate::index::maybe_refresh();
+            let ix = crate::index::current();
+            let (hits, _capped) = crate::index::query(&ix, &q, mode);
+            hits.iter().map(|h| crate::index::hit_row(&ix, h)).collect()
+        };
+        let n = rows.len() as u64;
+        let capped = n as usize >= crate::index::MAX_RESULTS;
+        self.searches.insert(lid, rows);
+        let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
+        let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
+        Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::current().built_at)).done()))
     }
 
     fn mirror_plan(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {

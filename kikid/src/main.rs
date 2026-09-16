@@ -40,6 +40,10 @@ fn serve() {
             l
         }
     };
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        kikid::index::rebuild_async();
+    });
     if let Err(e) = server::serve(listener) {
         eprintln!("serve: {e}");
         std::process::exit(1);

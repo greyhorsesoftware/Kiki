@@ -16,7 +16,10 @@ pub mod thumbs;
 pub mod toml;
 pub mod vfs;
 pub mod watch;
+pub mod git;
+pub mod index;
 pub mod locations;
+pub mod openin;
 pub mod mirror;
 pub mod plugin;
 
