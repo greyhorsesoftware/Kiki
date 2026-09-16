@@ -9,10 +9,10 @@ QtObject {
     // Per-folder view memory (plan 02): uri -> { view, sort, order }
     property var viewPrefs: ({})
     function viewPref(uri) { return view.rememberPerFolder ? viewPrefs[uri] || null : null }
-    function setViewPref(uri, v, sort, order) {
+    function setViewPref(uri, v, sort, order, hidden) {
         if (!view.rememberPerFolder || !uri) return
-        const p = Object.assign({}, viewPrefs); p[uri] = { view: v, sort: sort, order: order }; viewPrefs = p
-        Kiki.Daemon.request("SetViewPref", { uri: uri, view: v, sort: sort, order: order })
+        const p = Object.assign({}, viewPrefs); p[uri] = { view: v, sort: sort, order: order, hidden: hidden }; viewPrefs = p
+        Kiki.Daemon.request("SetViewPref", { uri: uri, view: v, sort: sort, order: order, hidden: hidden })
     }
     function loadViewPrefs() { Kiki.Daemon.request("ViewPrefs", {}, ok => { if (ok) viewPrefs = ok.folders }) }
     property var timers: ({ toastMs: 8000, searchDebounceMs: 150, mirrorPollMs: 400 })

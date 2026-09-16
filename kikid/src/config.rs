@@ -309,20 +309,28 @@ pub fn view_prefs() -> Value {
     if let Some(Value::Arr(a)) = v.get("folder") {
         for f in a {
             if let Some(uri) = f.str_field("uri") {
-                out.insert(uri.to_string(), Value::obj().s("view", f.str_field("view").unwrap_or("list")).s("sort", f.str_field("sort").unwrap_or("name")).s("order", f.str_field("order").unwrap_or("asc")).done());
+                let mut o = Value::obj().s("view", f.str_field("view").unwrap_or("list")).s("sort", f.str_field("sort").unwrap_or("name")).s("order", f.str_field("order").unwrap_or("asc"));
+                if let Some(h) = f.get("hidden").and_then(Value::as_bool) {
+                    o = o.b("hidden", h);
+                }
+                out.insert(uri.to_string(), o.done());
             }
         }
     }
     Value::Obj(out)
 }
 
-pub fn set_view_pref(uri: &str, view: &str, sort: &str, order: &str) -> std::io::Result<()> {
+pub fn set_view_pref(uri: &str, view: &str, sort: &str, order: &str, hidden: Option<bool>) -> std::io::Result<()> {
     let v = read_named("views.toml");
     let mut list: Vec<Value> = match v.get("folder") {
         Some(Value::Arr(a)) => a.iter().filter(|f| f.str_field("uri") != Some(uri)).cloned().collect(),
         _ => Vec::new(),
     };
-    list.push(Value::obj().s("uri", uri).s("view", view).s("sort", sort).s("order", order).u("at", crate::ops::unix_now()).done());
+    let mut entry = Value::obj().s("uri", uri).s("view", view).s("sort", sort).s("order", order).u("at", crate::ops::unix_now());
+    if let Some(h) = hidden {
+        entry = entry.b("hidden", h);
+    }
+    list.push(entry.done());
     if list.len() > VIEW_PREFS_CAP {
         list.sort_by_key(|f| f.u64_field("at").unwrap_or(0));
         let drop = list.len() - VIEW_PREFS_CAP;
@@ -400,12 +408,14 @@ mod view_pref_tests {
         let d = std::env::temp_dir().join(format!("kiki-views-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::env::set_var("KIKI_CONFIG_DIR", &d);
-        super::set_view_pref("file:///a", "icon", "mtime", "desc").unwrap();
-        super::set_view_pref("file:///b", "columns", "name", "asc").unwrap();
-        super::set_view_pref("file:///a", "list", "size", "asc").unwrap(); // overwrite, not duplicate
+        super::set_view_pref("file:///a", "icon", "mtime", "desc", Some(true)).unwrap();
+        super::set_view_pref("file:///b", "columns", "name", "asc", None).unwrap();
+        super::set_view_pref("file:///a", "list", "size", "asc", Some(true)).unwrap(); // overwrite, not duplicate
         let p = super::view_prefs();
         assert_eq!(p.get("file:///a").unwrap().str_field("view"), Some("list"));
         assert_eq!(p.get("file:///a").unwrap().str_field("sort"), Some("size"));
+        assert_eq!(p.get("file:///a").unwrap().get("hidden"), Some(&crate::json::Value::Bool(true)));
+        assert!(p.get("file:///b").unwrap().get("hidden").is_none(), "unset stays unset");
         assert_eq!(p.get("file:///b").unwrap().str_field("view"), Some("columns"));
         assert!(matches!(&p, crate::json::Value::Obj(m) if m.len() == 2));
         super::clear_view_prefs().unwrap();

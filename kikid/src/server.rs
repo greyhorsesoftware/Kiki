@@ -373,7 +373,7 @@ impl Client {
                 if uri.is_empty() {
                     Err(("Protocol", "missing uri".into()))
                 } else {
-                    crate::config::set_view_pref(uri, b.str_field("view").unwrap_or("list"), b.str_field("sort").unwrap_or("name"), b.str_field("order").unwrap_or("asc"))
+                    crate::config::set_view_pref(uri, b.str_field("view").unwrap_or("list"), b.str_field("sort").unwrap_or("name"), b.str_field("order").unwrap_or("asc"), b.get("hidden").and_then(Value::as_bool))
                         .map(|_| {
                             crate::jobs::broadcast(proto::event("ViewPrefsChanged").s("uri", uri).done());
                             Some(Value::obj().done())

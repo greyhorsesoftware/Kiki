@@ -11,7 +11,7 @@ QtObject {
     property string filterText: ""
     // Dot-files: starts from the setting, toggled per pane with Ctrl+H or the view menu.
     property bool showHidden: Kiki.Settings.view.showHidden === true
-    function setHidden(show) { showHidden = show; listing.showHidden(show) }
+    function setHidden(show) { showHidden = show; listing.showHidden(show); _remember() }
     property var history: []
     property int historyIndex: -1
     property bool focused: false
@@ -35,7 +35,8 @@ QtObject {
         // Per-folder memory (plan 02): restore this folder's view and sort, else keep the current ones.
         const pref = Kiki.Settings.viewPref(target.replace(/\/+$/, "") || target)
         _applying = true
-        if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc" }
+        if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc"; showHidden = pref.hidden !== undefined ? pref.hidden : (Kiki.Settings.view.showHidden === true) }
+        else showHidden = Kiki.Settings.view.showHidden === true
         _applying = false
         listing.open(target)
         if (sortRole !== "name" || sortOrder !== "asc") listing.sort(sortRole, sortOrder)
@@ -43,7 +44,7 @@ QtObject {
         navigated(target)
     }
     property bool _applying: false
-    function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder) }
+    function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }
     function canForward() { return historyIndex < history.length - 1 }

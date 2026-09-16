@@ -172,8 +172,8 @@ Events:
 |---|---|---|
 | `Favorites` | | `{ items: [{ name, uri }] }` |
 | `SetFavorites` | `items` | `{}` |
-| `ViewPrefs` | | `{ folders: { <uri>: { view, sort, order } } }` per-folder view memory |
-| `SetViewPref` | `uri`, `view`, `sort`, `order` | `{}`; emits `ViewPrefsChanged { uri }` |
+| `ViewPrefs` | | `{ folders: { <uri>: { view, sort, order, hidden? } } }` per-folder view memory |
+| `SetViewPref` | `uri`, `view`, `sort`, `order`, `hidden?` | `{}`; emits `ViewPrefsChanged { uri }` |
 | `ClearViewPrefs` | | `{}` |
 | `Integration` | | `{ mime, dbus, hypr, portal: bool, hyprlandAvailable, hyprConfigErrors: [string], mimeapps, bindings, portals, services: path }` (plan 09) |
 | `Integrate` | `parts?: ["mime" \| "dbus" \| "hypr" \| "portal"]` | `{ results: [{ part, ok, message }], status }`; all parts when omitted |
