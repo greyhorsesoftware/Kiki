@@ -12,7 +12,7 @@ A separate 900×640 window (so it can stay open beside the main one) with a page
 
 | Page | Controls | Backing |
 |---|---|---|
-| **General** | default view; sort and order; folders first; show hidden files; inspector on by default; confirm before remote delete; theme: follow Omarchy or pick from the eight themes; font size | `settings.toml [view]`, `[theme]` |
+| **General** | default view; sort and order; folders first; show hidden files; inspector on by default; remember view per folder (with Forget all); list columns (Modified, Size, Kind, Accessed) with the atime caveat; confirm before remote delete; theme: follow Omarchy or pick from the eight themes; font size | `settings.toml [view]`, `[theme]`, plan 21 `ViewPrefs` messages |
 | **Keys** | the keymap as a read-only table with a search box; a note that rebinding is a later version | plan 02's table |
 | **Locations** | the saved locations with edit and remove; Add opens plan 06's dialog | `locations.toml`, keyring |
 | **Omarchy** | the four integration items (folder handler, Show in folder, Hyprland keys and chooser rule, portal dialogs) with on/off state, per-item Apply/Remove, Make kiki the default, Remove kiki from Omarchy | plan 09 `Integration` / `Integrate` / `Unintegrate` |
