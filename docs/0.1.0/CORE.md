@@ -28,7 +28,7 @@ This file fixes the architecture, the decisions every feature relies on, and the
 
 ## Development environment
 
-Everything is developed and run on an Omarchy x86_64 machine: kikid, the plugin helpers, the Quickshell front end, the portal backend and the test harness. No cross-compilation, no macOS builds. CI builds and tests on an Arch x86_64 container and, for the daemon and plugins, on an Arch Linux ARM aarch64 container on GitHub's ARM runners; aarch64 packages ship from CI, and the shell harness runs on x86_64 only until Quickshell is built for ARM in CI. Prerequisites on the machine: `rustup` stable, `quickshell`, `qt6-declarative` (`qmltestrunner`), `cage`, `wtype`, `openssh`, `vsftpd`, `ffmpeg`, `xdg-desktop-portal`, `gnome-keyring` or the Secret Service provider chosen in the open question below.
+Everything is developed and run on an Omarchy x86_64 machine: kikid, the plugin helpers, the Quickshell front end, the portal backend and the test harness. No cross-compilation, no macOS builds. CI builds and tests on an Arch x86_64 container and, for the daemon and plugins, on an Arch Linux ARM aarch64 container on GitHub's ARM runners; aarch64 packages ship from CI, and the shell harness runs on x86_64 only until Quickshell is built for ARM in CI. Prerequisites on the machine: `rustup` stable, `quickshell`, `qt6-declarative` (`qmltestrunner`), `cage`, `wtype`, `openssh`, `vsftpd`, `ffmpeg`, `poppler` (`pdftoppm`), `xdg-desktop-portal`, `gnome-keyring` or the Secret Service provider chosen in the open question below.
 
 ## Cross-cutting rules
 

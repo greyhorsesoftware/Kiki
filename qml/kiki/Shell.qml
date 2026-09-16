@@ -20,6 +20,17 @@ FloatingWindow {
     property bool split: false
     property Kiki.Pane pane: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
     property string toast: ""
+    // The inspected item follows the selection's current row.
+    property string inspectedUri: ""
+    property var inspectedRow: null
+    Connections {
+        target: win.pane.selection
+        function onChanged() {
+            const p = win.pane.selection.current; const r = p >= 0 ? win.pane.listing.row(p) : null
+            win.inspectedRow = r; win.inspectedUri = r ? win.pane.childUri(r.name) : ""
+        }
+    }
+    function submitChmod(uri, mode, recursive) { Kiki.Daemon.request("Submit", { op: { op: "chmod", items: [uri], mode: mode, recursive: recursive } }) }
 
     function start(uri) { pane.open(uri || ("file://" + home)) }
     function loadSidebar() {
@@ -115,10 +126,22 @@ FloatingWindow {
                 onToggleInspector: win.inspector = !win.inspector
                 onToggleSplit: win.split = !win.split
             }
-            Loader {
-                id: viewLoader
+            Row {
                 width: parent.width; height: parent.height - toolbar.height - bar.height
-                sourceComponent: win.pane.view === "icon" ? iconView : (win.pane.view === "columns" ? columnsView : listView)
+                Loader {
+                    id: viewLoader
+                    width: parent.width - (inspectorPanel.visible ? inspectorPanel.width : 0); height: parent.height
+                    sourceComponent: win.pane.view === "icon" ? iconView : (win.pane.view === "columns" ? columnsView : listView)
+                }
+                UI.Inspector {
+                    id: inspectorPanel
+                    // Columns view supplies its own inspector column; icon and list use the toggle.
+                    visible: win.pane.view !== "columns" && win.inspector && win.inspectedUri !== ""
+                    width: Kiki.Theme.inspectorWidth; height: parent.height
+                    uri: win.inspectedUri; row: win.inspectedRow; home: win.home
+                    onOpen: win.openSelected()
+                    onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
+                }
             }
             UI.ShortcutBar {
                 id: bar
@@ -133,5 +156,5 @@ FloatingWindow {
 
     Component { id: listView; Views.ListPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() } } }
     Component { id: iconView; Views.IconPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() } } }
-    Component { id: columnsView; Views.ColumnsPane { pane: win.pane; onActivate: uri => win.openExternal(uri) } }
+    Component { id: columnsView; Views.ColumnsPane { pane: win.pane; home: win.home; onActivate: uri => win.openExternal(uri) } }
 }

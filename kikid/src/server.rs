@@ -139,6 +139,26 @@ impl Client {
                 Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing patch".into())),
             },
+            "Preview" => match parse_uri(b, "uri") {
+                Ok(u) => crate::preview::preview(&u).map(Some).map_err(vfs_err),
+                Err(e) => Err(e),
+            },
+            "Thumbnail" => match parse_uri(b, "uri") {
+                Ok(u) => {
+                    let size = if b.u64_field("size") == Some(256) { crate::thumbs::Size::Large } else { crate::thumbs::Size::Normal };
+                    let tx = self.tx.clone();
+                    let kind = crate::kinds::Kind::guess(crate::vfs::EntryType::File, u.name().as_bytes());
+                    let mtime = std::fs::metadata(u.to_path()).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
+                    crate::thumbs::submit(crate::thumbs::ThumbJob { uri: u, kind, mtime_ms: mtime, size, done: Box::new(move |p| {
+                        let _ = tx.send(match p {
+                            Some(p) => proto::ok(id, Value::obj().s("path", p.to_string_lossy()).done()),
+                            None => proto::err(id, "Unsupported", "no thumbnail"),
+                        });
+                    }) });
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            },
             "Stat" => match parse_uri(b, "uri") {
                 Ok(u) => Listing::stat_uri(&u).map(Some).map_err(vfs_err),
                 Err(e) => Err(e),

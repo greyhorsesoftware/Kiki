@@ -10,7 +10,10 @@ Item {
     signal activate(string uri)
     signal fileSelected(string uri)
     property int columnWidth: 220
+    property string home: ""
     property var columns: []          // [{ uri, cache, selected }]
+    property string inspectedUri: ""
+    property var inspectedRow: null
 
     Component.onCompleted: rebuild()
     Connections { target: root.pane; function onNavigated(uri) { root.rebuild() } }
@@ -28,8 +31,10 @@ Item {
             const cache = cacheComp.createObject(root)
             cache.open(uri)
             cols.push({ uri: uri, cache: cache, selected: -1 })
+            root.inspectedUri = ""; root.inspectedRow = null
         } else {
-            root.fileSelected(cols[fromCol].uri.replace(/\/+$/, "") + "/" + encodeURIComponent(row.name))
+            root.inspectedUri = cols[fromCol].uri.replace(/\/+$/, "") + "/" + encodeURIComponent(row.name); root.inspectedRow = row
+            root.fileSelected(root.inspectedUri)
         }
         columns = cols
         strip.contentX = Math.max(0, cols.length * columnWidth - strip.width)
@@ -38,7 +43,14 @@ Item {
 
     Flickable {
         id: strip
-        anchors.fill: parent; contentWidth: row.width; clip: true; flickableDirection: Flickable.HorizontalFlick
+        anchors.fill: parent; contentWidth: row.width + (inspectorCol.visible ? inspectorCol.width : 0); clip: true; flickableDirection: Flickable.HorizontalFlick
+        UI.Inspector {
+            id: inspectorCol
+            visible: root.inspectedUri !== ""
+            x: row.width; width: Math.max(300, strip.width - row.width); height: strip.height
+            uri: root.inspectedUri; row: root.inspectedRow; home: root.home
+            onOpen: root.activate(root.inspectedUri)
+        }
         Row {
             id: row
             Repeater {

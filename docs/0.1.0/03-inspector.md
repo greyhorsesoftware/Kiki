@@ -15,7 +15,7 @@ One inspector component that is the last column in columns view and a 300 px rig
 **Header**: kind icon, editable name (commits a rename job from plan 04), path in a mono box.
 
 **General tab**:
-- Preview: text (first 40 lines, from `read`, capped at 64 KB), images (scaled, decoded off the UI thread), video (a frame at 10 percent of the duration, with duration and resolution in the fields below), PDF first page (rendered by kikid with `pdfium-render` into the thumbnail cache at 256 px and returned as a path; the kind icon if rendering fails), folders (child names), archives (member list, from plan 05).
+- Preview: text (first 40 lines, from `read`, capped at 64 KB), images (scaled, decoded off the UI thread), video (a frame at 10 percent of the duration, with duration and resolution in the fields below), PDF first page (rendered by spawning `pdftoppm` from poppler, like ffmpeg for video, into the thumbnail cache at 256 px and returned as a path; the kind icon if rendering fails or poppler is absent), folders (child names), archives (member list, from plan 05).
 - Fields: Type, Host (`local` or the location name), Location, Size (bytes and human), Modified, Created (from `statx` birth time when available), Owner, Group, and Git (state, branch and last commit from plan 15; only shown inside a repository).
 - Actions: Open, Open with… (`xdg-open` and the mime handler list).
 

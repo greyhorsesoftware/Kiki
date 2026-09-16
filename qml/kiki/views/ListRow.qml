@@ -22,7 +22,11 @@ Rectangle {
         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
         Row {
             width: r.width - 24 - 36 - 160 - 80 - 120; height: parent.height; spacing: 8
-            UI.Icon { anchors.verticalCenter: parent.verticalCenter; name: r.row ? r.row.kind : "file"; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
+            Item {
+                width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
+                UI.Icon { visible: !(r.row && r.row.thumb); name: r.row ? r.row.kind : "file"; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
+                Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+            }
             Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24; elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? r.fg : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         }
         Text { width: 160; anchors.verticalCenter: parent.verticalCenter; text: r.row && r.row.meta ? Kiki.Format.date(r.row.meta.mtime) : (r.row ? "…" : ""); color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }

@@ -62,6 +62,8 @@ struct Inner {
     pool: StringPool,
     meta: Vec<Option<Meta>>,
     queued: Vec<bool>,
+    thumb: Vec<Option<String>>,
+    thumb_queued: Vec<bool>,
     scan_done: bool,
     scan_error: Option<String>,
     /// Display order after sort and filter; index into the pool.
@@ -163,6 +165,8 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             pool: StringPool::with_capacity(256),
             meta: Vec::new(),
             queued: Vec::new(),
+            thumb: Vec::new(),
+            thumb_queued: Vec::new(),
             scan_done: false,
             scan_error: None,
             view: Vec::new(),
@@ -239,6 +243,8 @@ impl Listing {
                 let idx = inner.pool.push(e.name.as_bytes(), e.kind);
                 inner.meta.push(None);
                 inner.queued.push(false);
+                inner.thumb.push(None);
+                inner.thumb_queued.push(false);
                 inner.pos.push(u32::MAX);
                 if inner.filter.is_none() {
                     inner.view.push(idx);
@@ -302,6 +308,8 @@ impl Listing {
         let old_total = inner.pool.len();
         let n = pool.len();
         inner.queued = vec![false; n];
+        inner.thumb = vec![None; n];
+        inner.thumb_queued = vec![false; n];
         inner.pos = vec![u32::MAX; n];
         inner.pool = pool;
         inner.meta = meta;
@@ -412,6 +420,28 @@ impl Listing {
                 if low_priority {
                     e.done += 1;
                 }
+            }
+            // Thumbnails only for rows inside a live window, at low priority.
+            let kind = inner.pool.kind(idx);
+            let p = inner.pos[idx as usize];
+            let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers(p));
+            if visible && crate::thumbs::thumbable(kind) && inner.thumb[idx as usize].is_none() && !inner.thumb_queued[idx as usize] {
+                inner.thumb_queued[idx as usize] = true;
+                let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+                let uri = self.uri.join(&String::from_utf8_lossy(&name));
+                let me = Arc::clone(self);
+                drop(inner);
+                crate::thumbs::submit(crate::thumbs::ThumbJob { uri, kind, mtime_ms: mtime, size: crate::thumbs::Size::Normal, done: Box::new(move |path| {
+                    {
+                        let mut inner = me.inner.lock().unwrap();
+                        if (idx as usize) < inner.thumb.len() {
+                            inner.thumb[idx as usize] = Some(path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+                            inner.thumb_queued[idx as usize] = false;
+                        }
+                    }
+                    me.push_rows(&[idx]);
+                }) });
+                continue;
             }
         }
         self.push_rows(&done);
@@ -644,7 +674,7 @@ impl Inner {
             .b("isDir", t == EntryType::Dir)
             .b("isLink", t == EntryType::Link)
             .v("meta", meta)
-            .v("thumb", Value::Null)
+            .v("thumb", match &self.thumb[idx as usize] { Some(p) => Value::Str(p.clone()), None => Value::Null })
             .v("git", Value::Null)
             .done()
     }

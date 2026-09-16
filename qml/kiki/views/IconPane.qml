@@ -38,7 +38,11 @@ Item {
                 border.width: 1; border.color: cell.selected ? Kiki.Theme.accent : "transparent"
                 Column {
                     anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 8; width: parent.width - 12
-                    UI.Icon { anchors.horizontalCenter: parent.horizontalCenter; name: cell.row ? cell.row.kind : "file"; size: 44; strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                    Item {
+                        anchors.horizontalCenter: parent.horizontalCenter; width: 64; height: 48
+                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: 44; strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(128, 128); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+                    }
                     Text { width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 }
                 MouseArea {
