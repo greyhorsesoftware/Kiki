@@ -6,17 +6,20 @@ Mockup: the Add-location dialog gains an **SMB** tab; same layout as `AddLocatio
 
 ## Goal
 
-Windows shares, NAS boxes and Samba servers (`smb://nas/media`) browse, transfer and mirror like SFTP and FTPS, through a third location plugin, `kiki-plugin-smb`, with nothing SMB-specific in the daemon or the shell. Shares on the LAN are discovered so adding one is mostly clicking.
+Windows shares, NAS boxes and Samba servers (`smb://nas/media`) browse, transfer and mirror like SFTP and FTPS, through a location plugin built on GIO and the GVfs that Omarchy already runs, with nothing SMB-specific in the daemon or the shell. Shares on the LAN are discovered so adding one is mostly clicking, and the same plugin covers WebDAV and AFP with a smaller form each.
 
-## Client library
+## Client: GIO and GVfs, not libsmbclient
 
-SMB2 and SMB3 with NTLMv2, Kerberos, signing, encryption and DFS referrals are a large surface, and no pure-Rust client is complete enough to ship on. The plugin links **libsmbclient** from Samba, the same library GNOME's gvfs and KDE's kio use, through the `pavao` crate (a safe wrapper; falls back to hand-written `extern "C"` declarations in the style of the device plugins if the crate lags behind Samba). The dependency stays inside the plugin binary; `samba` (Arch package `smbclient`) becomes a runtime dependency of that one plugin, listed as optional in the PKGBUILD like the device libraries. A pure-Rust client can replace it later behind the same plugin protocol.
+Omarchy ships GVfs (Nautilus depends on it), so the session already runs `gvfsd` and its `gvfsd-smb` backend, itself built on libsmbclient. kiki uses that stack through **GIO** rather than linking Samba into its own process:
 
-Consequences of libsmbclient:
-
-- One `SMBCCTX` per session, never shared across threads; the plugin serialises each session behind a mutex like FTPS does, while separate sessions (browse and job) run concurrently under the concurrent SDK.
-- Authentication is a callback: the plugin answers it from the location's config and the keyring secret; a wrong password surfaces as `Auth` with the server's message, a missing share as `NotFound`, an ACL denial as `Denied`.
-- Kerberos works when a ticket exists (`KRB5CCNAME`); the form's **Authentication** select has "Password", "Kerberos ticket" and "Guest".
+- **One plugin, several schemes.** The binary is `kiki-plugin-gio`; the package installs it under the names `kiki-plugin-smb`, `kiki-plugin-dav` and `kiki-plugin-afp`, and it reads its scheme from `argv[0]`. `Describe` reports the scheme's own form (this plan specifies the SMB one; DAV and AFP forms are two smaller tables later). SFTP and FTPS keep their native plugins, which are already built and mock-tested.
+- **Mounting**: `Connect` calls `g_file_mount_enclosing_volume` on `smb://host/share/` with a `GMountOperation` that answers the password prompt from the location's config and keyring secret (`Password`), passes through when a Kerberos ticket is present (`Kerberos ticket`), or answers anonymous (`Guest`). A wrong password surfaces as `Auth` with the server's message; an unknown share as `NotFound` on the `share` field; a refused connection as `Network` naming the host. The mount is shared with the rest of the desktop, so a share mounted in kiki also appears in GTK file choosers.
+- **Listing**: `enumerate_children` with `standard::name,standard::type,standard::size,standard::is-hidden,time::modified,time::modified-usec,unix::mode,owner::user,owner::group`, 512 entries per batch, fills `Meta` inline (`metaInScan: true`); SMB's directory query already carries the attributes, so this is one round trip per batch.
+- **Reads and writes**: `g_file_read` / `g_file_replace` streams with 1 MiB buffers; `partialRead: true` through `seek` on the input stream. `pipelining: false`: GIO is synchronous per call and throughput comes from request size. A job session mounts nothing new; it reuses the mount and runs on its own thread, so a transfer never blocks a listing.
+- **Metadata**: `set_mtime` through `g_file_set_attribute` `time::modified`; `mode: false` (DOS attributes are not a mode).
+- **Discovery**: enumerating `network:///` lists hosts GVfs found through mDNS and WS-Discovery; enumerating `smb://host/` lists the shares. No Avahi or WS-Discovery code in kiki.
+- **Dependencies**: the `gio` and `glib` crates in that one plugin; `gvfs-smb` (and `gvfs` for DAV/AFP) as optional package dependencies. Without a running `gvfsd` the plugin's `Describe` reports `available: false` with "GVfs is not running" and the dialog tab shows that instead of the form.
+- **Trade-offs recorded**: every call crosses D-Bus to `gvfsd-smb`, which is invisible for listings and metadata and a small cost on large transfers compared with direct libsmbclient; the FUSE view GVfs exposes under `/run/user/<uid>/gvfs/` can give the daemon a local path for big copies later. A pure-Rust or direct-libsmbclient client can replace the backend behind the same plugin protocol if GVfs ever becomes a problem.
 
 ## Form (`Describe`)
 
@@ -37,18 +40,18 @@ Remote URI: `smb://<name>/<path>` where `<name>` is the location; the host and s
 
 ## Capabilities and behaviour
 
-- `Capabilities`: `trash: false`, `setMtime: true` (`smbc_utimes`), `mode: false` (DOS attributes are not a mode; the inspector's Permissions tab shows Read-only, Hidden, Archive as three switches later, not in this plan), `realDirs: true`, `digestKind: null`, `separator: "/"`, `partialRead: true` (`smbc_lseek`), `fastScan: "readdirplus" | "none"`.
-- **Listing**: SMB `QUERY_DIRECTORY` returns names with full attributes, so `metaInScan: true` costs nothing: the plugin uses `smbc_readdirplus2` (Samba 4.12+) and fills `Meta` (size, mtime with 100 ns precision, hidden and read-only flags) in one round trip per 64 KiB of entries; older Samba falls back to `readdir` plus one `stat` per entry, reported as `fastScan: "none"`. Dot-files are not the hidden convention on SMB; the plugin maps the DOS Hidden attribute to a leading-dot-equivalent `hidden: true` in `Meta` so the daemon's hidden filter (plan 23) honours it.
-- **Reads and writes**: 1 MiB requests (SMB2 large MTU); libsmbclient is synchronous so throughput comes from request size rather than pipelining (`pipelining: false`). A job session is separate from the browse session, so a transfer never blocks a listing.
+- `Capabilities`: `trash: false`, `setMtime: true` (`smbc_utimes`), `mode: false` (DOS attributes are not a mode; the inspector's Permissions tab shows Read-only, Hidden, Archive as three switches later, not in this plan), `realDirs: true`, `digestKind: null`, `separator: "/"`, `partialRead: true` (stream seek), `fastScan: "gio"` (informational: attributes arrive with the listing).
+- **Listing**: attributes arrive with the names (see the client section), so `metaInScan: true` costs nothing. Dot-files are not the hidden convention on SMB; the plugin maps GIO's `standard::is-hidden` (the DOS Hidden attribute) to `hidden: true` in `Meta` so the daemon's hidden filter (plan 23) honours it.
+- **Reads and writes**: 1 MiB stream buffers; `pipelining: false`. The job session runs on its own thread over the same mount, so a transfer never blocks a listing.
 - **Rename, delete, mkdir**: direct. Delete of a non-empty folder is `NotEmpty` as everywhere.
 - **Mirror**: detector `sizeMtime` both ways; SMB keeps 100 ns timestamps and the engine's clock-offset heuristic handles NAS clocks that drift. `Digest` is never offered.
-- **DFS**: referrals are followed by libsmbclient transparently; the listing shows the target's entries.
-- **Errors**: `NT_STATUS_LOGON_FAILURE` → `Auth`; `ACCESS_DENIED` → `Denied`; `BAD_NETWORK_NAME` → `NotFound` on the `share` field at Connect; `CONNECTION_REFUSED`/`HOST_UNREACHABLE` → `Network` naming the host; `NOT_SUPPORTED` when the server only speaks SMB1 and Encryption is Required → `Invalid` on the encryption field with a one-line explanation.
+- **DFS**: referrals are followed by the GVfs backend transparently; the listing shows the target's entries.
+- **Errors** (from `GIOErrorEnum`): `PERMISSION_DENIED` at mount time → `Auth`, after mount → `Denied`; `NOT_FOUND` / `NOT_MOUNTED` for the share → `NotFound` on the `share` field at Connect; `HOST_NOT_FOUND`, `HOST_UNREACHABLE`, `CONNECTION_REFUSED`, `TIMED_OUT` → `Network` naming the host; `NOT_SUPPORTED` when the server only speaks SMB1 and Encryption is Required → `Invalid` on the encryption field with a one-line explanation. Encryption Required is enforced by passing the option through the mount spec (`smb-encryption=required` in Samba 4.20+); on older GVfs the field is shown disabled with a note.
 
 ## Discovery
 
-- **Hosts**: `avahi-browse -rpt _smb._tcp` (mDNS, what macOS and most NAS boxes announce) and WS-Discovery on 3702 (what Windows 10+ announces), merged, five-second scan on demand when the Browse… button is pressed; NetBIOS browsing is not attempted. Results carry host, address and a model hint when Avahi gives one.
-- **Shares**: libsmbclient's directory listing of `smb://host/` after authentication, minus admin shares (`C$`, `IPC$`, `print$`).
+- **Hosts**: enumerate `network:///` through GIO; GVfs merges mDNS (`_smb._tcp`) and WS-Discovery announcements and returns one entry per host with its name and, when known, the model. Triggered by the **Browse…** button, five-second cap.
+- **Shares**: enumerate `smb://host/` after authentication, minus `IPC$`, `print$` and `<letter>$` admin shares.
 - A later plan can put discovered hosts under a **Network** sidebar header; this plan stops at the dialog.
 
 ## Daemon and shell touches (all generic)
@@ -60,11 +63,11 @@ Remote URI: `smb://<name>/<path>` where `<name>` is the location; the host and s
 
 ## Packaging
 
-`kiki-plugin-smb` is built and installed like the other plugins; `smbclient` (the Samba client library package) is an `optdepends` entry: "SMB locations". The plugin's `Describe` reports `available: false` with the reason when the library is missing, and the dialog tab shows that instead of the form.
+`kiki-plugin-gio` is built like the other plugins and installed three times by name (`kiki-plugin-smb`, `kiki-plugin-dav`, `kiki-plugin-afp`, the last two as symlinks). `optdepends`: `gvfs-smb: SMB locations`, `gvfs: WebDAV and AFP locations`. The plugin's `Describe` reports `available: false` with the reason when `gvfsd` is not reachable on the session bus, and the dialog tab shows that instead of the form.
 
 ## Verification
 
-- Contract tests against a local `smbd` (Arch `samba`, temp `smb.conf` with one share, one user, guest share, and `server min protocol = SMB2`): list, stat, mkdir, rename, delete, upload, download with offset, set mtime; the hidden attribute maps to `hidden`; wrong password is `Auth`; a share name that does not exist is `NotFound` on `share`; Encryption Required against `server smb encrypt = off` is `Invalid` on the encryption field. CI runs these on the Arch container (`smbd` needs no root when bound to a high port with `smb ports`); on macOS the suite is `#[ignore]`.
-- Mirror scan of a 5,000-file share completes in one listing round trip per directory with `readdirplus`; the same scan over the `readdir`+`stat` fallback is slower but produces the identical map (diffed).
-- Discovery finds a Samba instance announced by Avahi on the test machine within five seconds; Browse shares… lists the test share and not `IPC$`.
+- Contract tests against a local `smbd` (Arch `samba`, temp `smb.conf` with one share, one user, a guest share, `server min protocol = SMB2`, bound to a high port with `smb ports`) under `dbus-run-session` with `gvfsd` and `gvfsd-smb` started from the session bus: list, stat, mkdir, rename, delete, upload, download with offset, set mtime; the hidden attribute maps to `hidden`; wrong password is `Auth`; a share name that does not exist is `NotFound` on `share`; Encryption Required against `server smb encrypt = off` is `Invalid` on the encryption field; with `gvfsd` stopped, `Describe` reports `available: false`. CI runs these on the Arch container; on macOS the suite is `#[ignore]`.
+- Mirror scan of a 5,000-file share completes in one enumeration batch per 512 entries and produces the same map as a walk of the share's FUSE view (diffed).
+- Discovery lists the test `smbd` (announced through Avahi in the container) within five seconds; Browse shares… lists the test share and not `IPC$`.
 - `xdg-open smb://nas/media/photos` opens the dialog prefilled with host `nas` and share `media` when no location matches.
