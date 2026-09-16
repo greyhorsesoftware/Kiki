@@ -123,15 +123,26 @@ impl Client {
                     crate::dbus::register_shell(self.tx.clone());
                 }
                 Ok(Some(
-                Value::obj().u("version", proto::PROTOCOL_VERSION).s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION"))).v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect())).done(),
-            ))
+                    Value::obj()
+                        .u("version", proto::PROTOCOL_VERSION)
+                        .s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION")))
+                        .v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect()))
+                        .done(),
+                ))
             }
             "ChooserResult" => {
                 crate::dbus::chooser_result(b.str_field("token").unwrap_or(""), b.get("uris").cloned().unwrap_or(Value::Null));
                 Ok(Some(Value::obj().done()))
             }
             "Keymap" => Ok(Some(Value::obj().v("keys", crate::config::keymap()).done())),
-            "About" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).s("socket", crate::config::socket_path_string()).s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":")).s("configDir", crate::config::config_dir().to_string_lossy()).done())),
+            "About" => Ok(Some(
+                Value::obj()
+                    .s("version", env!("CARGO_PKG_VERSION"))
+                    .s("socket", crate::config::socket_path_string())
+                    .s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":"))
+                    .s("configDir", crate::config::config_dir().to_string_lossy())
+                    .done(),
+            )),
             "ResetSettings" => crate::config::reset_all().map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
             "Ping" => Ok(Some(Value::obj().done())),
             "Version" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).done())),
@@ -175,7 +186,12 @@ impl Client {
             "OpenText" => self.open_text(b),
             "OpenTree" => match (b.u64_field("lid"), parse_uri(b, "uri")) {
                 (Some(lid), Ok(u)) => match crate::tree::Tree::open(&u) {
-                    Ok(t) => { let n = t.visible.len() as u64; self.trees.insert(lid, t); let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done()); Ok(Some(Value::obj().u("n", n).done())) }
+                    Ok(t) => {
+                        let n = t.visible.len() as u64;
+                        self.trees.insert(lid, t);
+                        let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
+                        Ok(Some(Value::obj().u("n", n).done()))
+                    }
                     Err(e) => Err(vfs_err(e)),
                 },
                 (None, _) => Err(("Protocol", "missing lid".into())),
@@ -188,7 +204,10 @@ impl Client {
                 let windows: Vec<Value> = b.get("windows").and_then(Value::as_arr).map(|a| a.to_vec()).unwrap_or_default();
                 let width = b.u64_field("leftWidth").unwrap_or(320) as u32;
                 let tx = self.tx.clone();
-                std::thread::spawn(move || { let r = crate::tree::arrange(&windows, width); let _ = tx.send(proto::ok(id, r)); });
+                std::thread::spawn(move || {
+                    let r = crate::tree::arrange(&windows, width);
+                    let _ = tx.send(proto::ok(id, r));
+                });
                 Ok(None)
             }
             "SharePlugins" => Ok(Some(Value::obj().v("plugins", crate::share::list_json()).done())),
@@ -201,7 +220,13 @@ impl Client {
                 None => Err(("Protocol", "missing plugin".into())),
             },
             "Share" => {
-                let op = Value::obj().s("op", "share").s("plugin", b.str_field("plugin").unwrap_or("")).v("uris", b.get("uris").cloned().unwrap_or(Value::Arr(vec![]))).opt_s("target", b.str_field("target")).v("compose", b.get("compose").cloned().unwrap_or(Value::Null)).done();
+                let op = Value::obj()
+                    .s("op", "share")
+                    .s("plugin", b.str_field("plugin").unwrap_or(""))
+                    .v("uris", b.get("uris").cloned().unwrap_or(Value::Arr(vec![])))
+                    .opt_s("target", b.str_field("target"))
+                    .v("compose", b.get("compose").cloned().unwrap_or(Value::Null))
+                    .done();
                 crate::jobs::submit(op, Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done()))
             }
             "AiStatus" => Ok(Some(crate::ai::status())),
@@ -209,15 +234,30 @@ impl Client {
             "AiCancel" => Ok(Some(Value::obj().b("cancelled", b.u64_field("id").map(crate::ai::cancel).unwrap_or(false)).done())),
             "AiQuery" => {
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
-                crate::ai::query(self.tx.clone(), id, b.str_field("session").unwrap_or("default").to_string(), uris, b.str_field("question").unwrap_or("").to_string(), b.get("history").cloned().unwrap_or(Value::Arr(vec![])));
+                crate::ai::query(
+                    self.tx.clone(),
+                    id,
+                    b.str_field("session").unwrap_or("default").to_string(),
+                    uris,
+                    b.str_field("question").unwrap_or("").to_string(),
+                    b.get("history").cloned().unwrap_or(Value::Arr(vec![])),
+                );
                 Ok(Some(Value::obj().u("id", id).done()))
             }
             "Search" => self.search(b),
             "IndexStatus" => Ok(Some(crate::index::status_json())),
-            "IndexRebuild" => { crate::index::rebuild_async(); Ok(Some(Value::obj().done())) }
+            "IndexRebuild" => {
+                crate::index::rebuild_async();
+                Ok(Some(Value::obj().done()))
+            }
             "IndexRoots" => Ok(Some(Value::obj().v("roots", Value::Arr(crate::index::roots().iter().map(|r| Value::Str(Uri::from_path(r).to_string())).collect())).done())),
             "SetIndexRoots" => match b.get("roots") {
-                Some(r) => crate::config::set_settings(&Value::obj().v("index", Value::obj().v("roots", r.clone()).done()).done()).map(|_| { crate::index::rebuild_async(); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string())),
+                Some(r) => crate::config::set_settings(&Value::obj().v("index", Value::obj().v("roots", r.clone()).done()).done())
+                    .map(|_| {
+                        crate::index::rebuild_async();
+                        Some(Value::obj().done())
+                    })
+                    .map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing roots".into())),
             },
             "OpenInList" => Ok(Some(Value::obj().v("tools", crate::openin::list_json()).done())),
@@ -230,7 +270,9 @@ impl Client {
                 let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 match crate::openin::find(&key) {
-                    Some(t) => crate::openin::prepare(&t, &uris, b.u64_field("line"), t.str_field("command").unwrap_or("")).map(|p| Some(Value::obj().s("command", p.command).s("cwd", p.cwd.to_string_lossy()).done())).map_err(|e| ("Invalid", e)),
+                    Some(t) => crate::openin::prepare(&t, &uris, b.u64_field("line"), t.str_field("command").unwrap_or(""))
+                        .map(|p| Some(Value::obj().s("command", p.command).s("cwd", p.cwd.to_string_lossy()).done()))
+                        .map_err(|e| ("Invalid", e)),
                     None => Err(("NotFound", "no such tool".into())),
                 }
             }
@@ -241,7 +283,12 @@ impl Client {
                 None => Err(("Protocol", "missing id".into())),
             },
             "SetOpenIn" => match b.get("tools").and_then(Value::as_arr) {
-                Some(t) => crate::openin::write_tools(t).map(|_| { let _ = self.tx.send(proto::event("OpenInChanged").done()); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string())),
+                Some(t) => crate::openin::write_tools(t)
+                    .map(|_| {
+                        let _ = self.tx.send(proto::event("OpenInChanged").done());
+                        Some(Value::obj().done())
+                    })
+                    .map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing tools".into())),
             },
             "Repo" => match parse_uri(b, "uri") {
@@ -255,7 +302,13 @@ impl Client {
                 Err(e) => Err(e),
             },
             "GitRefresh" => match parse_uri(b, "uri") {
-                Ok(u) if u.is_local() => { crate::git::invalidate(&u.to_path()); if let Some(l) = crate::listing::find(&u.to_path()) { l.rescan(); } Ok(Some(Value::obj().done())) }
+                Ok(u) if u.is_local() => {
+                    crate::git::invalidate(&u.to_path());
+                    if let Some(l) = crate::listing::find(&u.to_path()) {
+                        l.rescan();
+                    }
+                    Ok(Some(Value::obj().done()))
+                }
                 Ok(_) => Ok(Some(Value::obj().done())),
                 Err(e) => Err(e),
             },
@@ -266,7 +319,24 @@ impl Client {
                 Some(s) => Ok(Some(Value::obj().s("text", crate::mirror::report(&s.spec, &s.plan.lock().unwrap())).done())),
                 None => Err(("NotFound", "no such plan".into())),
             },
-            "Filters" => Ok(Some(Value::obj().v("rules", Value::Arr(crate::mirror::load_filters().iter().map(|r| match r { crate::mirror::Rule::Contains(v) => Value::obj().s("kind", "contains").s("value", v.clone()).done(), crate::mirror::Rule::StartsWith(v) => Value::obj().s("kind", "startsWith").s("value", v.clone()).done(), crate::mirror::Rule::EndsWith(v) => Value::obj().s("kind", "endsWith").s("value", v.clone()).done(), crate::mirror::Rule::Matches(v) => Value::obj().s("kind", "matches").s("value", v.clone()).done() }).collect())).done())),
+            "Filters" => Ok(Some(
+                Value::obj()
+                    .v(
+                        "rules",
+                        Value::Arr(
+                            crate::mirror::load_filters()
+                                .iter()
+                                .map(|r| match r {
+                                    crate::mirror::Rule::Contains(v) => Value::obj().s("kind", "contains").s("value", v.clone()).done(),
+                                    crate::mirror::Rule::StartsWith(v) => Value::obj().s("kind", "startsWith").s("value", v.clone()).done(),
+                                    crate::mirror::Rule::EndsWith(v) => Value::obj().s("kind", "endsWith").s("value", v.clone()).done(),
+                                    crate::mirror::Rule::Matches(v) => Value::obj().s("kind", "matches").s("value", v.clone()).done(),
+                                })
+                                .collect(),
+                        ),
+                    )
+                    .done(),
+            )),
             "SetFilters" => match b.get("rules").and_then(Value::as_arr) {
                 Some(rules) => {
                     let mut m = std::collections::BTreeMap::new();
@@ -290,6 +360,8 @@ impl Client {
                 None => Err(("Protocol", "missing items".into())),
             },
             "Volumes" => Ok(Some(Value::obj().v("items", crate::config::volumes()).done())),
+            "Mount" | "Unmount" | "Eject" | "OpenWith" | "Launch" | "Devices" | "RenameDevice" => self.misc_op(&req.kind, b),
+            "TrashInfo" => Ok(Some(Value::obj().v("items", Value::Arr(crate::ops::trash_infos().into_iter().map(|(n, p, d)| Value::obj().s("name", n).s("path", p).s("deleted", d).done()).collect())).done())),
             "Settings" => Ok(Some(crate::config::settings())),
             "SetSettings" => match b.get("patch") {
                 Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
@@ -304,22 +376,37 @@ impl Client {
                 None => Err(("Protocol", "missing location".into())),
             },
             "AddLocation" | "UpdateLocation" => match b.get("location") {
-                Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null)).map(|_| {
-                    let _ = self.tx.send(proto::event("LocationsChanged").done());
-                    Some(Value::obj().done())
-                }).map_err(vfs_err),
+                Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null))
+                    .map(|_| {
+                        let _ = self.tx.send(proto::event("LocationsChanged").done());
+                        Some(Value::obj().done())
+                    })
+                    .map_err(vfs_err),
                 None => Err(("Protocol", "missing location".into())),
             },
             "RemoveLocation" => match b.str_field("name") {
                 Some(n) => {
-                    if let Some(l) = crate::locations::find(n) { if let Some(p) = l.str_field("plugin") { crate::listing::invalidate_authority(p, n); } }
-                    crate::locations::remove(n).map(|_| { let _ = self.tx.send(proto::event("LocationsChanged").done()); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string()))
+                    if let Some(l) = crate::locations::find(n) {
+                        if let Some(p) = l.str_field("plugin") {
+                            crate::listing::invalidate_authority(p, n);
+                        }
+                    }
+                    crate::locations::remove(n)
+                        .map(|_| {
+                            let _ = self.tx.send(proto::event("LocationsChanged").done());
+                            Some(Value::obj().done())
+                        })
+                        .map_err(|e| ("Io", e.to_string()))
                 }
                 None => Err(("Protocol", "missing name".into())),
             },
             "Disconnect" => match b.str_field("name") {
                 Some(n) => {
-                    if let Some(l) = crate::locations::find(n) { if let Some(p) = l.str_field("plugin") { crate::listing::invalidate_authority(p, n); } }
+                    if let Some(l) = crate::locations::find(n) {
+                        if let Some(p) = l.str_field("plugin") {
+                            crate::listing::invalidate_authority(p, n);
+                        }
+                    }
                     crate::locations::disconnect(n);
                     Ok(Some(Value::obj().done()))
                 }
@@ -335,12 +422,18 @@ impl Client {
                     let tx = self.tx.clone();
                     let kind = crate::kinds::Kind::guess(crate::vfs::EntryType::File, u.name().as_bytes());
                     let mtime = std::fs::metadata(u.to_path()).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-                    crate::thumbs::submit(crate::thumbs::ThumbJob { uri: u, kind, mtime_ms: mtime, size, done: Box::new(move |p| {
-                        let _ = tx.send(match p {
-                            Some(p) => proto::ok(id, Value::obj().s("path", p.to_string_lossy()).done()),
-                            None => proto::err(id, "Unsupported", "no thumbnail"),
-                        });
-                    }) });
+                    crate::thumbs::submit(crate::thumbs::ThumbJob {
+                        uri: u,
+                        kind,
+                        mtime_ms: mtime,
+                        size,
+                        done: Box::new(move |p| {
+                            let _ = tx.send(match p {
+                                Some(p) => proto::ok(id, Value::obj().s("path", p.to_string_lossy()).done()),
+                                None => proto::err(id, "Unsupported", "no thumbnail"),
+                            });
+                        }),
+                    });
                     Ok(None)
                 }
                 Err(e) => Err(e),
@@ -364,7 +457,11 @@ impl Client {
             "PromptReply" => match (b.u64_field("job"), b.str_field("choice")) {
                 (Some(j), Some(c)) => {
                     let all = b.get("applyToAll").and_then(Value::as_bool).unwrap_or(false);
-                    if crate::jobs::prompt_reply(j, c, all) { Ok(Some(Value::obj().done())) } else { Err(("NotFound", "no prompt pending".into())) }
+                    if crate::jobs::prompt_reply(j, c, all) {
+                        Ok(Some(Value::obj().done()))
+                    } else {
+                        Err(("NotFound", "no prompt pending".into()))
+                    }
                 }
                 _ => Err(("Protocol", "missing job or choice".into())),
             },
@@ -451,6 +548,7 @@ impl Client {
 }
 
 impl Client {
+    #[allow(clippy::type_complexity)]
     fn plan_rows(&self, lid: u64) -> Result<(Arc<crate::mirror::Stored>, Vec<usize>), (&'static str, String)> {
         let (job, reason) = self.plans.get(&lid).cloned().ok_or(("NotFound", "no plan view".to_string()))?;
         let stored = crate::mirror::stored(job).ok_or(("NotFound", "no such plan".to_string()))?;
@@ -496,20 +594,37 @@ impl Client {
             let mut out = Vec::new();
             let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", path.clone()).b("recursive", true).done();
             let base = uri.clone();
-            session.plugin.request_stream(req, |m| {
-                if let crate::plugin::Msg::Json(v) = m {
-                    if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
-                        for e in entries {
-                            let rel = e.str_field("rel").or(e.str_field("name")).unwrap_or("");
-                            let name = rel.rsplit('/').next().unwrap_or("");
-                            if !lower.is_empty() && !name.to_ascii_lowercase().contains(&lower) { continue; }
-                            let kind = e.str_field("kind").unwrap_or("file");
-                            let full = base.join(rel);
-                            out.push(Value::obj().s("name", name).s("kind", if kind == "dir" { "folder" } else { "file" }).b("isDir", kind == "dir").b("isLink", kind == "link").v("meta", e.get("meta").cloned().unwrap_or(Value::Null)).v("thumb", Value::Null).v("git", Value::Null).s("parent", full.parent().map(|p| p.to_string()).unwrap_or_default()).s("uri", full.to_string()).done());
+            session
+                .plugin
+                .request_stream(req, |m| {
+                    if let crate::plugin::Msg::Json(v) = m {
+                        if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
+                            for e in entries {
+                                let rel = e.str_field("rel").or(e.str_field("name")).unwrap_or("");
+                                let name = rel.rsplit('/').next().unwrap_or("");
+                                if !lower.is_empty() && !name.to_ascii_lowercase().contains(&lower) {
+                                    continue;
+                                }
+                                let kind = e.str_field("kind").unwrap_or("file");
+                                let full = base.join(rel);
+                                out.push(
+                                    Value::obj()
+                                        .s("name", name)
+                                        .s("kind", if kind == "dir" { "folder" } else { "file" })
+                                        .b("isDir", kind == "dir")
+                                        .b("isLink", kind == "link")
+                                        .v("meta", e.get("meta").cloned().unwrap_or(Value::Null))
+                                        .v("thumb", Value::Null)
+                                        .v("git", Value::Null)
+                                        .s("parent", full.parent().map(|p| p.to_string()).unwrap_or_default())
+                                        .s("uri", full.to_string())
+                                        .done(),
+                                );
+                            }
                         }
                     }
-                }
-            }).map_err(vfs_err)?;
+                })
+                .map_err(vfs_err)?;
             out
         } else {
             crate::index::maybe_refresh();
@@ -566,6 +681,50 @@ impl Client {
     }
 
     /// Text views (plan 13): lines come from the highlight helper per window.
+    fn misc_op(&mut self, t: &str, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        match t {
+            "Mount" => {
+                let dev = b.str_field("device").unwrap_or("").to_string();
+                let mnt = crate::config::mount(&dev).map_err(|m| ("Io", m))?;
+                crate::jobs::broadcast(proto::event("VolumesChanged").done());
+                Ok(Some(Value::obj().s("uri", crate::vfs::uri::Uri::local(&mnt).map(|u| u.to_string()).unwrap_or_default()).s("mountPoint", mnt).done()))
+            }
+            "Unmount" => {
+                crate::config::unmount(b.str_field("device").unwrap_or("")).map_err(|m| ("Io", m))?;
+                crate::jobs::broadcast(proto::event("VolumesChanged").done());
+                Ok(Some(Value::obj().done()))
+            }
+            "Eject" => {
+                if let Some(uri) = b.str_field("uri") {
+                    crate::devices::eject(uri).map_err(|e| (e.code(), e.message()))?;
+                    return Ok(Some(Value::obj().done()));
+                }
+                crate::config::eject(b.str_field("device").unwrap_or("")).map_err(|m| ("Io", m))?;
+                crate::jobs::broadcast(proto::event("VolumesChanged").done());
+                Ok(Some(Value::obj().done()))
+            }
+            "Devices" => Ok(Some(crate::devices::list_json())),
+            "RenameDevice" => {
+                let uri = Uri::parse(b.str_field("uri").unwrap_or("")).map_err(|e| ("Protocol", e.0.to_string()))?;
+                crate::devices::rename(&uri.authority, b.str_field("name").unwrap_or("")).map_err(|e| ("Io", e.to_string()))?;
+                crate::jobs::broadcast(proto::event("DeviceAdded").v("device", Value::Null).done());
+                Ok(Some(Value::obj().done()))
+            }
+            "OpenWith" => {
+                let uri = Uri::parse(b.str_field("uri").unwrap_or("")).map_err(|e| ("Protocol", e.0.to_string()))?;
+                let path = crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))?;
+                Ok(Some(crate::desktop::apps_json(&path)))
+            }
+            "Launch" => {
+                let uris: Vec<String> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+                let uris: Vec<String> = uris.iter().map(|u| Uri::parse(u).ok().and_then(|x| crate::ops::local_path(&x).ok()).map(|p| Uri::from_path(&p).to_string()).unwrap_or_else(|| u.clone())).collect();
+                crate::desktop::launch(b.str_field("app").unwrap_or(""), &uris).map_err(|m| ("Io", m))?;
+                Ok(Some(Value::obj().done()))
+            }
+            _ => Err(("Protocol", format!("unknown {t}"))),
+        }
+    }
+
     fn open_text(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
         let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
         let u = parse_uri(b, "uri")?;

@@ -46,5 +46,5 @@ Copies of large trees use `copy_file_range` in a loop until all bytes are writte
 
 - Each operation has a round-trip test: run, undo, tree byte-identical to before (`diff -r`).
 - Cancelling a 1 GB copy stops within 200 ms and leaves no partial file.
-- Trashed files appear in the Trash favorite and restore to their original path.
+- Trashed files appear in the Trash favorite (`trash:///`, a listing of `~/.local/share/Trash/files` served by the same window machinery) and restore to their original path: `TrashInfo` gives the original path and deletion date per name, `Enter` or the context menu submits `restore { names }` (undoable back to trash), `Del` submits `delete` on the `trash:///name` URI (permanent, confirmed by the key itself), and Empty Trash submits `emptyTrash` (not undoable). Paste, New folder and drops into the trash listing are disabled.
 - Undo after a daemon restart works for the last entry.

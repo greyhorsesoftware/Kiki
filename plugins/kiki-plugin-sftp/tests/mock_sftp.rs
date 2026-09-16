@@ -54,10 +54,7 @@ fn attrs(n: &Node) -> FileAttributes {
 
 fn children(fs: &BTreeMap<String, Node>, dir: &str, recursive: bool) -> Vec<(String, Node)> {
     let prefix = if dir == "/" { "/".to_string() } else { format!("{dir}/") };
-    fs.iter()
-        .filter(|(p, _)| p.starts_with(&prefix) && p.len() > prefix.len() && (recursive || !p[prefix.len()..].contains('/')))
-        .map(|(p, n)| (p.clone(), n.clone()))
-        .collect()
+    fs.iter().filter(|(p, _)| p.starts_with(&prefix) && p.len() > prefix.len() && (recursive || !p[prefix.len()..].contains('/'))).map(|(p, n)| (p.clone(), n.clone())).collect()
 }
 
 fn pseudo_random(len: usize) -> Vec<u8> {
@@ -189,7 +186,7 @@ impl SshSession {
             return match mode {
                 ExecMode::Gnu => (b"find (GNU findutils) 4.9.0\n".to_vec(), 0),
                 ExecMode::StatC | ExecMode::StatF => (Vec::new(), 0), // `find --version` fails, `| head -1` exits 0
-                _ => (Vec::new(), 1),                                   // command -v find fails
+                _ => (Vec::new(), 1),                                 // command -v find fails
             };
         }
         if cmd.contains("stat -c '%F' /") {
@@ -631,7 +628,14 @@ fn normalise(entries: &[Value]) -> Vec<(String, String, u64, u64, u64, String)> 
         .iter()
         .map(|e| {
             let m = e.get("meta").expect("meta inline");
-            (e.str_field("name").unwrap().to_string(), e.str_field("kind").unwrap().to_string(), m.u64_field("size").unwrap(), m.u64_field("mtime").unwrap(), m.u64_field("mode").unwrap(), e.str_field("rel").unwrap_or("").to_string())
+            (
+                e.str_field("name").unwrap().to_string(),
+                e.str_field("kind").unwrap().to_string(),
+                m.u64_field("size").unwrap(),
+                m.u64_field("mtime").unwrap(),
+                m.u64_field("mode").unwrap(),
+                e.str_field("rel").unwrap_or("").to_string(),
+            )
         })
         .collect();
     v.sort();

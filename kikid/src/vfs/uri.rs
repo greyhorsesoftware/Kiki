@@ -37,11 +37,7 @@ impl Uri {
         if scheme == "file" && !authority.is_empty() && authority != "localhost" {
             return Err(UriError("file uri with host"));
         }
-        Ok(Uri {
-            scheme: scheme.clone(),
-            authority: if scheme == "file" { String::new() } else { authority.to_string() },
-            path: normalize(&percent_decode(path)),
-        })
+        Ok(Uri { scheme: scheme.clone(), authority: if scheme == "file" { String::new() } else { authority.to_string() }, path: normalize(&percent_decode(path)) })
     }
 
     pub fn local(path: &str) -> Result<Uri, UriError> {

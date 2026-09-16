@@ -7,6 +7,7 @@ FG="#c0caf5"; FGD="#a9b1d6"; CM="#565f89"
 BLUE="#7aa2f7"; CYAN="#7dcfff"; PURPLE="#bb9af7"; GREEN="#9ece6a"; YELLOW="#e0af68"; RED="#f7768e"
 
 # ---------- icons (16px grid, stroke) ----------
+ALIASES = {"phone": "hdd", "mail": "doc", "message": "doc", "share": "arr-u", "sparkle": "info", "eject": "arr-u", "usb": "hdd"}
 def ico(name, size=16, color="currentColor", sw=1.5):
     paths = {
         "folder": '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5z"></path>',
@@ -42,6 +43,8 @@ def ico(name, size=16, color="currentColor", sw=1.5):
         "warn": '<path d="M8 2.5 14 13H2z"></path><path d="M8 6.5v3"></path><path d="M8 11.3v.2"></path>',
         "sort-up": '<path d="m4 9 4-4 4 4"></path>',
     }
+    if name not in paths:
+        name = ALIASES.get(name, name)
     return (f'<svg width="{size}" height="{size}" viewBox="0 0 16 16" fill="none" stroke="{color}" '
             f'stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round">{paths[name]}</svg>')
 
@@ -100,7 +103,7 @@ def sidebar(active="home"):
     {side_item("download", "Downloads", BLUE)}
     {side_item("folder", "Pictures", BLUE)}
     {side_item("folder", "Projects", BLUE, active == "projects")}
-    {side_item("trash", "Trash", FGD)}
+    {side_item("trash", "Trash", FGD, active == "trash")}
   </div>
   {side_header("Locations", plus=True)}
   <div style="display: flex; flex-direction: column; gap: 1px;">
@@ -832,7 +835,126 @@ def open_dialog():
 </div>"""
 OPEN = open_dialog()
 
-files = {"Main.dc.html": MAIN, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
+
+# ---------- Settings window (plan 20) ----------
+def settings_nav(active):
+    pages = ["General", "Keys", "Locations", "Search", "Open in", "Share", "Git", "Project mode", "Jarvis", "Plugins", "About"]
+    rows = ""
+    for pg in pages:
+        on = pg == active
+        rows += f'<div style="display: flex; align-items: center; height: 30px; margin: 0 8px; padding: 0 16px; border-radius: 2px; background: {HL if on else "transparent"}; color: {FG if on else FGD};">{pg}</div>'
+    return f'<div style="display: flex; flex-direction: column; gap: 1px; width: 200px; flex: none; padding: 12px 0; background: {BGD}; border-right: 1px solid {LINE}; box-sizing: border-box;">{rows}</div>'
+
+def setting_row(label, control, hint=""):
+    h = f'<span style="font-size: 11px; color: {CM};">{hint}</span>' if hint else ""
+    return (f'<div style="display: flex; align-items: center; gap: 16px; min-height: 40px;">'
+            f'<div style="display: flex; flex-direction: column; gap: 2px; width: 220px; flex: none;"><span style="color: {FG};">{label}</span>{h}</div>{control}</div>')
+
+def toggle(on):
+    return (f'<div style="display: flex; align-items: center; width: 34px; height: 18px; padding: 2px; box-sizing: border-box; border-radius: 9px; background: {BLUE if on else GUT}; justify-content: {"flex-end" if on else "flex-start"};">'
+            f'<div style="width: 14px; height: 14px; border-radius: 7px; background: {BG if on else FGD};"></div></div>')
+
+settings_general = f"""<div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; padding: 20px 28px; gap: 4px; overflow: hidden;">
+  <div style="display: flex; align-items: center; justify-content: space-between; height: 32px; margin-bottom: 8px;"><span style="font-size: 15px; font-weight: 600; color: {FG};">General</span><span style="font-size: 11px; color: {GREEN};">Saved</span></div>
+  {setting_row("Default view", select("List", width="220px"))}
+  {setting_row("Sort by", select("Name · ascending", width="220px"))}
+  {setting_row("Folders first", toggle(True))}
+  {setting_row("Show hidden files", toggle(False), "Ctrl+H toggles per window")}
+  {setting_row("Inspector on by default", toggle(True))}
+  {setting_row("Confirm before remote delete", toggle(True), "remote locations have no trash")}
+  {setting_row("Theme", select("Follow Omarchy", width="220px"), "or pick one of the eight Omarchy themes")}
+  {setting_row("Font size", select("13 px", width="120px"))}
+  {setting_row("Editor", select("Neovim · nvim --listen", width="300px"), "used by e and the code viewer")}
+  <div style="flex-grow: 1;"></div>
+  <div style="display: flex; gap: 8px;">{btn("Reset all settings…")}<span style="flex-grow: 1;"></span><span style="font-size: 11px; color: {CM}; align-self: center;">~/.config/kiki/settings.toml · every control writes through immediately</span></div>
+</div>"""
+
+SETTINGS = f"""<div style="display: flex; width: 900px; height: 640px; background: {BG}; border: 2px solid {BLUE}; box-sizing: border-box; overflow: hidden;">
+  {settings_nav("General")}{settings_general}
+</div>"""
+
+# ---------- Share sheet (plan 18) ----------
+def share_target(icon, name, detail, color, online=True, selected=False):
+    return (f'<div style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 12px; border-radius: 2px; background: {HL if selected else "transparent"}; color: {FG if online else CM};">'
+            f'{ico(icon, size=14, color=color)}<span style="flex-grow: 1;">{name}</span><span style="font-size: 11px; color: {CM};">{detail}</span>'
+            f'<span style="width: 6px; height: 6px; border-radius: 3px; background: {GREEN if online else GUT};"></span></div>')
+
+SHARE_SHEET = f"""<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.5);">
+  <div style="display: flex; width: 640px; height: 420px; background: {BG}; border: 2px solid {BLUE}; box-sizing: border-box;">
+    <div style="display: flex; flex-direction: column; width: 220px; flex: none; padding: 16px 0; background: {BGD}; border-right: 1px solid {LINE};">
+      <span style="padding: 0 16px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: {CM};">Share via</span>
+      {share_target("phone", "LocalSend", "nearby", CYAN, selected=True)}
+      {share_target("mail", "Mail", "SMTP", BLUE)}
+      {share_target("message", "Messages", "KDE Connect · Signal", PURPLE)}
+      {share_target("share", "Tailscale", "Taildrop", GREEN)}
+      {share_target("share", "AirDrop", "needs owl", YELLOW, online=False)}
+    </div>
+    <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; padding: 16px 20px; gap: 10px;">
+      <div style="display: flex; align-items: center; justify-content: space-between;"><span style="font-size: 15px; font-weight: 600; color: {FG};">Share 2 items</span><span style="font-size: 11px; color: {CM};">screenshot-2026-09-12.png, notes.md · 1.2 MB</span></div>
+      <span style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: {CM};">Devices nearby</span>
+      <div style="display: flex; flex-direction: column; gap: 1px; padding: 4px; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px;">
+        {share_target("phone", "David's iPhone", "iOS", CYAN, selected=True)}
+        {share_target("phone", "Pixel 8", "Android", CYAN)}
+        {share_target("hdd", "studio-mac", "macOS", FGD)}
+        {share_target("hdd", "192.168.1.40", "manual", FGD, online=False)}
+      </div>
+      {dfield("PIN (if the receiver asks)", "Optional", placeholder=True)}
+      <div style="flex-grow: 1;"></div>
+      <div style="display: flex; align-items: center; gap: 8px;"><span style="flex-grow: 1; font-size: 11px; color: {CM};">Progress shows in the Activity popover.</span>{btn("Cancel")}{btn("Send", primary=True)}</div>
+    </div>
+  </div>
+</div>"""
+share_main = f'<div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: hidden;">{lhead}<div style="display: flex; flex-direction: column; padding: 4px 0;">{lrows}</div>{SHARE_SHEET}</div>'
+SHARE = window(sidebar("home"), toolbar(["~"], "list", "Search Home") + share_main + statusbar("12 items · 2 selected"))
+
+# ---------- Jarvis panel (plan 19) ----------
+def chat(role, text):
+    if role == "user":
+        return f'<div style="align-self: flex-end; max-width: 85%; padding: 8px 10px; background: {HL}; color: {FG}; border-radius: 2px; white-space: pre-wrap;">{text}</div>'
+    return f'<div style="align-self: flex-start; max-width: 92%; padding: 8px 10px; color: {FGD}; white-space: pre-wrap; line-height: 1.5;">{text}</div>'
+
+JARVIS_PANEL = f"""<div style="display: flex; flex-direction: column; width: 400px; flex: none; border-left: 1px solid {LINE}; background: {BG}; font-size: 12px;">
+  <div style="display: flex; align-items: center; gap: 8px; height: 40px; flex: none; padding: 0 14px; border-bottom: 1px solid {LINE};">
+    {ico("sparkle", size=14, color=PURPLE)}<span style="font-weight: 600; color: {FG};">Jarvis</span><span style="font-size: 11px; color: {CM};">claude · from Omarchy</span><span style="flex-grow: 1;"></span>
+    <span style="font-size: 11px; color: {CM};">notes.md</span><span style="color: {CM};">{ico("x", size=12)}</span>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 10px; flex-grow: 1; min-height: 0; padding: 14px; overflow: hidden;">
+    {chat("user", "how many times does 'omarchy' appear in this file?")}
+    {chat("assistant", "12 times (lines 3, 8, 14, 21, 27, 33, 40, 41, 55, 62, 70, 88).")}
+    {chat("user", "summarise the TODO section")}
+    {chat("assistant", "Three open items: finish the SFTP fast-scan fallback, add a Trash view with Restore, and write the release workflow for aarch64. The first two are marked for this week; the third has no date.")}
+    <span style="font-size: 11px; color: {CM};">count lines · word count · file size are answered locally; everything else runs <span style="color: {FGD};">claude -p</span> with the file attached</span>
+  </div>
+  <div style="display: flex; align-items: center; gap: 8px; height: 40px; flex: none; margin: 0 12px 12px; padding: 0 10px; border: 1px solid {BLUE}; border-radius: 2px; color: {FG};"><span style="color: {PURPLE};">›</span><span>Ask about notes.md<span style="display: inline-block; width: 1px; height: 14px; margin-left: 1px; background: {FG}; vertical-align: -2px;"></span></span><span style="flex-grow: 1;"></span><span style="font-size: 10px; padding: 1px 5px; border: 1px solid {GUT}; border-radius: 2px; color: {GUT};">Enter</span></div>
+</div>"""
+jarvis_main = f'<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;"><div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; overflow: hidden;">{lhead}<div style="display: flex; flex-direction: column; padding: 4px 0;">{lrows}</div></div>{JARVIS_PANEL}</div>'
+JARVIS = window(sidebar("home"), toolbar(["~"], "list", "Search Home") + jarvis_main + statusbar("12 items · 1 selected", keys=[("Enter","ask"),("Esc","close"),("^L","clear"),("⌥Q","toggle Jarvis"),("?","all keys")]))
+
+# ---------- Trash view (plan 04) ----------
+def trash_row(name, kind, original, deleted, size, selected=False):
+    icon, color = KIND[kind]
+    bg = BLUE if selected else "transparent"; fg = BG if selected else FG; dim = BG if selected else CM; ic = BG if selected else color
+    return (f'<div style="display: grid; grid-template-columns: minmax(0, 1fr) 260px 150px 80px; align-items: center; gap: 12px; height: 28px; padding: 0 16px; background: {bg}; color: {fg};">'
+            f'<span style="display: flex; align-items: center; gap: 8px; overflow: hidden;">{ico(icon, size=14, color=ic)}<span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{name}</span></span>'
+            f'<span style="color: {dim}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{original}</span><span style="color: {dim};">{deleted}</span><span style="color: {dim}; text-align: right;">{size}</span></div>')
+
+trash_head = (f'<div style="display: grid; grid-template-columns: minmax(0, 1fr) 260px 150px 80px; align-items: center; gap: 12px; height: 30px; padding: 0 16px; border-bottom: 1px solid {LINE}; '
+              f'font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {CM};"><span>Name</span><span>Original location</span><span>Deleted</span><span style="text-align: right;">Size</span></div>')
+TRASH_ROWS = [("wallpapers.zip", "zip", "~", "12 Sep 2026 14:03", "84.5 MB", True), ("old-notes.md", "md", "~/Documents", "11 Sep 2026 09:40", "3.2 KB"), ("IMG_4021.jpg", "jpg", "~/Pictures/2026", "10 Sep 2026 22:15", "4.1 MB"),
+              ("build", "folder", "~/Projects/kiki/target", "8 Sep 2026 17:02", "—"), ("draft.pdf", "pdf", "~/Downloads", "3 Sep 2026 08:31", "318 KB")]
+TRASH_MENU = f"""<div style="position: absolute; left: 260px; top: 120px; display: flex; flex-direction: column; width: 232px; padding: 4px 0; background: {BGD}; border: 1px solid {GUT}; border-radius: 2px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);">
+  {menu_item("Restore to ~", "Enter")}
+  {menu_item("Delete permanently", "Del", danger=True)}
+  {menu_item("Copy path")}
+  {menu_item("Empty Trash", danger=True, sep=True)}
+</div>"""
+trash_bar = f"""<div style="display: flex; align-items: center; gap: 10px; height: 40px; flex: none; padding: 0 16px; border-bottom: 1px solid {LINE}; box-sizing: border-box;">
+  {ico("trash", size=14, color=FGD)}<span style="color: {FGD};">5 items · 89.1 MB · items are kept until you empty the trash</span><span style="flex-grow: 1;"></span>{btn("Restore")}{btn("Empty Trash…")}
+</div>"""
+trash_main = f'<div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: hidden;">{trash_bar}{trash_head}<div style="display: flex; flex-direction: column; padding: 4px 0;">{"".join(trash_row(*r) for r in TRASH_ROWS)}</div>{TRASH_MENU}</div>'
+TRASH = window(sidebar("trash"), toolbar(["Trash"], "list", "Search Trash") + trash_main + statusbar("5 items · 1 selected", keys=[("Enter","restore"),("Del","delete permanently"),("^A","select all"),("?","all keys")]))
+
+files = {"Main.dc.html": MAIN, "Settings.dc.html": SETTINGS, "ShareSheet.dc.html": SHARE, "Jarvis.dc.html": JARVIS, "TrashView.dc.html": TRASH, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
 for name, body in files.items():
     with open(os.path.join(OUT, name), "w") as f:
         f.write(doc(body))

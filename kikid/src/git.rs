@@ -228,7 +228,14 @@ pub fn repo_json(dir: &Path) -> Value {
             None => (0, 0, false),
         }
     };
-    Value::obj().s("root", crate::vfs::uri::Uri::from_path(&root).to_string()).opt_s("branch", branch.as_deref()).b("detached", detached).u("ahead", ahead as u64).u("behind", behind as u64).b("dirty", dirty).done()
+    Value::obj()
+        .s("root", crate::vfs::uri::Uri::from_path(&root).to_string())
+        .opt_s("branch", branch.as_deref())
+        .b("detached", detached)
+        .u("ahead", ahead as u64)
+        .u("behind", behind as u64)
+        .b("dirty", dirty)
+        .done()
 }
 
 /// Inspector detail: state, branch, last commit for a file.
@@ -251,7 +258,13 @@ pub fn file_json(path: &Path) -> Value {
         .filter(|s| !s.is_empty())
         .map(|s| {
             let f: Vec<&str> = s.split('\0').collect();
-            Value::obj().s("hash", f.first().copied().unwrap_or("")).s("short", f.get(1).copied().unwrap_or("")).s("author", f.get(2).copied().unwrap_or("")).u("time", f.get(3).and_then(|t| t.parse().ok()).unwrap_or(0)).s("subject", f.get(4).copied().unwrap_or("")).done()
+            Value::obj()
+                .s("hash", f.first().copied().unwrap_or(""))
+                .s("short", f.get(1).copied().unwrap_or(""))
+                .s("author", f.get(2).copied().unwrap_or(""))
+                .u("time", f.get(3).and_then(|t| t.parse().ok()).unwrap_or(0))
+                .s("subject", f.get(4).copied().unwrap_or(""))
+                .done()
         })
         .unwrap_or(Value::Null);
     Value::obj().s("state", e.state.as_str()).b("staged", e.staged).opt_s("branch", branch.as_deref()).v("last", last).done()
@@ -302,7 +315,8 @@ mod tests {
         let f = file_json(&d.join("tracked.txt"));
         assert_eq!(f.str_field("state"), Some("modified"));
         assert_eq!(f.get("last").unwrap().str_field("subject"), Some("init"));
-        assert!(repo_root(&std::env::temp_dir()).is_none() || true);
+        // a bare temp dir is not a repository (or is inside one on some CI images): either answer is valid
+        let _ = repo_root(&std::env::temp_dir());
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

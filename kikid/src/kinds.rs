@@ -79,7 +79,8 @@ impl Kind {
             b"pdf" => Kind::Pdf,
             b"doc" | b"docx" | b"odt" | b"rtf" | b"xls" | b"xlsx" | b"ods" | b"ppt" | b"pptx" | b"odp" | b"epub" => Kind::Document,
             b"txt" | b"md" | b"markdown" | b"rst" | b"log" | b"csv" | b"tsv" | b"ini" | b"cfg" | b"conf" | b"nfo" => Kind::Text,
-            b"rs" | b"c" | b"h" | b"cpp" | b"hpp" | b"cc" | b"go" | b"java" | b"kt" | b"js" | b"mjs" | b"jsx" | b"tsx" | b"py" | b"rb" | b"sh" | b"bash" | b"zsh" | b"fish" | b"lua" | b"nix" | b"qml" | b"toml" | b"yaml" | b"yml" | b"json" | b"html" | b"htm" | b"css" | b"scss" | b"sql" | b"php" | b"swift" | b"zig" | b"ex" | b"exs" | b"hs" | b"ml" | b"scala" | b"cs" | b"vim" | b"el" => Kind::Code,
+            b"rs" | b"c" | b"h" | b"cpp" | b"hpp" | b"cc" | b"go" | b"java" | b"kt" | b"js" | b"mjs" | b"jsx" | b"tsx" | b"py" | b"rb" | b"sh" | b"bash" | b"zsh" | b"fish" | b"lua" | b"nix" | b"qml" | b"toml"
+            | b"yaml" | b"yml" | b"json" | b"html" | b"htm" | b"css" | b"scss" | b"sql" | b"php" | b"swift" | b"zig" | b"ex" | b"exs" | b"hs" | b"ml" | b"scala" | b"cs" | b"vim" | b"el" => Kind::Code,
             b"zip" | b"tar" | b"gz" | b"tgz" | b"xz" | b"zst" | b"bz2" | b"7z" | b"rar" | b"deb" | b"rpm" | b"iso" => Kind::Archive,
             _ => Kind::File,
         }

@@ -11,6 +11,8 @@ var paths = {
   "home": "<path d=\"M2.5 7.5 8 3l5.5 4.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1z\"></path><path d=\"M6.5 14V9.5h3V14\"></path>",
   "download": "<path d=\"M8 2v8\"></path><path d=\"m5 7 3 3 3-3\"></path><path d=\"M3 12v1.5h10V12\"></path>",
   "trash": "<path d=\"M3 4h10\"></path><path d=\"M6 4V2.5h4V4\"></path><path d=\"m4 4 .6 9.5h6.8L12 4\"></path>",
+  "eject": "<path d=\"M3 12.5h10\"></path><path d=\"M8 3.5 3.5 9.5h9L8 3.5z\"></path>",
+  "usb": "<path d=\"M8 2v10\"></path><path d=\"M8 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z\"></path><path d=\"M8 9 5 7V5\"></path><path d=\"M8 10.5 11 8.5V6\"></path><path d=\"M6.5 3.5 8 2l1.5 1.5\"></path>",
   "hdd": "<rect x=\"2\" y=\"9\" width=\"12\" height=\"4\" rx=\"1\"></rect><path d=\"M2.5 9 4 3.5h8L13.5 9\"></path><path d=\"M11 11h1\"></path>",
   "server": "<rect x=\"2\" y=\"2.5\" width=\"12\" height=\"4\" rx=\"1\"></rect><rect x=\"2\" y=\"9.5\" width=\"12\" height=\"4\" rx=\"1\"></rect><path d=\"M4.5 4.5h1\"></path><path d=\"M4.5 11.5h1\"></path>",
   "cloud": "<path d=\"M5 13a3 3 0 0 1-.5-5.96A4 4 0 0 1 12.3 8.5 2.5 2.5 0 0 1 12 13z\"></path>",

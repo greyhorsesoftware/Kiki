@@ -40,13 +40,13 @@ impl<R: Read> Reader<R> {
     }
 
     /// Reads the next frame; `Ok(None)` at a clean end of stream.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> io::Result<Option<Frame>> {
         if self.framing.is_none() {
             let mut b = [0u8; 1];
             loop {
-                match self.inner.read(&mut b)? {
-                    0 => return Ok(None),
-                    _ => {}
+                if self.inner.read(&mut b)? == 0 {
+                    return Ok(None);
                 }
                 match b[0] {
                     b' ' | b'\n' | b'\r' | b'\t' => continue,
@@ -172,10 +172,7 @@ pub fn ok(id: u64, result: Value) -> Value {
 }
 
 pub fn err(id: u64, code: &str, message: impl Into<String>) -> Value {
-    Value::obj()
-        .u("id", id)
-        .v("err", Value::obj().s("code", code).s("message", message).done())
-        .done()
+    Value::obj().u("id", id).v("err", Value::obj().s("code", code).s("message", message).done()).done()
 }
 
 pub fn event(name: &str) -> json::Obj {

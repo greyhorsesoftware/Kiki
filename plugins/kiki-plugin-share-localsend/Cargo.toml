@@ -3,7 +3,7 @@ name = "kiki-plugin-share-localsend"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "kiki share plugin: localsend"
+description = "kiki share plugin: LocalSend (native sender, protocol v2)"
 
 [[bin]]
 name = "kiki-plugin-share-localsend"
@@ -11,3 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

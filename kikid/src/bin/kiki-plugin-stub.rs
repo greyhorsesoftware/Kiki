@@ -161,8 +161,10 @@ fn main() {
                 connected.remove(&loc);
                 ok(id, Value::obj().done())
             }
-            "Capabilities" => ok(id, Value::obj().b("trash", false).b("setMtime", false).b("mode", false).b("realDirs", true).v("digestKind", Value::Null).s("separator", "/").v("fastScan", Value::Null).b("partialRead", true).done()),
-            "Ping" => ok(id, Value::obj().done()),
+            "Capabilities" => {
+                ok(id, Value::obj().b("trash", false).b("setMtime", false).b("mode", false).b("realDirs", true).v("digestKind", Value::Null).s("separator", "/").v("fastScan", Value::Null).b("partialRead", true).done())
+            }
+            "Ping" | "Cancel" => ok(id, Value::obj().done()),
             "Shutdown" => {
                 let _ = write_json(&mut stdout, &ok(id, Value::obj().done()));
                 return;
@@ -200,14 +202,13 @@ fn main() {
             "Mkdir" => {
                 let (dir, name) = split(&path);
                 match lookup(&mut root, &dir) {
-                    Some(d) if d.is_dir => {
-                        if d.children.contains_key(&name) {
-                            err(id, "Exists", "exists")
-                        } else {
-                            d.children.insert(name, Node::dir());
+                    Some(d) if d.is_dir => match d.children.entry(name) {
+                        std::collections::btree_map::Entry::Occupied(_) => err(id, "Exists", "exists"),
+                        std::collections::btree_map::Entry::Vacant(v) => {
+                            v.insert(Node::dir());
                             ok(id, Value::obj().done())
                         }
-                    }
+                    },
                     _ => err(id, "NotFound", "no such directory"),
                 }
             }

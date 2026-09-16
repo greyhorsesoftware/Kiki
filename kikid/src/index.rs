@@ -33,6 +33,10 @@ pub struct Index {
 }
 
 impl Index {
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn len(&self) -> usize {
         self.name_off.len()
     }
@@ -140,7 +144,13 @@ impl Index {
                 Ok(t) => t,
                 Err(_) => continue,
             };
-            let t = if ft.is_dir() { EntryType::Dir } else if ft.is_symlink() { EntryType::Link } else { EntryType::File };
+            let t = if ft.is_dir() {
+                EntryType::Dir
+            } else if ft.is_symlink() {
+                EntryType::Link
+            } else {
+                EntryType::File
+            };
             let i = self.push(nb, Kind::guess(t, nb), parent, false);
             if ft.is_dir() {
                 subdirs.push((i, e.path()));
@@ -172,7 +182,16 @@ impl Index {
         let old: Vec<u32> = self.children(dir_entry);
         let old_names: std::collections::HashSet<Vec<u8>> = old.iter().map(|&i| self.name(i).to_vec()).collect();
         // Remove children that no longer exist; keep the rest (and their subtrees).
-        let present: std::collections::HashSet<Vec<u8>> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| { use std::os::unix::ffi::OsStrExt; e.file_name().as_bytes().to_vec() }).collect()).unwrap_or_default();
+        let present: std::collections::HashSet<Vec<u8>> = std::fs::read_dir(dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| {
+                        use std::os::unix::ffi::OsStrExt;
+                        e.file_name().as_bytes().to_vec()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         for &i in &old {
             if !present.contains(self.name(i)) {
                 self.remove_subtree(i);
@@ -188,7 +207,13 @@ impl Index {
                 continue;
             }
             let Ok(ft) = e.file_type() else { continue };
-            let t = if ft.is_dir() { EntryType::Dir } else if ft.is_symlink() { EntryType::Link } else { EntryType::File };
+            let t = if ft.is_dir() {
+                EntryType::Dir
+            } else if ft.is_symlink() {
+                EntryType::Link
+            } else {
+                EntryType::File
+            };
             let i = self.push(&nb, Kind::guess(t, &nb), dir_entry, false);
             if ft.is_dir() {
                 stack.push((i, e.path()));
@@ -323,7 +348,7 @@ pub fn with_index<R>(f: impl FnOnce(&Index) -> R) -> R {
 /// A watched directory changed (plan 12): re-list just that directory in the index.
 pub fn patch_dir(dir: &Path) {
     let mut ix = service().index.write().unwrap();
-    if ix.len() == 0 {
+    if ix.is_empty() {
         return;
     }
     let Some(entry) = ix.find_dir(dir) else { return };
@@ -365,7 +390,12 @@ pub fn refresh_walk() {
 
 pub fn roots() -> Vec<PathBuf> {
     let s = crate::config::settings();
-    let from_settings: Vec<PathBuf> = s.get("index").and_then(|i| i.get("roots")).and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|u| Uri::parse(u).ok()).filter(|u| u.is_local()).map(|u| u.to_path()).collect()).unwrap_or_default();
+    let from_settings: Vec<PathBuf> = s
+        .get("index")
+        .and_then(|i| i.get("roots"))
+        .and_then(Value::as_arr)
+        .map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|u| Uri::parse(u).ok()).filter(|u| u.is_local()).map(|u| u.to_path()).collect())
+        .unwrap_or_default();
     if from_settings.is_empty() {
         vec![crate::config::home()]
     } else {
@@ -375,7 +405,12 @@ pub fn roots() -> Vec<PathBuf> {
 
 pub fn excludes() -> Vec<String> {
     let s = crate::config::settings();
-    s.get("index").and_then(|i| i.get("excludes")).and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).filter(|v: &Vec<String>| !v.is_empty()).unwrap_or_else(default_excludes)
+    s.get("index")
+        .and_then(|i| i.get("excludes"))
+        .and_then(Value::as_arr)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .unwrap_or_else(default_excludes)
 }
 
 /// Builds in the background unless a build is already running.
@@ -402,7 +437,7 @@ pub fn rebuild_async() {
 
 pub fn maybe_refresh() {
     let s = service();
-    if s.index.read().unwrap().len() == 0 {
+    if s.index.read().unwrap().is_empty() {
         rebuild_async();
         return;
     }
@@ -454,7 +489,7 @@ mod tests {
         std::fs::write(d.join("Projects/omarchy/src/main.rs"), b"").unwrap();
         std::fs::write(d.join("Projects/notes-omarchy.md"), b"").unwrap();
         std::fs::write(d.join("node_modules/x/omarchy.js"), b"").unwrap();
-        let ix = build(&[d.clone()], &default_excludes(), &AtomicBool::new(false));
+        let ix = build(std::slice::from_ref(&d), &default_excludes(), &AtomicBool::new(false));
         let (hits, capped) = query(&ix, "omarchy", Mode::Substring);
         assert!(!capped);
         let names: Vec<String> = hits.iter().map(|h| String::from_utf8_lossy(ix.name(h.entry)).into_owned()).collect();

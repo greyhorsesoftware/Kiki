@@ -67,12 +67,9 @@ fn default_favorites() -> Value {
             items.push((name, p));
         }
     }
-    Value::Arr(
-        items
-            .into_iter()
-            .map(|(n, p)| Value::obj().s("name", n).s("uri", crate::vfs::uri::Uri::from_path(&p).to_string()).done())
-            .collect(),
-    )
+    let mut v: Vec<Value> = items.into_iter().map(|(n, p)| Value::obj().s("name", n).s("uri", crate::vfs::uri::Uri::from_path(&p).to_string()).done()).collect();
+    v.push(Value::obj().s("name", "Trash").s("uri", "trash:///").done());
+    Value::Arr(v)
 }
 
 pub fn set_favorites(items: &[Value]) -> std::io::Result<()> {
@@ -137,14 +134,32 @@ pub fn reset_all() -> std::io::Result<()> {
 /// The keymap, served from one table so the cheat sheet and the Settings page agree.
 pub fn keymap() -> Value {
     let rows: &[(&str, &str, &str)] = &[
-        ("/", "search", "02"), ("Ctrl+L", "edit path", "02"), ("Ctrl+1 / 2 / 3", "icon / list / columns", "02"),
-        ("h j k l, arrows", "move selection; h/l pop and push columns", "02"), ("Enter", "open", "02"), ("Backspace, Alt+Left", "back", "02"),
-        ("F5", "refresh", "02"), ("Ctrl+I", "inspector", "03"), ("Ctrl+C / X / V", "copy, cut, paste", "04"), ("F2", "rename", "04"),
-        ("Del", "move to trash", "04"), ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"), ("Ctrl+Shift+N", "new folder", "04"),
-        ("Ctrl+Shift+S", "split", "07"), ("Tab", "switch pane (split)", "07"), ("F6", "move across (split)", "07"), ("Ctrl+M", "mirror", "08"),
-        ("Tab (in search)", "cycle scope", "12"), ("e", "edit file / project mode on a folder", "13"), ("Alt+Enter", "open in default tool", "14"),
-        ("Alt+Shift+Enter", "open in… list", "14"), ("Ctrl+Shift+P", "project mode", "16"), ("Alt+S", "share", "18"), ("Alt+Q", "AI query", "19"),
-        ("Ctrl+,", "settings", "20"), ("?", "keybinding cheat sheet", "10"),
+        ("/", "search", "02"),
+        ("Ctrl+L", "edit path", "02"),
+        ("Ctrl+1 / 2 / 3", "icon / list / columns", "02"),
+        ("h j k l, arrows", "move selection; h/l pop and push columns", "02"),
+        ("Enter", "open", "02"),
+        ("Backspace, Alt+Left", "back", "02"),
+        ("F5", "refresh", "02"),
+        ("Ctrl+I", "inspector", "03"),
+        ("Ctrl+C / X / V", "copy, cut, paste", "04"),
+        ("F2", "rename", "04"),
+        ("Del", "move to trash", "04"),
+        ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"),
+        ("Ctrl+Shift+N", "new folder", "04"),
+        ("Ctrl+Shift+S", "split", "07"),
+        ("Tab", "switch pane (split)", "07"),
+        ("F6", "move across (split)", "07"),
+        ("Ctrl+M", "mirror", "08"),
+        ("Tab (in search)", "cycle scope", "12"),
+        ("e", "edit file / project mode on a folder", "13"),
+        ("Alt+Enter", "open in default tool", "14"),
+        ("Alt+Shift+Enter", "open in… list", "14"),
+        ("Ctrl+Shift+P", "project mode", "16"),
+        ("Alt+S", "share", "18"),
+        ("Alt+Q", "AI query", "19"),
+        ("Ctrl+,", "settings", "20"),
+        ("?", "keybinding cheat sheet", "10"),
     ];
     Value::Arr(rows.iter().map(|(k, a, p)| Value::obj().s("key", *k).s("action", *a).s("plan", *p).done()).collect())
 }
@@ -177,12 +192,26 @@ pub fn volumes() -> Value {
                     Value::obj()
                         .s("name", name)
                         .s("uri", crate::vfs::uri::Uri::local(&mnt).map(|u| u.to_string()).unwrap_or_default())
+                        .s("device", dev)
                         .s("fsType", fstype)
                         .u("free", free)
                         .u("total", total)
                         .b("removable", removable)
+                        .b("mounted", true)
                         .done(),
                 );
+            }
+        }
+        // Block devices with a filesystem that are not mounted (a plugged-in USB stick): the
+        // sidebar lists them dimmed and mounts on click through udisks.
+        if let Ok(o) = std::process::Command::new("lsblk").args(["-J", "-o", "PATH,LABEL,FSTYPE,MOUNTPOINT,RM,SIZE,TYPE,HOTPLUG"]).output() {
+            if o.status.success() {
+                let mounted: Vec<String> = out.iter().filter_map(|v| v.str_field("device").map(str::to_string)).collect();
+                for v in unmounted_from_lsblk(&String::from_utf8_lossy(&o.stdout)) {
+                    if !mounted.iter().any(|m| Some(m.as_str()) == v.str_field("device")) {
+                        out.push(v);
+                    }
+                }
             }
         }
     }
@@ -192,6 +221,61 @@ pub fn volumes() -> Value {
         out.push(Value::obj().s("name", "System").s("uri", "file:///").s("fsType", "apfs").u("free", free).u("total", total).b("removable", false).done());
     }
     Value::Arr(out)
+}
+
+/// Unmounted filesystems from `lsblk -J` output: partitions with a filesystem and no mountpoint.
+pub fn unmounted_from_lsblk(json: &str) -> Vec<Value> {
+    let mut out = Vec::new();
+    let Ok(v) = crate::json::parse(json.as_bytes()) else { return out };
+    fn walk(v: &Value, out: &mut Vec<Value>) {
+        let Some(devs) = v.get("blockdevices").or_else(|| v.get("children")).and_then(Value::as_arr) else { return };
+        for d in devs {
+            let fstype = d.str_field("fstype").unwrap_or("");
+            let mnt = d.str_field("mountpoint").unwrap_or("");
+            let ty = d.str_field("type").unwrap_or("");
+            let usable = !fstype.is_empty() && !matches!(fstype, "swap" | "crypto_LUKS" | "LVM2_member" | "linux_raid_member") && matches!(ty, "part" | "disk" | "rom");
+            if usable && mnt.is_empty() {
+                let path = d.str_field("path").unwrap_or("").to_string();
+                let label = d.str_field("label").filter(|l| !l.is_empty()).map(str::to_string).unwrap_or_else(|| path.rsplit('/').next().unwrap_or("").to_string());
+                let rm = matches!(d.get("rm"), Some(Value::Bool(true))) || matches!(d.get("hotplug"), Some(Value::Bool(true)));
+                out.push(
+                    Value::obj().s("name", label).s("uri", "").s("device", path).s("fsType", fstype).u("free", 0).u("total", 0).b("removable", rm).b("mounted", false).s("size", d.str_field("size").unwrap_or("")).done(),
+                );
+            }
+            walk(d, out);
+        }
+    }
+    walk(&v, &mut out);
+    out
+}
+
+fn udisks(args: &[&str]) -> Result<String, String> {
+    let o = std::process::Command::new("udisksctl").args(args).arg("--no-user-interaction").output().map_err(|e| format!("udisksctl: {e}"))?;
+    if o.status.success() {
+        Ok(String::from_utf8_lossy(&o.stdout).trim().to_string())
+    } else {
+        let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
+        Err(if err.is_empty() { format!("udisksctl exited with {}", o.status) } else { err })
+    }
+}
+
+/// Mount a block device through udisks; returns the mount point.
+pub fn mount(device: &str) -> Result<String, String> {
+    let out = udisks(&["mount", "-b", device])?;
+    // "Mounted /dev/sdb1 at /run/media/david/STICK"
+    Ok(out.split(" at ").nth(1).map(|s| s.trim_end_matches('.').to_string()).unwrap_or(out))
+}
+
+pub fn unmount(device: &str) -> Result<(), String> {
+    udisks(&["unmount", "-b", device]).map(|_| ())
+}
+
+/// Unmount and power the drive off (safe to unplug). A non-removable device is only unmounted.
+pub fn eject(device: &str) -> Result<(), String> {
+    let _ = udisks(&["unmount", "-b", device]);
+    let disk = device.trim_end_matches(|c: char| c.is_ascii_digit()).trim_end_matches('p');
+    let _ = udisks(&["power-off", "-b", disk]);
+    Ok(())
 }
 
 pub fn fs_space(path: &str) -> (u64, u64) {
@@ -230,5 +314,19 @@ mod tests {
         assert!(volumes().as_arr().unwrap().iter().any(|v| v.u64_field("total").unwrap_or(0) > 0));
         std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
+    }
+}
+
+#[cfg(test)]
+mod volume_tests {
+    #[test]
+    fn unmounted_partitions_from_lsblk() {
+        let json = r#"{"blockdevices":[{"path":"/dev/sda","label":null,"fstype":null,"mountpoint":null,"rm":false,"size":"1T","type":"disk","hotplug":false,"children":[{"path":"/dev/sda1","label":"root","fstype":"ext4","mountpoint":"/","rm":false,"size":"1T","type":"part","hotplug":false}]},{"path":"/dev/sdb","label":null,"fstype":null,"mountpoint":null,"rm":true,"size":"32G","type":"disk","hotplug":true,"children":[{"path":"/dev/sdb1","label":"STICK","fstype":"vfat","mountpoint":null,"rm":true,"size":"32G","type":"part","hotplug":true}]},{"path":"/dev/sdc1","label":"","fstype":"swap","mountpoint":null,"rm":false,"size":"8G","type":"part","hotplug":false}]}"#;
+        let v = super::unmounted_from_lsblk(json);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].str_field("name"), Some("STICK"));
+        assert_eq!(v[0].str_field("device"), Some("/dev/sdb1"));
+        assert_eq!(v[0].get("removable"), Some(&crate::json::Value::Bool(true)));
+        assert_eq!(v[0].get("mounted"), Some(&crate::json::Value::Bool(false)));
     }
 }

@@ -37,7 +37,7 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
       - name: Unit and integration tests
-        run: cargo test --workspace --exclude kiki-plugin-ftps
+        run: cargo test --workspace
       - name: Protocol and plugin contract tests
         run: cargo test --workspace --test '*' -- --include-ignored
       - name: JSON reader fuzz smoke

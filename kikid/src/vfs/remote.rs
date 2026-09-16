@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub struct RemoteDir {
     pub session: Arc<Session>,
     pub path: String,
+    pub cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub fn meta_from(v: &Value) -> Meta {
@@ -21,7 +22,7 @@ impl Source for RemoteDir {
     fn scan(&self, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize> {
         let mut total = 0usize;
         let req = Value::obj().s("type", "Scan").s("location", self.session.location.clone()).s("path", self.path.clone()).done();
-        self.session.plugin.request_stream(req, |m| {
+        self.session.plugin.request_stream_with(req, Some(&self.cancel), |m| {
             if let Msg::Json(v) = m {
                 if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
                     let chunk: Vec<RawEntry> = entries
@@ -56,5 +57,9 @@ impl Source for RemoteDir {
 
     fn watchable(&self) -> bool {
         false
+    }
+
+    fn cancel(&self) {
+        self.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }

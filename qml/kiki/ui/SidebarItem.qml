@@ -10,6 +10,10 @@ Rectangle {
     property string detail: ""
     signal clicked()
     signal rightClicked()
+    /// Set to accept dropped URIs; emits dropped(drop) with the DragEvent.
+    property bool droppable: false
+    readonly property bool hovered: hover.containsMouse
+    signal dropped(var drop)
     height: 30; radius: 2
     anchors.left: parent ? parent.left : undefined; anchors.right: parent ? parent.right : undefined
     anchors.leftMargin: 8; anchors.rightMargin: 8
@@ -20,4 +24,9 @@ Rectangle {
         Text { text: item.label; color: item.active ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; elide: Text.ElideRight; width: item.width - 60 }
     }
     MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: mouse => mouse.button === Qt.RightButton ? item.rightClicked() : item.clicked() }
+    DropArea {
+        anchors.fill: parent; enabled: item.droppable; keys: ["text/uri-list"]
+        onDropped: drop => item.dropped(drop)
+        Rectangle { anchors.fill: parent; radius: 2; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
+    }
 }

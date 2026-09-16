@@ -63,7 +63,7 @@ fn stub_plugin_end_to_end() {
     let w = l.window(1, 1, 0, 10);
     assert_eq!(w.u64_field("n"), Some(3));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
-    assert_eq!(rows[0].str_field("name"), Some("docs"));   // folders first
+    assert_eq!(rows[0].str_field("name"), Some("docs")); // folders first
     assert_eq!(rows[1].str_field("name"), Some("empty"));
     assert_eq!(rows[2].str_field("name"), Some("data.bin"));
     // metaInScan: metadata arrived inline, no Stat round trips needed
@@ -78,7 +78,14 @@ fn stub_plugin_end_to_end() {
     // Read streams binary frames; Write round-trips
     let session = locations::resolve(&uri).unwrap().0;
     let mut got = Vec::new();
-    let r = session.plugin.request_stream(Value::obj().s("type", "Read").s("location", "lab").s("path", "/docs/notes.txt").done(), |m| if let Msg::Binary(b) = m { got.extend_from_slice(&b) }).unwrap();
+    let r = session
+        .plugin
+        .request_stream(Value::obj().s("type", "Read").s("location", "lab").s("path", "/docs/notes.txt").done(), |m| {
+            if let Msg::Binary(b) = m {
+                got.extend_from_slice(&b)
+            }
+        })
+        .unwrap();
     assert_eq!(r.u64_field("bytes"), Some(5));
     assert_eq!(got, b"hello");
     let mut chunks = vec![b"abc".to_vec(), b"def".to_vec()].into_iter();

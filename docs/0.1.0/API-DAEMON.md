@@ -134,7 +134,7 @@ Event: `OpenInChanged {}`.
 
 | Request | Fields | Reply |
 |---|---|---|
-| `Submit` | `op: Op` | `{ job: u64 }` |
+| `Submit` | `op: Op` | `{ job: u64 }` — ops include `restore { names }` (from the trash, undoable) and `emptyTrash {}` (not undoable) |
 | `Cancel` | `job` | `{}` |
 | `Jobs` | | `{ jobs: [Job] }` (running and the last 50 finished) |
 | `Undo` | | `{ job }` or error `NotFound` if the journal is empty |
@@ -171,7 +171,13 @@ Events:
 |---|---|---|
 | `Favorites` | | `{ items: [{ name, uri }] }` |
 | `SetFavorites` | `items` | `{}` |
-| `Volumes` | | `{ items: [{ name, uri, fsType, free: u64, total: u64, removable: bool }] }` |
+| `Volumes` | | `{ items: [{ name, uri, device, fsType, free: u64, total: u64, removable: bool, mounted: bool, size? }] }` — unmounted filesystems (from `lsblk`) have `mounted: false`, an empty `uri` and their `size` string |
+| `Mount` | `device` | `{ uri, mountPoint }` via `udisksctl mount`; emits `VolumesChanged` |
+| `Unmount` | `device` | `{}` |
+| `Eject` | `device` or `uri` | `{}` — a block device is unmounted and powered off; a device URI (plan 17) closes the plugin session and hides the device until re-plug |
+| `TrashInfo` | | `{ items: [{ name, path, deleted }] }` from `info/*.trashinfo` (plan 04 Trash view) |
+| `OpenWith` | `uri` | `{ mime, apps: [{ id, name, icon, default: bool }] }` desktop entries for the file's MIME type |
+| `Launch` | `app`, `uris` | `{}` runs the desktop entry with its `Exec` expanded |
 | `Plugins` | | `{ plugins: [{ scheme, displayName, form: [Field], defaults: {…}, secretFields: [string] }] }` |
 | `Locations` | | `{ locations: [Location] }` |
 | `TestLocation` | `location: Location`, `secrets: { key: string }` | `{}` or error with `field` |
@@ -199,10 +205,11 @@ Event: `SharePluginsChanged {}`.
 
 | Request | Fields | Reply |
 |---|---|---|
-| `Devices` | | `{ devices: [{ uri, kind: "ptp" \| "mtp" \| "afc", name, vendor, model, connected: bool, busy: string \| null }] }` |
-| `Eject` | `uri` | `{}` |
+| `Devices` | | `{ devices: [{ uri, kind: "ptp" \| "mtp" \| "afc", name, vendor, model, serial, connected: bool, busy: string \| null }] }` |
+| `Eject` | `uri` | `{}` (shared with the volume form above) |
+| `RenameDevice` | `uri`, `name` | `{}` writes the display name to `devices.toml` |
 
-Events: `DeviceAdded { device }`, `DeviceRemoved { uri }`.
+Events: `DeviceAdded { device }`, `DeviceRemoved { uri }`. A device URI resolves like a location: the daemon hands the plugin a transient location whose `config` carries `serial`, `vendor`, `model`, `bus`, `devnum` and the sysfs path.
 
 ## Mirror
 

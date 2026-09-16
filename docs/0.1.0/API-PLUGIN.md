@@ -18,7 +18,7 @@ Protocol version: `1`.
 
 Identical to the socket protocol: `u32` little-endian payload length, `u8` type (`0x00` JSON, `0x01` binary), payload. Binary frames belong to the most recent `Read` or `Write` in flight on the pipe; a zero-length binary frame ends the stream. Maximum JSON frame 16 MiB, binary frame 1 MiB.
 
-Requests from the daemon carry `id`; the plugin replies `{ "id", "ok": {…} }` or `{ "id", "err": { "code", "message", "field"? } }`. Streaming replies (`Scan`, `Read`) send their stream and then the final reply. Requests may be pipelined; the plugin may answer out of order except that binary frames must follow their own request's order.
+Requests from the daemon carry `id`; the plugin replies `{ "id", "ok": {…} }` or `{ "id", "err": { "code", "message", "field"? } }`. Streaming replies (`Scan`, `Read`) send their stream and then the final reply. Requests are pipelined and **served concurrently**: the SDK reads frames on the calling thread, runs each request on its own worker (up to 8), routes the binary frames of the one `Write` in progress to that handler, and serialises `Read`/`Thumb` so binary frames never interleave; JSON frames of different requests may interleave freely (each carries its `id`). Handlers take `&self` and keep sessions behind their own locks; `kiki_plugin_sdk::cancelled()` tells a loop that its request was cancelled.
 
 Error codes the plugin may return: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `Unsupported`, `Cancelled`, `Auth` (credentials rejected), `Network` (connection failed or dropped), `Io`, `Invalid` (with `field`, for `Validate` and `Connect`).
 
@@ -75,7 +75,7 @@ Connect is idempotent: a second `Connect` for an open session returns the same r
 | `Delete` | `location`, `path` | | `{}` (file or empty directory) |
 | `SetMtime` | `location`, `path`, `mtime`: u64 ms | | `{}` or `Unsupported` |
 | `Chmod` | `location`, `path`, `mode`: u32 | | `{}` or `Unsupported` |
-| `Cancel` | `id` | | `{}`; the cancelled request replies `Cancelled` |
+| `Cancel` | `target` | | `{}`; the request with id `target` stops as soon as its loop notices and replies `Cancelled` (already-sent frames are discarded by the daemon) |
 
 Streams: only one `Read` or `Write` stream is active per pipe at a time; the daemon serialises them and uses the `job` session for transfers so browsing requests (`Scan`, `Stat`) stay responsive on the `browse` session. `Write` creates or truncates. A plugin should keep several protocol requests in flight for `Read` and `Write` when the protocol allows (`pipelining: true`); SFTP throughput depends on it.
 

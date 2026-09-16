@@ -189,9 +189,7 @@ impl<'a> Parser<'a> {
                 return Ok(Value::Int(i));
             }
         }
-        text.parse::<f64>()
-            .map(Value::Float)
-            .map_err(|_| self.err("bad number"))
+        text.parse::<f64>().map(Value::Float).map_err(|_| self.err("bad number"))
     }
 
     fn string(&mut self) -> Result<String, ParseError> {
@@ -411,10 +409,7 @@ impl Obj {
         self
     }
     pub fn opt_s(mut self, k: &str, v: Option<&str>) -> Self {
-        self.0.insert(
-            k.to_string(),
-            v.map(|s| Value::Str(s.to_string())).unwrap_or(Value::Null),
-        );
+        self.0.insert(k.to_string(), v.map(|s| Value::Str(s.to_string())).unwrap_or(Value::Null));
         self
     }
     pub fn done(self) -> Value {

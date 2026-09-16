@@ -94,7 +94,18 @@ impl FileChooser {
             .opt_s("currentFolder", opt_bytes_path(&options, "current_folder").as_deref())
             .opt_s("currentName", opt_str(&options, "current_name").as_deref())
             .opt_s("parentWindow", if parent_window.is_empty() { None } else { Some(parent_window.as_str()) })
-            .v("files", Value::Arr(options.get("files").and_then(|v| <Vec<Vec<u8>>>::try_from(v.clone()).ok()).unwrap_or_default().into_iter().map(|b| Value::Str(String::from_utf8_lossy(b.strip_suffix(&[0]).unwrap_or(&b)).into_owned())).collect()))
+            .v(
+                "files",
+                Value::Arr(
+                    options
+                        .get("files")
+                        .and_then(|v| <Vec<Vec<u8>>>::try_from(v.clone()).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|b| Value::Str(String::from_utf8_lossy(b.strip_suffix(&[0]).unwrap_or(&b)).into_owned()))
+                        .collect(),
+                ),
+            )
             .done();
         let reply = self.bridge.call("ShowChooser", req).await;
         let mut results: HashMap<String, OwnedValue> = HashMap::new();
@@ -142,8 +153,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(v) = json::parse(&payload) {
                 // Requests from the daemon (Describe, Ping) versus replies to ours.
                 match v.str_field("type") {
-                    Some("Describe") => { let id = v.u64_field("id").unwrap_or(0); let mut o = b2.out.lock().unwrap(); let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", kiki_plugin_sdk::service_describe("dbus", "D-Bus: Show in folder and portal chooser", env!("CARGO_PKG_VERSION"), &[])).done()); continue }
-                    Some("Ping") => { let id = v.u64_field("id").unwrap_or(0); let mut o = b2.out.lock().unwrap(); let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", Value::obj().done()).done()); continue }
+                    Some("Describe") => {
+                        let id = v.u64_field("id").unwrap_or(0);
+                        let mut o = b2.out.lock().unwrap();
+                        let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", kiki_plugin_sdk::service_describe("dbus", "D-Bus: Show in folder and portal chooser", env!("CARGO_PKG_VERSION"), &[])).done());
+                        continue;
+                    }
+                    Some("Ping") => {
+                        let id = v.u64_field("id").unwrap_or(0);
+                        let mut o = b2.out.lock().unwrap();
+                        let _ = write_json(&mut *o, &Value::obj().u("id", id).v("ok", Value::obj().done()).done());
+                        continue;
+                    }
                     _ => {}
                 }
                 if let Some(id) = v.u64_field("id") {

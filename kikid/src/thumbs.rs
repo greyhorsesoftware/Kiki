@@ -142,7 +142,7 @@ fn write_png(out: &Path, img: &image::RgbaImage, uri: &Uri, mtime_ms: u64) -> st
 }
 
 fn io<E: std::fmt::Display>(e: E) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }
 
 // ---------------------------------------------------------------- images
@@ -209,8 +209,24 @@ fn parse_tiff(t: &[u8], f: &mut fs::File, tiff_file_offset: usize) -> (Option<Ve
         return (None, 1);
     }
     let le = &t[..2] == b"II";
-    let rd16 = |b: &[u8], o: usize| -> u32 { if o + 2 > b.len() { 0 } else if le { u16::from_le_bytes([b[o], b[o + 1]]) as u32 } else { u16::from_be_bytes([b[o], b[o + 1]]) as u32 } };
-    let rd32 = |b: &[u8], o: usize| -> u32 { if o + 4 > b.len() { 0 } else if le { u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) } else { u32::from_be_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) } };
+    let rd16 = |b: &[u8], o: usize| -> u32 {
+        if o + 2 > b.len() {
+            0
+        } else if le {
+            u16::from_le_bytes([b[o], b[o + 1]]) as u32
+        } else {
+            u16::from_be_bytes([b[o], b[o + 1]]) as u32
+        }
+    };
+    let rd32 = |b: &[u8], o: usize| -> u32 {
+        if o + 4 > b.len() {
+            0
+        } else if le {
+            u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+        } else {
+            u32::from_be_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+        }
+    };
     let ifd0 = rd32(t, 4) as usize;
     let mut orientation = 1;
     let count = rd16(t, ifd0) as usize;
@@ -271,12 +287,7 @@ fn video_frame(src: &Path, px: u32) -> Option<image::RgbaImage> {
 }
 
 fn pdf_page(src: &Path, px: u32) -> Option<image::RgbaImage> {
-    let out = Command::new("nice")
-        .args(["-n", "15", "pdftoppm", "-f", "1", "-l", "1", "-png", "-scale-to", &px.to_string()])
-        .arg(src)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let out = Command::new("nice").args(["-n", "15", "pdftoppm", "-f", "1", "-l", "1", "-png", "-scale-to", &px.to_string()]).arg(src).stderr(Stdio::null()).output().ok()?;
     if !out.status.success() || out.stdout.is_empty() {
         return None;
     }

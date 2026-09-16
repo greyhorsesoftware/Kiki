@@ -40,9 +40,41 @@ fn children_of(uri: &Uri) -> Result<Vec<Node>, VfsError> {
         .map(|r| {
             let name = r.str_field("name").unwrap_or("").to_string();
             let is_dir = r.get("isDir").and_then(Value::as_bool).unwrap_or(false);
-            let git = r.get("git").filter(|g| !matches!(g, Value::Null)).map(|g| crate::git::Entry { state: match g.str_field("state") { Some("modified") => crate::git::State::Modified, Some("added") => crate::git::State::Added, Some("deleted") => crate::git::State::Deleted, Some("renamed") => crate::git::State::Renamed, Some("conflicted") => crate::git::State::Conflicted, Some("untracked") => crate::git::State::Untracked, Some("ignored") => crate::git::State::Ignored, _ => crate::git::State::Clean }, staged: g.get("staged").and_then(Value::as_bool).unwrap_or(false) });
+            let git = r.get("git").filter(|g| !matches!(g, Value::Null)).map(|g| crate::git::Entry {
+                state: match g.str_field("state") {
+                    Some("modified") => crate::git::State::Modified,
+                    Some("added") => crate::git::State::Added,
+                    Some("deleted") => crate::git::State::Deleted,
+                    Some("renamed") => crate::git::State::Renamed,
+                    Some("conflicted") => crate::git::State::Conflicted,
+                    Some("untracked") => crate::git::State::Untracked,
+                    Some("ignored") => crate::git::State::Ignored,
+                    _ => crate::git::State::Clean,
+                },
+                staged: g.get("staged").and_then(Value::as_bool).unwrap_or(false),
+            });
             let git = git.or_else(|| dir.as_ref().and_then(|d| crate::git::state_for(d, &name, is_dir)));
-            Node { uri: uri.join(&name), name, kind: Kind::from_u8(match r.str_field("kind") { Some("folder") => 0, Some("image") => 3, Some("video") => 4, Some("audio") => 5, Some("document") => 6, Some("pdf") => 7, Some("text") => 8, Some("code") => 9, Some("archive") => 10, Some("link") => 2, _ => 1 }), is_dir, depth: 0, expanded: false, git }
+            Node {
+                uri: uri.join(&name),
+                name,
+                kind: Kind::from_u8(match r.str_field("kind") {
+                    Some("folder") => 0,
+                    Some("image") => 3,
+                    Some("video") => 4,
+                    Some("audio") => 5,
+                    Some("document") => 6,
+                    Some("pdf") => 7,
+                    Some("text") => 8,
+                    Some("code") => 9,
+                    Some("archive") => 10,
+                    Some("link") => 2,
+                    _ => 1,
+                }),
+                is_dir,
+                depth: 0,
+                expanded: false,
+                git,
+            }
         })
         .collect())
 }
@@ -184,7 +216,11 @@ pub fn arrange(windows: &[Value], left_width: u32) -> Value {
     let mut arranged = Vec::new();
     let mut missing = Vec::new();
     if hyprctl(&["version"]).is_none() {
-        return Value::obj().v("arranged", Value::Arr(vec![])).v("missing", Value::Arr(windows.iter().map(|w| Value::Str(w.str_field("role").unwrap_or("").into())).collect())).s("reason", "hyprctl not available").done();
+        return Value::obj()
+            .v("arranged", Value::Arr(vec![]))
+            .v("missing", Value::Arr(windows.iter().map(|w| Value::Str(w.str_field("role").unwrap_or("").into())).collect()))
+            .s("reason", "hyprctl not available")
+            .done();
     }
     let mut addrs: Vec<(String, String)> = Vec::new();
     for w in windows {

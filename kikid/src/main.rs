@@ -2,8 +2,6 @@
 
 use kikid::{listing, server, vfs};
 
-
-
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 
@@ -42,6 +40,7 @@ fn serve() {
     };
     kikid::dbus::start();
     kikid::plugin::start_reaper();
+    kikid::devices::start();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));
         kikid::index::rebuild_async();

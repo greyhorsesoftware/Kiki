@@ -68,7 +68,13 @@ pub fn start() {
                     Some("ShowItems") | Some("ShowFolders") => {
                         let mut st = state().lock().unwrap();
                         if let Some(tx) = &st.shell {
-                            let _ = tx.send(proto::event("ShowItems").v("uris", v.get("uris").cloned().unwrap_or(Value::Arr(vec![]))).b("properties", v.get("properties").and_then(Value::as_bool).unwrap_or(false)).b("folders", v.str_field("type") == Some("ShowFolders")).done());
+                            let _ = tx.send(
+                                proto::event("ShowItems")
+                                    .v("uris", v.get("uris").cloned().unwrap_or(Value::Arr(vec![])))
+                                    .b("properties", v.get("properties").and_then(Value::as_bool).unwrap_or(false))
+                                    .b("folders", v.str_field("type") == Some("ShowFolders"))
+                                    .done(),
+                            );
                         } else {
                             // No window: launch one.
                             let first = v.get("uris").and_then(Value::as_arr).and_then(|a| a.first()).and_then(Value::as_str).unwrap_or("").to_string();

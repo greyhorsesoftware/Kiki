@@ -27,10 +27,18 @@ pub fn omarchy_provider() -> Option<&'static str> {
             if !is_ai || !l.contains("webapp") && !l.contains("http") {
                 continue;
             }
-            if l.contains("claude.ai") || l.contains("anthropic") { return Some("anthropic"); }
-            if l.contains("chatgpt.com") || l.contains("openai") { return Some("openai"); }
-            if l.contains("gemini.google") { return Some("gemini"); }
-            if l.contains("grok.com") || l.contains("x.ai") { return Some("xai"); }
+            if l.contains("claude.ai") || l.contains("anthropic") {
+                return Some("anthropic");
+            }
+            if l.contains("chatgpt.com") || l.contains("openai") {
+                return Some("openai");
+            }
+            if l.contains("gemini.google") {
+                return Some("gemini");
+            }
+            if l.contains("grok.com") || l.contains("x.ai") {
+                return Some("xai");
+            }
         }
     }
     None
@@ -97,10 +105,13 @@ fn attachment(u: &Uri) -> Result<(String, String, bool), VfsError> {
     let path = u.to_path();
     let md = std::fs::metadata(&path)?;
     if md.is_dir() {
-        let mut names: Vec<String> = std::fs::read_dir(&path)?.flatten().map(|e| {
-            let m = e.metadata().ok();
-            format!("{}{}  {}", e.file_name().to_string_lossy(), if m.as_ref().map(|m| m.is_dir()).unwrap_or(false) { "/" } else { "" }, m.map(|m| m.len()).unwrap_or(0))
-        }).collect();
+        let mut names: Vec<String> = std::fs::read_dir(&path)?
+            .flatten()
+            .map(|e| {
+                let m = e.metadata().ok();
+                format!("{}{}  {}", e.file_name().to_string_lossy(), if m.as_ref().map(|m| m.is_dir()).unwrap_or(false) { "/" } else { "" }, m.map(|m| m.len()).unwrap_or(0))
+            })
+            .collect();
         names.sort();
         return Ok((u.name().to_string() + "/", names.join("\n"), false));
     }
@@ -171,7 +182,8 @@ pub fn query(tx: Sender<Value>, id: u64, _session: String, uris: Vec<Uri>, quest
             let (p, _) = provider();
             let available = cli_for(&p).map(|(bin, _)| crate::openin::on_path(&bin)).unwrap_or(false);
             if !available {
-                let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", format!("{}'s command-line tool is not installed; install it or set a custom command in Settings → Jarvis", p)).done());
+                let _ = tx
+                    .send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", format!("{}'s command-line tool is not installed; install it or set a custom command in Settings → Jarvis", p)).done());
                 return;
             }
             run_cli(tx, id, &uris, &question, &history);
@@ -201,7 +213,7 @@ fn run_cli(tx: Sender<Value>, id: u64, uris: &[Uri], question: &str, history: &V
             prompt.push_str(&format!("{}: {}\n", if turn.str_field("role") == Some("assistant") { "Assistant" } else { "User" }, turn.str_field("text").unwrap_or("")));
         }
         if !h.is_empty() {
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
     }
     prompt.push_str(&format!("Read {} and answer concisely in plain text. Question: {}", paths.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", "), question));

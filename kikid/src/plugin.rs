@@ -6,7 +6,7 @@ use crate::vfs::VfsError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -56,8 +56,15 @@ pub fn status_json() -> Value {
         inventory()
             .into_iter()
             .map(|(name, path)| {
-                let kind = if name.starts_with("share-") { "share" } else if SERVICES.contains(&name.as_str()) { "service" } else { "location" };
-                let running = r.running.get(&name).map(|p| p.alive()).unwrap_or(false) || crate::helpers::running_named(&format!("kiki-plugin-{name}")) || crate::share::running_named(name.strip_prefix("share-").unwrap_or(""));
+                let kind = if name.starts_with("share-") {
+                    "share"
+                } else if SERVICES.contains(&name.as_str()) {
+                    "service"
+                } else {
+                    "location"
+                };
+                let running =
+                    r.running.get(&name).map(|p| p.alive()).unwrap_or(false) || crate::helpers::running_named(&format!("kiki-plugin-{name}")) || crate::share::running_named(name.strip_prefix("share-").unwrap_or(""));
                 let described = r.described.get(&name).cloned();
                 Value::obj().s("name", name.clone()).s("kind", kind).s("path", path.to_string_lossy()).b("running", running).v("describe", described.unwrap_or(Value::Null)).done()
             })
@@ -233,21 +240,55 @@ impl Plugin {
         Ok(v.get("ok").cloned().unwrap_or(Value::Null))
     }
 
-    fn wait_reply(&self, id: u64, rx: &Receiver<Msg>, mut on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
+    fn wait_reply(&self, id: u64, rx: &Receiver<Msg>, on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
+        self.wait_reply_with(id, rx, None, on_frame)
+    }
+
+    /// Waits for the reply; while waiting, `cancel` is polled and, once set, a `Cancel` is sent
+    /// to the plugin and the request ends with an error as soon as the plugin acknowledges it.
+    fn wait_reply_with(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
+        let started = std::time::Instant::now();
+        let mut last_frame = std::time::Instant::now();
+        let mut sent_cancel = false;
         loop {
-            match rx.recv_timeout(REQUEST_TIMEOUT) {
-                Ok(Msg::Json(v)) if v.get("ok").is_some() || v.get("err").is_some() => return self.finish(id, v),
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(Msg::Json(v)) if v.get("ok").is_some() || v.get("err").is_some() => {
+                    let r = self.finish(id, v);
+                    return if sent_cancel { Err(VfsError::Io("cancelled".into())) } else { r };
+                }
                 Ok(m) => {
-                    if let Some(f) = on_frame.as_mut() {
-                        f(m);
+                    last_frame = std::time::Instant::now();
+                    if !sent_cancel {
+                        if let Some(f) = on_frame.as_mut() {
+                            f(m);
+                        }
                     }
                 }
-                Err(_) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(c) = cancel {
+                        if c.load(Ordering::Relaxed) && !sent_cancel {
+                            sent_cancel = true;
+                            self.cancel(id);
+                            last_frame = std::time::Instant::now();
+                        }
+                    }
+                    let limit = if sent_cancel { Duration::from_secs(5) } else { REQUEST_TIMEOUT };
+                    if last_frame.elapsed() > limit && started.elapsed() > limit {
+                        self.pending.lock().unwrap().remove(&id);
+                        return Err(VfsError::Io(if sent_cancel { "cancelled".into() } else { "plugin request timed out or plugin exited".into() }));
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     self.pending.lock().unwrap().remove(&id);
-                    return Err(VfsError::Io("plugin request timed out or plugin exited".into()));
+                    return Err(VfsError::Io("plugin exited".into()));
                 }
             }
         }
+    }
+
+    /// Fire-and-forget `Cancel { target }`; the reply is discarded when it arrives.
+    pub fn cancel(&self, target: u64) {
+        let _ = self.begin(Value::obj().s("type", "Cancel").u("target", target).done(), false);
     }
 
     /// A plain request: one reply.
@@ -257,21 +298,33 @@ impl Plugin {
     }
 
     /// A streaming request: `on_frame` gets every intermediate JSON or binary frame; returns the final reply.
-    pub fn request_stream(&self, req: Value, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
+    pub fn request_stream(&self, req: Value, on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
+        self.request_stream_with(req, None, on_frame)
+    }
+
+    /// A streaming request that stops early when `cancel` is set (a closed listing, a cancelled job).
+    pub fn request_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
         let (id, rx) = self.begin(req, true)?;
-        let r = self.wait_reply(id, &rx, Some(&mut on_frame));
+        let r = self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame));
         *self.stream.lock().unwrap() = None;
         r
     }
 
     /// Write: send the request, then binary frames, then the end marker; returns the reply.
-    pub fn write_stream(&self, req: Value, mut chunks: impl FnMut() -> Option<Vec<u8>>) -> Result<Value, VfsError> {
+    pub fn write_stream(&self, req: Value, chunks: impl FnMut() -> Option<Vec<u8>>) -> Result<Value, VfsError> {
+        self.write_stream_with(req, None, chunks)
+    }
+
+    pub fn write_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut chunks: impl FnMut() -> Option<Vec<u8>>) -> Result<Value, VfsError> {
         let (id, rx) = self.begin(req, false)?;
         while let Some(c) = chunks() {
+            if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+                break;
+            }
             self.send_binary(&c)?;
         }
         self.send_binary(&[])?;
-        self.wait_reply(id, &rx, None)
+        self.wait_reply_with(id, &rx, cancel, None)
     }
 
     pub fn shutdown(&self) {

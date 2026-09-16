@@ -30,7 +30,7 @@ A share plugin is an executable named `kiki-plugin-share-<id>` in the plugin dir
 
 **Mail** (`kiki-share-mail`) — no targets, `compose` = To, Subject, Message.
 - Default backend `xdg-email --attach <file> --subject … --body …`, which opens the desktop mail handler with attachments (Thunderbird, Evolution, Geary).
-- If the mail handler is a web app, which cannot receive attachments from `xdg-email`, the plugin's Describe form offers **SMTP** mode: server, port, security, username, password (keyring), from address; then Share sends the message itself with attachments (RFC 5322, MIME, `lettre`-style implementation inside the plugin) and reports `sent`.
+- If the mail handler is a web app, which cannot receive attachments from `xdg-email`, the plugin's Describe form offers **SMTP** mode: server, port, security (STARTTLS, implicit TLS, none), username, password (keyring), from address, and an optional pinned certificate fingerprint for self-signed servers; then Share sends the message itself (its own SMTP client over rustls: EHLO, STARTTLS, AUTH PLAIN or LOGIN, one `multipart/mixed` message with base64 parts and RFC 2231 filenames, dot-stuffed) and reports `sent`. Tested against an in-process mock SMTP server in both TLS modes (`plugins/kiki-plugin-share-mail/tests/mock_smtp.rs`).
 - Attachment total above 20 MB warns in the share sheet and suggests Tailscale or a compressed folder.
 
 **Messages** (`kiki-share-messages`) — targets from whichever messaging backends are present:
@@ -47,7 +47,7 @@ A share plugin is an executable named `kiki-plugin-share-<id>` in the plugin dir
 
 **LocalSend** (`kiki-share-localsend`) — the open nearby-transfer protocol with apps for iOS, Android, macOS and Windows.
 - Discovery by multicast on the LAN (and the protocol's HTTP fallback); targets are the devices found, with their type icon, refreshed on open.
-- Share implements the protocol's sender side in the plugin (prepare-upload, then one HTTPS PUT per file with progress); the receiving device shows its accept prompt; PIN-protected receivers get the PIN from the `compose` sheet.
+- Share implements the protocol's sender side in the plugin with its own HTTP/1.1 client over rustls (self-signed receiver certificates are accepted, as the protocol intends): `prepare-upload` with every file's name, size and type, then one `upload` per accepted file with byte progress; `401` asks for the PIN (from the `compose` sheet), `403` is a decline, files the receiver skipped are reported in the result. A typed `host` or `host:port` in the target search is a manual target for receivers that do not answer multicast. Tested against an in-process mock receiver (`plugins/kiki-plugin-share-localsend/tests/mock_receiver.rs`).
 - This is the recommended "AirDrop to a phone" path on Linux: it works on any Wi-Fi.
 
 **AirDrop** (`kiki-share-airdrop`, experimental) — wraps OpenDrop on top of OWL, the open AWDL implementation.

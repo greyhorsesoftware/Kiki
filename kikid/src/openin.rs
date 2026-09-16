@@ -24,7 +24,17 @@ pub fn presets() -> Vec<Value> {
         t("gemini", "Gemini CLI", "gemini", "gemini", true, "both", None, None, false),
         t("aider", "Aider", "aider", "aider {files}", true, "both", None, None, false),
         t("opencode", "OpenCode", "opencode", "opencode", true, "both", None, None, false),
-        t("neovim", "Neovim", "nvim", "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !qs -c kiki ipc call shell saved %:p' --cmd 'nnoremap <leader>k :silent! !qs -c kiki ipc call shell reveal %:p<CR>' +{line} {file}", true, "file", Some("editor"), Some("nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'"), true),
+        t(
+            "neovim",
+            "Neovim",
+            "nvim",
+            "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !qs -c kiki ipc call shell saved %:p' --cmd 'nnoremap <leader>k :silent! !qs -c kiki ipc call shell reveal %:p<CR>' +{line} {file}",
+            true,
+            "file",
+            Some("editor"),
+            Some("nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'"),
+            true,
+        ),
         t("helix", "Helix", "hx", "hx {file}:{line}", true, "file", None, None, false),
         t("vscode", "VS Code", "code", "code --new-window {dir}", false, "both", None, Some("code --reuse-window --goto {file}:{line}"), true),
         t("zed", "Zed", "zed", "zed {dir}", false, "both", None, Some("zed {file}:{line}"), true),
@@ -138,7 +148,11 @@ pub fn prepare(tool: &Value, uris: &[Uri], line: Option<u64>, template: &str) ->
         .replace("{line}", &line.unwrap_or(1).to_string())
         .replace("{socket}", &shell_quote(&socket))
         .replace("{prompt}", &shell_quote(&prompt));
-    let env = vec![("KIKI_SELECTION".to_string(), paths.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n")), ("KIKI_DIR".to_string(), dir.to_string_lossy().into_owned()), ("KIKI_SOCKET_FOR_TOOL".to_string(), socket)];
+    let env = vec![
+        ("KIKI_SELECTION".to_string(), paths.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("\n")),
+        ("KIKI_DIR".to_string(), dir.to_string_lossy().into_owned()),
+        ("KIKI_SOCKET_FOR_TOOL".to_string(), socket),
+    ];
     Ok(Prepared { command, cwd: dir, terminal: tool.get("terminal").and_then(Value::as_bool).unwrap_or(true), env })
 }
 
@@ -184,7 +198,7 @@ pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, b
         return Err(format!("{} is not installed", tool.str_field("name").unwrap_or(&id)));
     }
     let mut sessions = sessions().lock().unwrap();
-    let running = sessions.get_mut(&id).map(|s| alive(s)).unwrap_or(false);
+    let running = sessions.get_mut(&id).map(alive).unwrap_or(false);
     if running {
         if let Some(reuse) = tool.str_field("reuse") {
             let p = prepare(&tool, uris, line, reuse)?;

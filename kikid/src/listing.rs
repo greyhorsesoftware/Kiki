@@ -177,7 +177,17 @@ fn cache() -> &'static Mutex<Cache> {
 /// Opens (or reuses) the listing for a local path. `cached` tells whether it was served from memory.
 pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
     let key = uri.to_string();
-    let path = if uri.is_local() { uri.to_path() } else { PathBuf::from(&key) };
+    let trash = uri.scheme == "trash";
+    let path = if uri.is_local() {
+        uri.to_path()
+    } else if trash {
+        let p = crate::ops::trash_dir().join("files").join(uri.path.trim_start_matches('/'));
+        let _ = std::fs::create_dir_all(&p);
+        let _ = std::fs::create_dir_all(crate::ops::trash_dir().join("info"));
+        p
+    } else {
+        PathBuf::from(&key)
+    };
     if let Some(l) = cache().lock().unwrap().map.get(&key).cloned() {
         let mut inner = l.inner.lock().unwrap();
         inner.last_used = Instant::now();
@@ -188,11 +198,11 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
         }
         return Ok((l, !stale));
     }
-    let dir: Box<dyn Source> = if uri.is_local() {
+    let dir: Box<dyn Source> = if uri.is_local() || trash {
         Box::new(DirHandle::open(&path)?)
     } else {
         let (session, rpath) = crate::locations::resolve(uri)?;
-        Box::new(crate::vfs::remote::RemoteDir { session, path: rpath })
+        Box::new(crate::vfs::remote::RemoteDir { session, path: rpath, cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)) })
     };
     let listing = Arc::new(Listing {
         uri: uri.clone(),
@@ -512,6 +522,14 @@ impl Listing {
         let mut inner = self.inner.lock().unwrap();
         inner.subscribers.retain(|s| !(s.client == client && s.lid == lid));
         inner.last_used = Instant::now();
+        // A remote listing still scanning with nobody watching: stop the plugin's work and drop
+        // the half-built pool so the next open starts clean.
+        if inner.subscribers.is_empty() && !inner.scan_done && !self.dir.watchable() {
+            inner.stale = true;
+            drop(inner);
+            self.dir.cancel();
+            cache().lock().unwrap().map.remove(&self.uri.to_string());
+        }
     }
 
     pub fn count(&self) -> (u64, bool) {
@@ -600,16 +618,22 @@ impl Listing {
                 let uri = self.uri.join(&String::from_utf8_lossy(&name));
                 let me = Arc::clone(self);
                 drop(inner);
-                crate::thumbs::submit(crate::thumbs::ThumbJob { uri, kind, mtime_ms: mtime, size: crate::thumbs::Size::Normal, done: Box::new(move |path| {
-                    {
-                        let mut inner = me.inner.lock().unwrap();
-                        if (idx as usize) < inner.thumb.len() {
-                            inner.thumb[idx as usize] = Some(path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-                            inner.thumb_queued[idx as usize] = false;
+                crate::thumbs::submit(crate::thumbs::ThumbJob {
+                    uri,
+                    kind,
+                    mtime_ms: mtime,
+                    size: crate::thumbs::Size::Normal,
+                    done: Box::new(move |path| {
+                        {
+                            let mut inner = me.inner.lock().unwrap();
+                            if (idx as usize) < inner.thumb.len() {
+                                inner.thumb[idx as usize] = Some(path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+                                inner.thumb_queued[idx as usize] = false;
+                            }
                         }
-                    }
-                    me.push_rows(&[idx]);
-                }) });
+                        me.push_rows(&[idx]);
+                    }),
+                });
                 continue;
             }
         }
@@ -850,8 +874,20 @@ impl Inner {
             .b("isDir", t == EntryType::Dir)
             .b("isLink", t == EntryType::Link)
             .v("meta", meta)
-            .v("thumb", match &self.thumb[idx as usize] { Some(p) => Value::Str(p.clone()), None => Value::Null })
-            .v("git", match &self.git[idx as usize] { Some(e) => crate::git::entry_json(e), None => Value::Null })
+            .v(
+                "thumb",
+                match &self.thumb[idx as usize] {
+                    Some(p) => Value::Str(p.clone()),
+                    None => Value::Null,
+                },
+            )
+            .v(
+                "git",
+                match &self.git[idx as usize] {
+                    Some(e) => crate::git::entry_json(e),
+                    None => Value::Null,
+                },
+            )
             .done()
     }
 }
@@ -871,8 +907,9 @@ mod names {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    fn cache() -> &'static Mutex<(HashMap<u32, Option<String>>, HashMap<u32, Option<String>>)> {
-        static C: OnceLock<Mutex<(HashMap<u32, Option<String>>, HashMap<u32, Option<String>>)>> = OnceLock::new();
+    type NameCache = Mutex<(HashMap<u32, Option<String>>, HashMap<u32, Option<String>>)>;
+    fn cache() -> &'static NameCache {
+        static C: OnceLock<NameCache> = OnceLock::new();
         C.get_or_init(|| Mutex::new((HashMap::new(), HashMap::new())))
     }
 

@@ -78,7 +78,15 @@ impl Spec {
             .b("confirmedLargeDelete", self.confirmed_large_delete)
             .i("clockOffsetMs", self.clock_offset_ms)
             .b("clockOffsetAuto", self.clock_offset_auto)
-            .s("detector", match self.detector { Detector::Auto => "auto", Detector::SizeMtime => "sizeMtime", Detector::SizeOnly => "sizeOnly", Detector::Digest => "digest" })
+            .s(
+                "detector",
+                match self.detector {
+                    Detector::Auto => "auto",
+                    Detector::SizeMtime => "sizeMtime",
+                    Detector::SizeOnly => "sizeOnly",
+                    Detector::Digest => "digest",
+                },
+            )
             .v("modifiedWithinMs", self.modified_within_ms.map(Value::Uint).unwrap_or(Value::Null))
             .b("applyFilters", self.apply_filters)
             .done()
@@ -273,7 +281,18 @@ pub fn diff(master: &BTreeMap<String, Entry>, replica: &BTreeMap<String, Entry>,
         None => true,
         Some(w) => m.mtime_ms == 0 || (m.mtime_ms as i64 - spec.clock_offset_ms) >= now_ms as i64 - w as i64,
     };
-    let mk = |rel: &str, kind: ActionKind, reason: Reason, bytes: u64, m: Option<&Entry>, r: Option<&Entry>| Action { rel: rel.to_string(), kind, reason, bytes, master: m.cloned(), replica: r.cloned(), checked: kind != ActionKind::Skip, state: State::Pending, progress: 0, error: None };
+    let mk = |rel: &str, kind: ActionKind, reason: Reason, bytes: u64, m: Option<&Entry>, r: Option<&Entry>| Action {
+        rel: rel.to_string(),
+        kind,
+        reason,
+        bytes,
+        master: m.cloned(),
+        replica: r.cloned(),
+        checked: kind != ActionKind::Skip,
+        state: State::Pending,
+        progress: 0,
+        error: None,
+    };
     let mut creates = Vec::new();
     let mut deletes = Vec::new();
     let mut equals = Vec::new();
@@ -357,7 +376,7 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
             // Try one recursive Scan; fall back to per-directory.
             let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", root.clone()).b("recursive", true).done();
             let mut got_recursive = true;
-            let r = session.plugin.request_stream(req, |m| {
+            let r = session.plugin.request_stream_with(req, Some(cancel), |m| {
                 if let Msg::Json(v) = m {
                     if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
                         for e in entries {
@@ -428,7 +447,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
     let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", path).done();
     let mut dirs = Vec::new();
     let mut missing_meta = Vec::new();
-    session.plugin.request_stream(req, |m| {
+    session.plugin.request_stream_with(req, Some(cancel), |m| {
         if let Msg::Json(v) = m {
             if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
                 for e in entries {
@@ -596,7 +615,7 @@ pub fn execute(plan: &Arc<Mutex<Plan>>, spec: &Spec, ctx: &ExecCtx) -> Result<Ou
                     let Some((idx, action)) = next else { return Ok(()) };
                     set_state(plan, *idx, State::Running, None);
                     (ctx.on_change)(*idx);
-                    let r = run_action(action, &master_side, &replica_side, ctx);
+                    let r = run_action(action, master_side, replica_side, ctx);
                     match r {
                         Ok(()) => {
                             let mut c = counters.lock().unwrap();
@@ -713,7 +732,7 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             let tmp = dst.with_extension("kiki-part");
             let mut f = std::fs::File::create(&tmp)?;
             let req = Value::obj().s("type", "Read").s("location", s.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
-            let r = s.plugin.request_stream(req, |m| {
+            let r = s.plugin.request_stream_with(req, Some(ctx.cancel), |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
                     let _ = f.write_all(&b);
@@ -731,8 +750,39 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             }
             Ok(())
         }
+        (Side::Remote(ms, mroot), Side::Remote(rs, rroot)) if !Arc::ptr_eq(&ms.plugin, &rs.plugin) => {
+            // Two plugin processes: stream the Read straight into the Write through a bounded
+            // channel, so the transfer never touches the local disk and both sides run at once.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
+            let read_req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
+            let write_req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, &a.rel)).u("size", a.bytes).u("mtime", mtime).done();
+            let reader = std::thread::scope(|scope| {
+                let ms = Arc::clone(ms);
+                let cancel = ctx.cancel;
+                let producer = scope.spawn(move || {
+                    let r = ms.plugin.request_stream_with(read_req, Some(cancel), |m| {
+                        if let Msg::Binary(b) = m {
+                            let _ = tx.send(b);
+                        }
+                    });
+                    // Dropping tx ends the consumer's stream.
+                    r.map(|_| ())
+                });
+                let w = rs.plugin.write_stream_with(write_req, Some(ctx.cancel), || match rx.recv() {
+                    Ok(b) => {
+                        (ctx.on_bytes)(b.len() as u64);
+                        Some(b)
+                    }
+                    Err(_) => None,
+                });
+                let r = producer.join().unwrap_or_else(|_| Err(VfsError::Io("read thread panicked".into())));
+                r.and(w.map(|_| ()))
+            });
+            reader
+        }
         (Side::Remote(ms, mroot), Side::Remote(rs, rroot)) => {
-            // Spool through a temp file; remote-to-remote streaming is a later optimisation.
+            // Same plugin process on both sides: a plugin serves one binary stream at a time, so
+            // spool through a temp file.
             let tmp = std::env::temp_dir().join(format!("kiki-mirror-{}-{}", std::process::id(), crate::md5::hex(a.rel.as_bytes())));
             let mut f = std::fs::File::create(&tmp)?;
             let req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
@@ -769,9 +819,22 @@ pub fn report(spec: &Spec, plan: &Plan) -> String {
     s.push_str("kiki mirror report\n==================\n\n");
     s.push_str(&format!("Direction:         {}\n", if spec.direction == Direction::Upload { "upload (local → remote)" } else { "download (remote → local)" }));
     s.push_str(&format!("Master (source):   {}\nReplica (dest):    {}\n", spec.master, spec.replica));
-    s.push_str(&format!("Detector:          {}\n", match pick_detector(spec) { Detector::SizeOnly => "size only", Detector::Digest => "digest", _ => "size+mtime" }));
+    s.push_str(&format!(
+        "Detector:          {}\n",
+        match pick_detector(spec) {
+            Detector::SizeOnly => "size only",
+            Detector::Digest => "digest",
+            _ => "size+mtime",
+        }
+    ));
     s.push_str(&format!("Clock offset:      {} ms ({})\n", plan.clock_offset_ms, if spec.clock_offset_auto { "auto, subtracted from master mtime" } else { "manual" }));
-    s.push_str(&format!("Delete extras:     {}\nModified within:   {}\nFilters:           {} ({} filtered)\n\n", spec.delete_extras, spec.modified_within_ms.map(|w| format!("{} h", w / 3_600_000)).unwrap_or_else(|| "all files".into()), if spec.apply_filters { "on" } else { "off" }, plan.filtered_count));
+    s.push_str(&format!(
+        "Delete extras:     {}\nModified within:   {}\nFilters:           {} ({} filtered)\n\n",
+        spec.delete_extras,
+        spec.modified_within_ms.map(|w| format!("{} h", w / 3_600_000)).unwrap_or_else(|| "all files".into()),
+        if spec.apply_filters { "on" } else { "off" },
+        plan.filtered_count
+    ));
     let copies = plan.actions.iter().filter(|a| a.kind == ActionKind::Copy).count();
     s.push_str(&format!("Summary: {} to copy, {} to delete, {} unchanged  (replica had {} items)\n\n", copies, plan.delete_count(), plan.count(Reason::Equal), plan.replica_entry_count));
     s.push_str("action/reason | path | master | replica | bytes\n");
@@ -794,13 +857,38 @@ pub fn action_json(a: &Action) -> Value {
     };
     Value::obj()
         .s("rel", a.rel.clone())
-        .s("action", match a.kind { ActionKind::Copy => "copy", ActionKind::Mkdir => "mkdir", ActionKind::Delete => "delete", ActionKind::Rmdir => "rmdir", ActionKind::Skip => "skip" })
-        .s("reason", match a.reason { Reason::New => "new", Reason::Changed => "changed", Reason::Extra => "extra", Reason::Equal => "equal" })
+        .s(
+            "action",
+            match a.kind {
+                ActionKind::Copy => "copy",
+                ActionKind::Mkdir => "mkdir",
+                ActionKind::Delete => "delete",
+                ActionKind::Rmdir => "rmdir",
+                ActionKind::Skip => "skip",
+            },
+        )
+        .s(
+            "reason",
+            match a.reason {
+                Reason::New => "new",
+                Reason::Changed => "changed",
+                Reason::Extra => "extra",
+                Reason::Equal => "equal",
+            },
+        )
         .u("bytes", a.bytes)
         .b("checked", a.checked)
         .v("master", e(&a.master))
         .v("replica", e(&a.replica))
-        .s("state", match a.state { State::Pending => "pending", State::Running => "running", State::Done => "done", State::Skipped => "skipped" })
+        .s(
+            "state",
+            match a.state {
+                State::Pending => "pending",
+                State::Running => "running",
+                State::Done => "done",
+                State::Skipped => "skipped",
+            },
+        )
         .u("progress", a.progress as u64)
         .opt_s("error", a.error.as_deref())
         .done()
@@ -834,7 +922,19 @@ mod tests {
         (rel.to_string(), Entry { rel: rel.to_string(), is_dir, size, mtime_ms: mtime, digest: None })
     }
     fn spec(delete: bool) -> Spec {
-        Spec { master: Uri::parse("/m").unwrap(), replica: Uri::parse("/r").unwrap(), direction: Direction::Upload, delete_extras: delete, blast_radius: 0.5, confirmed_large_delete: false, clock_offset_ms: 0, clock_offset_auto: false, detector: Detector::SizeMtime, modified_within_ms: None, apply_filters: false }
+        Spec {
+            master: Uri::parse("/m").unwrap(),
+            replica: Uri::parse("/r").unwrap(),
+            direction: Direction::Upload,
+            delete_extras: delete,
+            blast_radius: 0.5,
+            confirmed_large_delete: false,
+            clock_offset_ms: 0,
+            clock_offset_auto: false,
+            detector: Detector::SizeMtime,
+            modified_within_ms: None,
+            apply_filters: false,
+        }
     }
     fn kinds(p: &Plan) -> Vec<(String, ActionKind, Reason)> {
         p.actions.iter().map(|a| (a.rel.clone(), a.kind, a.reason)).collect()
@@ -842,8 +942,11 @@ mod tests {
 
     #[test]
     fn diff_matrix() {
-        let m: BTreeMap<_, _> = [e("a", true, 0, 0), e("a/new.txt", false, 5, 1000), e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 9000), e("tol.txt", false, 3, 7000), e("unknown.txt", false, 3, 0)].into_iter().collect();
-        let r: BTreeMap<_, _> = [e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 1000), e("tol.txt", false, 3, 5000), e("unknown.txt", false, 3, 123), e("extra", true, 0, 0), e("extra/old.txt", false, 1, 1)].into_iter().collect();
+        let m: BTreeMap<_, _> =
+            [e("a", true, 0, 0), e("a/new.txt", false, 5, 1000), e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 9000), e("tol.txt", false, 3, 7000), e("unknown.txt", false, 3, 0)].into_iter().collect();
+        let r: BTreeMap<_, _> = [e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 1000), e("tol.txt", false, 3, 5000), e("unknown.txt", false, 3, 123), e("extra", true, 0, 0), e("extra/old.txt", false, 1, 1)]
+            .into_iter()
+            .collect();
         let p = diff(&m, &r, &spec(false), Detector::SizeMtime, 100_000).unwrap();
         let k = kinds(&p);
         assert_eq!(k[0], ("a".into(), ActionKind::Mkdir, Reason::New)); // parent before child
@@ -877,7 +980,7 @@ mod tests {
         assert!(k.iter().any(|x| x.0 == "new.txt" && x.1 == ActionKind::Copy));
         assert!(k.iter().any(|x| x.0 == "ch.txt" && x.1 == ActionKind::Copy));
         assert!(k.iter().any(|x| x.0 == "gone.txt" && x.1 == ActionKind::Delete)); // the window never prevents deletes
-        // offset: median of same-size pairs, needs three
+                                                                                   // offset: median of same-size pairs, needs three
         let m: BTreeMap<_, _> = [e("a", false, 1, 10_000), e("b", false, 1, 20_000), e("c", false, 1, 30_000), e("d", false, 9, 99_000)].into_iter().collect();
         let r: BTreeMap<_, _> = [e("a", false, 1, 6_400), e("b", false, 1, 16_400), e("c", false, 1, 26_500), e("d", false, 9, 1)].into_iter().collect();
         assert_eq!(auto_offset(&m, &r), 3_600);
@@ -912,7 +1015,7 @@ mod tests {
         assert_eq!((out.copies, out.deletes, out.skipped), (3, 0, 0));
         assert_eq!(std::fs::read(d.join("r/sub/b.txt")).unwrap(), b"bb");
         assert!(d.join("r/keep.txt").exists()); // additive run keeps replica-only files
-        // second scan: nothing to do (mtime preserved)
+                                                // second scan: nothing to do (mtime preserved)
         let plan2 = scan(&mut s, &cancel).unwrap();
         assert!(plan2.actions.iter().all(|a| a.kind == ActionKind::Skip));
         // edit one file: exactly one changed copy
@@ -926,7 +1029,11 @@ mod tests {
         s.delete_extras = true;
         let plan4 = Arc::new(Mutex::new(scan(&mut s, &cancel).unwrap()));
         assert_eq!(plan4.lock().unwrap().delete_count(), 1);
-        let big = { let mut p = plan4.lock().unwrap().clone(); p.replica_entry_count = 1; p };
+        let big = {
+            let mut p = plan4.lock().unwrap().clone();
+            p.replica_entry_count = 1;
+            p
+        };
         assert!(execute(&Arc::new(Mutex::new(big)), &s, &ctx).is_err());
         s.confirmed_large_delete = true;
         let out = execute(&plan4, &s, &ctx).unwrap();

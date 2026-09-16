@@ -93,4 +93,6 @@ pub trait Source: Send + Sync {
     fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>;
     /// True when inotify can watch it (local directories only).
     fn watchable(&self) -> bool;
+    /// Stop an in-progress scan (a remote listing nobody is looking at any more).
+    fn cancel(&self) {}
 }

@@ -47,8 +47,14 @@ struct Session {
     sftp: SftpSession,
     /// Second SFTP channel used only for pipelined reads.
     raw: Arc<RawSftpSession>,
-    fast: FastScan,
+    fast: Mutex<FastScan>,
     fingerprint: Option<String>,
+}
+
+impl Session {
+    fn fast(&self) -> FastScan {
+        *self.fast.lock().unwrap()
+    }
 }
 
 struct ClientHandler {
@@ -69,9 +75,11 @@ impl client::Handler for ClientHandler {
     }
 }
 
+/// Requests run concurrently (SDK worker threads); sessions are shared behind a mutex and every
+/// SFTP call takes `&self`, so a listing and a transfer on different sessions interleave.
 struct Sftp {
     rt: Runtime,
-    sessions: HashMap<String, Session>,
+    sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
 
 fn key(location: &str, role: &str) -> String {
@@ -113,10 +121,10 @@ fn sftp_err(e: russh_sftp::client::error::Error) -> PluginError {
 }
 
 impl Sftp {
-    fn session(&self, location: &str) -> Result<&Session> {
+    fn session(&self, location: &str) -> Result<Arc<Session>> {
         // Browsing calls use the browse session; jobs get their own through Connect with role job.
         let k = key(location, "browse");
-        self.sessions.get(&k).ok_or_else(|| PluginError::network("not connected"))
+        self.sessions.lock().unwrap().get(&k).cloned().ok_or_else(|| PluginError::network("not connected"))
     }
 
     /// Run one command over an exec channel; returns (stdout, exit status).
@@ -130,6 +138,10 @@ impl Sftp {
             ch.exec(true, cmd).await.map_err(net)?;
             let mut status = 0u32;
             loop {
+                if sdk::cancelled() {
+                    let _ = ch.close().await;
+                    return Err(sdk::cancel_error());
+                }
                 match ch.wait().await {
                     Some(ChannelMsg::Data { data }) => on_data(&data),
                     Some(ChannelMsg::ExitStatus { exit_status }) => status = exit_status,
@@ -179,7 +191,7 @@ impl Sftp {
     fn fast_scan(&self, sess: &Session, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
         let depth = if recursive { "" } else { "-maxdepth 1 " };
         let q = sdk::shell_quote(path);
-        let cmd = match sess.fast {
+        let cmd = match sess.fast() {
             FastScan::Gnu => {
                 let fmt = if recursive { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%P\\0" } else { "%y\\0%Y\\0%s\\0%T@\\0%m\\0%u\\0%g\\0%f\\0" };
                 format!("find {q} -mindepth 1 {depth}-printf '{fmt}'")
@@ -192,7 +204,7 @@ impl Sftp {
         };
         let mut buf: Vec<u8> = Vec::new();
         let mut entries: Vec<Entry> = Vec::new();
-        let gnu = sess.fast == FastScan::Gnu;
+        let gnu = sess.fast() == FastScan::Gnu;
         let status = self.exec(sess, &cmd, |data| {
             buf.extend_from_slice(data);
             while let Some(e) = if gnu { parse_gnu_record(&mut buf, recursive) } else { parse_stat_record(&mut buf, path, recursive) } {
@@ -228,11 +240,14 @@ impl Sftp {
             };
             let result: Result<()> = async {
                 loop {
-                    while !eof && inflight.len() < READ_IN_FLIGHT && size.map_or(true, |s| next < s) {
+                    while !eof && inflight.len() < READ_IN_FLIGHT && size.is_none_or(|s| next < s) {
                         inflight.push_back(issue(raw, &handle, next));
                         next += READ_CHUNK as u64;
                     }
                     let Some(job) = inflight.pop_front() else { break };
+                    if sdk::cancelled() {
+                        return Err(sdk::cancel_error());
+                    }
                     match job.await.map_err(PluginError::io)? {
                         Ok(data) if data.is_empty() => eof = true,
                         Ok(data) => {
@@ -281,7 +296,12 @@ fn parse_gnu_record(buf: &mut Vec<u8>, recursive: bool) -> Option<Entry> {
     let mtime_ms = s(3).parse::<f64>().map(|t| (t * 1000.0) as u64).unwrap_or(0);
     let rel = s(7);
     let name = rel.rsplit('/').next().unwrap_or("").to_string();
-    Some(Entry { name, kind, meta: Some(Meta { size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }), rel: if recursive { rel } else { String::new() } })
+    Some(Entry {
+        name,
+        kind,
+        meta: Some(Meta { size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }),
+        rel: if recursive { rel } else { String::new() },
+    })
 }
 
 /// `stat` record: `type|size|mtime|mode|user|group\n<path>\0`.
@@ -309,7 +329,13 @@ fn parse_stat_record(buf: &mut Vec<u8>, root: &str, recursive: bool) -> Option<E
     Some(Entry {
         name,
         kind,
-        meta: Some(Meta { size: get(1).parse().unwrap_or(0), mtime_ms: get(2).parse::<u64>().unwrap_or(0) * 1000, mode: u32::from_str_radix(get(3), 8).ok(), owner: Some(get(4).to_string()), group: Some(get(5).to_string()) }),
+        meta: Some(Meta {
+            size: get(1).parse().unwrap_or(0),
+            mtime_ms: get(2).parse::<u64>().unwrap_or(0) * 1000,
+            mode: u32::from_str_radix(get(3), 8).ok(),
+            owner: Some(get(4).to_string()),
+            group: Some(get(5).to_string()),
+        }),
         rel,
     })
 }
@@ -339,7 +365,7 @@ impl Handler for Sftp {
         }
     }
 
-    fn validate(&mut self, config: &Value) -> Result<()> {
+    fn validate(&self, config: &Value) -> Result<()> {
         if cfg(config, "host").is_empty() {
             return Err(PluginError::invalid("host", "host is required"));
         }
@@ -353,9 +379,9 @@ impl Handler for Sftp {
         Ok(())
     }
 
-    fn connect(&mut self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value> {
+    fn connect(&self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value> {
         let k = key(location, role);
-        if let Some(s) = self.sessions.get(&k) {
+        if let Some(s) = self.sessions.lock().unwrap().get(&k) {
             return Ok(Value::obj().opt_s("fingerprint", s.fingerprint.as_deref()).v("banner", Value::Null).done());
         }
         let host = cfg(config, "host").to_string();
@@ -404,52 +430,51 @@ impl Handler for Sftp {
             Ok::<_, PluginError>((handle, sftp, Arc::new(raw)))
         })?;
         let fingerprint = seen.lock().unwrap().clone();
-        let mut sess = Session { handle, sftp, raw, fast: FastScan::None, fingerprint: fingerprint.clone() };
+        let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone() };
         if role == "browse" {
-            sess.fast = self.probe(&sess);
+            let f = self.probe(&sess);
+            *sess.fast.lock().unwrap() = f;
         }
-        self.sessions.insert(k, sess);
+        self.sessions.lock().unwrap().insert(k, Arc::new(sess));
         Ok(Value::obj().opt_s("fingerprint", fingerprint.as_deref()).v("banner", Value::Null).done())
     }
 
-    fn disconnect(&mut self, location: &str, role: &str) {
-        if let Some(s) = self.sessions.remove(&key(location, role)) {
+    fn disconnect(&self, location: &str, role: &str) {
+        let s = self.sessions.lock().unwrap().remove(&key(location, role));
+        if let Some(s) = s {
             let _ = self.rt.block_on(async { s.handle.disconnect(russh::Disconnect::ByApplication, "", "en").await });
         }
     }
 
-    fn capabilities(&mut self, location: &str) -> Result<Value> {
-        let fast = self.session(location)?.fast;
+    fn capabilities(&self, location: &str) -> Result<Value> {
+        let fast = self.session(location)?.fast();
         Ok(Value::obj().b("trash", false).b("setMtime", true).b("mode", true).b("realDirs", true).v("digestKind", Value::Null).s("separator", "/").s("fastScan", fast.label()).b("partialRead", true).done())
     }
 
-    fn scan(&mut self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
-        let fast = self.session(location)?.fast;
-        if fast != FastScan::None {
-            let r = {
-                let sess = self.session(location)?;
-                self.fast_scan(sess, path, recursive, sink)
-            };
-            match r {
+    fn scan(&self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
+        let sess = self.session(location)?;
+        if sess.fast() != FastScan::None {
+            match self.fast_scan(&sess, path, recursive, sink) {
                 Ok(n) => return Ok(n),
+                Err(e) if e.code == "Cancelled" => return Err(e),
                 Err(_) => {
-                    // Fall back for the rest of the session; anything already sent is discarded by the daemon.
-                    if let Some(s) = self.sessions.get_mut(&key(location, "browse")) {
-                        s.fast = FastScan::None;
-                    }
+                    // Fall back for the rest of the session; nothing was sent for the failed call.
+                    *sess.fast.lock().unwrap() = FastScan::None;
                 }
             }
         }
         if recursive {
             return Err(PluginError::unsupported());
         }
-        let sess = self.session(location)?;
         let sftp = &sess.sftp;
         self.rt.block_on(async {
             let rd = sftp.read_dir(path).await.map_err(sftp_err)?;
             let mut batch = Vec::with_capacity(256);
             let mut n = 0u64;
             for e in rd {
+                if sdk::cancelled() {
+                    return Err(sdk::cancel_error());
+                }
                 let name = e.file_name();
                 if name == "." || name == ".." {
                     continue;
@@ -468,27 +493,31 @@ impl Handler for Sftp {
         })
     }
 
-    fn stat(&mut self, location: &str, path: &str) -> Result<Meta> {
+    fn stat(&self, location: &str, path: &str) -> Result<Meta> {
         let sess = self.session(location)?;
         let sftp = &sess.sftp;
         self.rt.block_on(async { sftp.symlink_metadata(path).await.map(|m| to_meta(&m)).map_err(sftp_err) })
     }
 
-    fn read(&mut self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
+    fn read(&self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
         let raw = Arc::clone(&self.session(location)?.raw);
         self.read_pipelined(&raw, path, offset, out)
     }
 
-    fn write(&mut self, location: &str, path: &str, mut args: WriteArgs) -> Result<u64> {
+    fn write(&self, location: &str, path: &str, args: WriteArgs) -> Result<u64> {
         let sess = self.session(location)?;
         let sftp = &sess.sftp;
         let rt = &self.rt;
         let mtime = args.mtime_ms;
+        let mut args = args;
         rt.block_on(async {
             let mut f = sftp.create(path).await.map_err(sftp_err)?;
             let mut buf = vec![0u8; 256 * 1024];
             let mut total = 0u64;
             loop {
+                if sdk::cancelled() {
+                    return Err(sdk::cancel_error());
+                }
                 let n = args.data.read(&mut buf).map_err(PluginError::io)?;
                 if n == 0 {
                     break;
@@ -498,26 +527,24 @@ impl Handler for Sftp {
             }
             f.shutdown().await.map_err(PluginError::io)?;
             if let Some(t) = mtime {
-                let mut attrs = russh_sftp::protocol::FileAttributes::default();
-                attrs.mtime = Some((t / 1000) as u32);
-                attrs.atime = Some((t / 1000) as u32);
+                let attrs = russh_sftp::protocol::FileAttributes { mtime: Some((t / 1000) as u32), atime: Some((t / 1000) as u32), ..Default::default() };
                 let _ = sftp.set_metadata(path, attrs).await;
             }
             Ok(total)
         })
     }
 
-    fn mkdir(&mut self, location: &str, path: &str) -> Result<()> {
+    fn mkdir(&self, location: &str, path: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async { sftp.create_dir(path).await.map_err(sftp_err) })
     }
 
-    fn rename(&mut self, location: &str, from: &str, to: &str) -> Result<()> {
+    fn rename(&self, location: &str, from: &str, to: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async { sftp.rename(from, to).await.map_err(sftp_err) })
     }
 
-    fn delete(&mut self, location: &str, path: &str) -> Result<()> {
+    fn delete(&self, location: &str, path: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
             let md = sftp.symlink_metadata(path).await.map_err(sftp_err)?;
@@ -529,30 +556,28 @@ impl Handler for Sftp {
         })
     }
 
-    fn set_mtime(&mut self, location: &str, path: &str, mtime_ms: u64) -> Result<()> {
+    fn set_mtime(&self, location: &str, path: &str, mtime_ms: u64) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
-            let mut attrs = russh_sftp::protocol::FileAttributes::default();
-            attrs.mtime = Some((mtime_ms / 1000) as u32);
-            attrs.atime = Some((mtime_ms / 1000) as u32);
+            let attrs = russh_sftp::protocol::FileAttributes { mtime: Some((mtime_ms / 1000) as u32), atime: Some((mtime_ms / 1000) as u32), ..Default::default() };
             sftp.set_metadata(path, attrs).await.map_err(sftp_err)
         })
     }
 
-    fn chmod(&mut self, location: &str, path: &str, mode: u32) -> Result<()> {
+    fn chmod(&self, location: &str, path: &str, mode: u32) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
-            let mut attrs = russh_sftp::protocol::FileAttributes::default();
-            attrs.permissions = Some(mode);
+            let attrs = russh_sftp::protocol::FileAttributes { permissions: Some(mode), ..Default::default() };
             sftp.set_metadata(path, attrs).await.map_err(sftp_err)
         })
     }
 }
 
 fn main() {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("tokio runtime");
-    let mut h = Sftp { rt, sessions: HashMap::new() };
-    if let Err(e) = sdk::run(&mut h) {
+    // Multi-thread so concurrent requests can each block_on their own future.
+    let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("tokio runtime");
+    let h = Sftp { rt, sessions: Mutex::new(HashMap::new()) };
+    if let Err(e) = sdk::run(&h) {
         eprintln!("kiki-plugin-sftp: {e}");
     }
 }

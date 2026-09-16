@@ -23,6 +23,7 @@ fn cancelled(c: &AtomicBool) -> bool {
 pub fn copy_file(src: &Path, dst: &Path, p: &mut Progress) -> Result<u64> {
     let mut input = fs::File::open(src)?;
     let md = input.metadata()?;
+    #[cfg(target_os = "linux")]
     let total = md.len();
     let mut output = fs::OpenOptions::new().write(true).create_new(true).open(dst)?;
     #[cfg(target_os = "linux")]
@@ -68,9 +69,8 @@ pub fn copy_file(src: &Path, dst: &Path, p: &mut Progress) -> Result<u64> {
             return Ok(done);
         }
     }
-    let n = buffered_copy(&mut input, &mut output, p).map_err(|e| {
+    let n = buffered_copy(&mut input, &mut output, p).inspect_err(|_| {
         let _ = fs::remove_file(dst);
-        e
     })?;
     finish_copy(&md, dst)?;
     Ok(n)
@@ -279,10 +279,53 @@ fn iso_local(secs: u64) -> String {
 }
 
 pub fn local_path(uri: &Uri) -> Result<PathBuf> {
+    if uri.scheme == "trash" {
+        // trash:///name → the trashed file itself
+        return Ok(trash_dir().join("files").join(uri.path.trim_start_matches('/')));
+    }
     if !uri.is_local() {
         return Err(VfsError::Unsupported);
     }
     Ok(uri.to_path())
+}
+
+/// Every `.trashinfo`: (name in files/, original path, deletion date ISO).
+pub fn trash_infos() -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(trash_dir().join("info")) else { return out };
+    for e in rd.flatten() {
+        let Some(name) = e.file_name().to_str().and_then(|n| n.strip_suffix(".trashinfo")).map(str::to_string) else { continue };
+        let Ok(text) = fs::read_to_string(e.path()) else { continue };
+        let path = text.lines().find_map(|l| l.strip_prefix("Path=")).map(percent_decode).unwrap_or_default();
+        let date = text.lines().find_map(|l| l.strip_prefix("DeletionDate=")).unwrap_or("").to_string();
+        out.push((name, path, date));
+    }
+    out.sort();
+    out
+}
+
+/// Delete everything in the trash for good.
+pub fn empty_trash(cancel: &AtomicBool) -> Result<u64> {
+    let td = trash_dir();
+    let mut n = 0;
+    for sub in ["files", "info"] {
+        let Ok(rd) = fs::read_dir(td.join(sub)) else { continue };
+        for e in rd.flatten() {
+            if cancelled(cancel) {
+                return Err(VfsError::Io("cancelled".into()));
+            }
+            let p = e.path();
+            if p.is_dir() && !p.is_symlink() {
+                remove_tree(&p)?;
+            } else {
+                fs::remove_file(&p)?;
+            }
+            if sub == "files" {
+                n += 1;
+            }
+        }
+    }
+    Ok(n)
 }
 
 /// A unique destination name: "name", "name (2)", "name (3)" … keeping the extension.
@@ -358,7 +401,15 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut seen = 0u64;
         let r = {
-            let mut p = Progress { cancel: &cancel, bytes: &mut |n| { seen += n; if seen >= 1024 * 1024 { cancel.store(true, Ordering::Relaxed) } } };
+            let mut p = Progress {
+                cancel: &cancel,
+                bytes: &mut |n| {
+                    seen += n;
+                    if seen >= 1024 * 1024 {
+                        cancel.store(true, Ordering::Relaxed)
+                    }
+                },
+            };
             copy_file(&d.join("big"), &d.join("out"), &mut p)
         };
         // On Linux copy_file_range may finish in one call before the flag is checked; either way no partial file may remain on error.

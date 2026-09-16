@@ -3,7 +3,10 @@
 
 pub use kiki_json as json;
 use kiki_json::Value;
+use std::collections::HashMap;
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub struct PluginError {
@@ -79,6 +82,7 @@ impl Meta {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Entry {
     pub name: String,
     pub kind: Kind,
@@ -93,7 +97,15 @@ pub fn field(key: &str, label: &str, kind: &str, required: bool, default: Option
 }
 
 pub fn select_field(key: &str, label: &str, options: &[&str], default: &str) -> Value {
-    Value::obj().s("key", key).s("label", label).s("kind", "select").b("required", true).s("default", default).v("options", Value::Arr(options.iter().map(|o| Value::Str(o.to_string())).collect())).v("group", Value::Null).done()
+    Value::obj()
+        .s("key", key)
+        .s("label", label)
+        .s("kind", "select")
+        .b("required", true)
+        .s("default", default)
+        .v("options", Value::Arr(options.iter().map(|o| Value::Str(o.to_string())).collect()))
+        .v("group", Value::Null)
+        .done()
 }
 
 pub struct Features {
@@ -145,31 +157,31 @@ impl Describe {
     }
 }
 
-/// Incoming bytes of a `Write`: reads binary frames from stdin until the empty end frame.
-pub struct Incoming<'a> {
-    stdin: &'a mut dyn Read,
+/// Incoming bytes of a `Write`: binary frames routed from the reader thread until the empty
+/// end frame.
+pub struct Incoming {
+    rx: std::sync::mpsc::Receiver<Vec<u8>>,
     buf: Vec<u8>,
     pos: usize,
     done: bool,
 }
 
-impl<'a> Read for Incoming<'a> {
+impl Read for Incoming {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.pos >= self.buf.len() {
             if self.done {
                 return Ok(0);
             }
-            match read_frame(self.stdin)? {
-                Some((1, payload)) => {
-                    if payload.is_empty() {
-                        self.done = true;
-                        return Ok(0);
-                    }
-                    self.buf = payload;
+            match self.rx.recv() {
+                Ok(b) if b.is_empty() => {
+                    self.done = true;
+                    return Ok(0);
+                }
+                Ok(b) => {
+                    self.buf = b;
                     self.pos = 0;
                 }
-                Some((_, _)) => return Err(io::Error::new(io::ErrorKind::InvalidData, "expected binary frame")),
-                None => {
+                Err(_) => {
                     self.done = true;
                     return Ok(0);
                 }
@@ -182,57 +194,85 @@ impl<'a> Read for Incoming<'a> {
     }
 }
 
-/// Outgoing bytes of a `Read`: `write` sends binary frames; the SDK sends the end frame.
+/// The plugin's shared output pipe: every frame is written whole under the lock, so concurrent
+/// requests interleave at frame granularity only.
+pub type Shared = Mutex<Box<dyn Write + Send>>;
+
+/// Outgoing bytes of a `Read`: `write` sends binary frames; the SDK sends the end frame. Writes
+/// fail with `Interrupted` once the request has been cancelled.
 pub struct Outgoing<'a> {
-    stdout: &'a mut dyn Write,
+    out: &'a Shared,
+    cancel: Arc<AtomicBool>,
     pub bytes: u64,
 }
 
 impl<'a> Write for Outgoing<'a> {
     fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+        if self.cancel.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        }
         if !b.is_empty() {
+            let mut o = self.out.lock().unwrap();
             for chunk in b.chunks(1024 * 1024) {
-                write_binary(self.stdout, chunk)?;
+                write_binary(&mut **o, chunk)?;
             }
             self.bytes += b.len() as u64;
         }
         Ok(b.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        self.stdout.flush()
+        self.out.lock().unwrap().flush()
     }
 }
 
-pub struct WriteArgs<'a> {
+pub struct WriteArgs {
     pub size: Option<u64>,
     pub mode: Option<u32>,
     pub mtime_ms: Option<u64>,
-    pub data: Incoming<'a>,
+    pub data: Incoming,
 }
 
+thread_local! {
+    static CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// True once the daemon has sent `Cancel` for the request this thread is serving. Long loops
+/// (listings, transfers) check it and return early with any error; the SDK reports `Cancelled`.
+pub fn cancelled() -> bool {
+    CANCEL.with(|c| c.borrow().as_ref().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false))
+}
+
+/// The plugin's own error for an interrupted request.
+pub fn cancel_error() -> PluginError {
+    PluginError::new("Cancelled", "cancelled")
+}
+
+/// Requests run concurrently on worker threads (up to `MAX_CONCURRENT`); handlers take `&self`
+/// and keep their sessions behind their own locks. `Read` and `Thumb` streams are serialised so
+/// binary frames never interleave.
 #[allow(unused_variables)]
-pub trait Handler {
+pub trait Handler: Send + Sync {
     fn describe(&self) -> Describe;
-    fn validate(&mut self, config: &Value) -> Result<()>;
+    fn validate(&self, config: &Value) -> Result<()>;
     /// Returns `{ fingerprint, banner }` fields as JSON (may be empty object).
-    fn connect(&mut self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value>;
-    fn disconnect(&mut self, location: &str, role: &str) {}
-    fn capabilities(&mut self, location: &str) -> Result<Value>;
-    fn scan(&mut self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64>;
-    fn stat(&mut self, location: &str, path: &str) -> Result<Meta>;
-    fn read(&mut self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()>;
-    fn write(&mut self, location: &str, path: &str, args: WriteArgs) -> Result<u64>;
-    fn mkdir(&mut self, location: &str, path: &str) -> Result<()>;
-    fn rename(&mut self, location: &str, from: &str, to: &str) -> Result<()>;
-    fn delete(&mut self, location: &str, path: &str) -> Result<()>;
-    fn set_mtime(&mut self, location: &str, path: &str, mtime_ms: u64) -> Result<()> {
+    fn connect(&self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value>;
+    fn disconnect(&self, location: &str, role: &str) {}
+    fn capabilities(&self, location: &str) -> Result<Value>;
+    fn scan(&self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64>;
+    fn stat(&self, location: &str, path: &str) -> Result<Meta>;
+    fn read(&self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()>;
+    fn write(&self, location: &str, path: &str, args: WriteArgs) -> Result<u64>;
+    fn mkdir(&self, location: &str, path: &str) -> Result<()>;
+    fn rename(&self, location: &str, from: &str, to: &str) -> Result<()>;
+    fn delete(&self, location: &str, path: &str) -> Result<()>;
+    fn set_mtime(&self, location: &str, path: &str, mtime_ms: u64) -> Result<()> {
         Err(PluginError::unsupported())
     }
-    fn chmod(&mut self, location: &str, path: &str, mode: u32) -> Result<()> {
+    fn chmod(&self, location: &str, path: &str, mode: u32) -> Result<()> {
         Err(PluginError::unsupported())
     }
     /// Optional native thumbnail (plan 17); write JPEG or PNG bytes to `out`.
-    fn thumb(&mut self, location: &str, path: &str, out: &mut Outgoing) -> Result<()> {
+    fn thumb(&self, location: &str, path: &str, out: &mut Outgoing) -> Result<()> {
         Err(PluginError::unsupported())
     }
 }
@@ -302,123 +342,174 @@ fn entry_json(e: &Entry) -> Value {
     o.done()
 }
 
-/// The dispatch loop. Runs until stdin closes or `Shutdown` arrives.
-pub fn run(handler: &mut dyn Handler) -> io::Result<()> {
-    let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut stdin = stdin.lock();
-    let mut stdout = stdout.lock();
-    while let Some((kind, payload)) = read_frame(&mut stdin)? {
-        if kind != 0 {
-            continue; // stray binary frame outside a Write
-        }
-        let v = match kiki_json::parse(&payload) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let id = v.u64_field("id").unwrap_or(0);
-        let t = v.str_field("type").unwrap_or("").to_string();
-        let loc = v.str_field("location").unwrap_or("").to_string();
-        let path = v.str_field("path").unwrap_or("/").to_string();
-        let reply = match t.as_str() {
-            "Describe" => ok(id, handler.describe().to_json()),
-            "Ping" => ok(id, Value::obj().done()),
-            "Shutdown" => {
-                write_json(&mut stdout, &ok(id, Value::obj().done()))?;
-                return Ok(());
-            }
-            "Validate" => match handler.validate(v.get("config").unwrap_or(&Value::Null)) {
-                Ok(()) => ok(id, Value::obj().done()),
-                Err(e) => err(id, &e),
-            },
-            "Connect" => match handler.connect(&loc, v.str_field("role").unwrap_or("browse"), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
-                Ok(r) => ok(id, r),
-                Err(e) => err(id, &e),
-            },
-            "Disconnect" => {
-                handler.disconnect(&loc, v.str_field("role").unwrap_or("browse"));
-                ok(id, Value::obj().done())
-            }
-            "Capabilities" => match handler.capabilities(&loc) {
-                Ok(c) => ok(id, c),
-                Err(e) => err(id, &e),
-            },
-            "Scan" => {
-                let recursive = v.get("recursive").and_then(Value::as_bool).unwrap_or(false);
-                let mut sink_err: Option<io::Error> = None;
-                let r = {
-                    let out = &mut stdout;
-                    handler.scan(&loc, &path, recursive, &mut |entries: Vec<Entry>| {
-                        if sink_err.is_some() {
-                            return;
-                        }
-                        let frame = Value::obj().u("id", id).v("entries", Value::Arr(entries.iter().map(entry_json).collect())).done();
-                        if let Err(e) = write_json(out, &frame) {
-                            sink_err = Some(e);
-                        }
-                    })
-                };
-                if let Some(e) = sink_err {
-                    return Err(e);
-                }
-                match r {
-                    Ok(n) => ok(id, Value::obj().u("n", n).done()),
-                    Err(e) => err(id, &e),
-                }
-            }
-            "Stat" => match handler.stat(&loc, &path) {
-                Ok(m) => ok(id, m.to_json()),
-                Err(e) => err(id, &e),
-            },
-            "Read" => {
-                let offset = v.u64_field("offset").unwrap_or(0);
-                let (r, bytes) = {
-                    let mut out = Outgoing { stdout: &mut stdout, bytes: 0 };
-                    let r = handler.read(&loc, &path, offset, &mut out);
-                    (r, out.bytes)
-                };
-                write_binary(&mut stdout, &[])?;
-                stdout.flush()?;
-                match r {
-                    Ok(()) => ok(id, Value::obj().u("bytes", bytes).done()),
-                    Err(e) => err(id, &e),
-                }
-            }
-            "Thumb" => {
-                let (r, bytes) = {
-                    let mut out = Outgoing { stdout: &mut stdout, bytes: 0 };
-                    let r = handler.thumb(&loc, &path, &mut out);
-                    (r, out.bytes)
-                };
-                write_binary(&mut stdout, &[])?;
-                stdout.flush()?;
-                match r {
-                    Ok(()) => ok(id, Value::obj().u("bytes", bytes).done()),
-                    Err(e) => err(id, &e),
-                }
-            }
-            "Write" => {
-                let args = WriteArgs { size: v.u64_field("size"), mode: v.u64_field("mode").map(|m| m as u32), mtime_ms: v.u64_field("mtime"), data: Incoming { stdin: &mut stdin, buf: Vec::new(), pos: 0, done: false } };
-                match handler.write(&loc, &path, args) {
-                    Ok(n) => ok(id, Value::obj().u("bytes", n).done()),
-                    Err(e) => {
-                        // Drain the rest of the stream so the pipe stays in sync.
-                        let mut drain = Incoming { stdin: &mut stdin, buf: Vec::new(), pos: 0, done: false };
-                        let _ = io::copy(&mut drain, &mut io::sink());
-                        err(id, &e)
+pub const MAX_CONCURRENT: usize = 8;
+
+fn emit(out: &Shared, v: &Value) -> io::Result<()> {
+    let mut o = out.lock().unwrap();
+    write_json(&mut **o, v)
+}
+
+/// The dispatch loop over stdin/stdout. Runs until stdin closes or `Shutdown` arrives.
+pub fn run(handler: &dyn Handler) -> io::Result<()> {
+    let out: Arc<Shared> = Arc::new(Mutex::new(Box::new(io::stdout())));
+    run_on(handler, Box::new(io::stdin()), &out)
+}
+
+/// The dispatch loop over any pipe pair (tests drive it with in-memory streams).
+///
+/// The calling thread reads frames; each request runs on its own scoped thread (at most
+/// `MAX_CONCURRENT`), `Cancel { target }` flips that request's flag, and the binary frames of the
+/// one `Write` in progress are routed to its `Incoming`.
+pub fn run_on(handler: &dyn Handler, mut input: Box<dyn Read + Send>, out: &Arc<Shared>) -> io::Result<()> {
+    let inflight: Mutex<HashMap<u64, Arc<AtomicBool>>> = Mutex::new(HashMap::new());
+    let stream_lock: Mutex<()> = Mutex::new(());
+    let slots = (Mutex::new(0usize), std::sync::Condvar::new());
+    let mut active_write: Option<std::sync::mpsc::SyncSender<Vec<u8>>> = None;
+    std::thread::scope(|scope| -> io::Result<()> {
+        while let Some((kind, payload)) = read_frame(&mut *input)? {
+            if kind != 0 {
+                if let Some(tx) = &active_write {
+                    let end = payload.is_empty();
+                    let _ = tx.send(payload);
+                    if end {
+                        active_write = None;
                     }
                 }
+                continue;
             }
-            "Mkdir" => result(id, handler.mkdir(&loc, &path)),
-            "Rename" => result(id, handler.rename(&loc, v.str_field("from").unwrap_or(""), v.str_field("to").unwrap_or(""))),
-            "Delete" => result(id, handler.delete(&loc, &path)),
-            "SetMtime" => result(id, handler.set_mtime(&loc, &path, v.u64_field("mtime").unwrap_or(0))),
-            "Chmod" => result(id, handler.chmod(&loc, &path, v.u64_field("mode").unwrap_or(0) as u32)),
-            _ => err(id, &PluginError::unsupported()),
-        };
-        write_json(&mut stdout, &reply)?;
+            let v = match kiki_json::parse(&payload) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let id = v.u64_field("id").unwrap_or(0);
+            let t = v.str_field("type").unwrap_or("").to_string();
+            match t.as_str() {
+                "Describe" => emit(out, &ok(id, handler.describe().to_json()))?,
+                "Ping" => emit(out, &ok(id, Value::obj().done()))?,
+                "Cancel" => {
+                    if let Some(target) = v.u64_field("target") {
+                        if let Some(f) = inflight.lock().unwrap().get(&target) {
+                            f.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    emit(out, &ok(id, Value::obj().done()))?;
+                }
+                "Shutdown" => {
+                    for f in inflight.lock().unwrap().values() {
+                        f.store(true, Ordering::Relaxed);
+                    }
+                    emit(out, &ok(id, Value::obj().done()))?;
+                    return Ok(());
+                }
+                _ => {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    inflight.lock().unwrap().insert(id, Arc::clone(&cancel));
+                    let write_rx = if t == "Write" {
+                        let (tx, rx) = std::sync::mpsc::sync_channel(8);
+                        active_write = Some(tx);
+                        Some(rx)
+                    } else {
+                        None
+                    };
+                    {
+                        let (m, cv) = &slots;
+                        let mut n = m.lock().unwrap();
+                        while *n >= MAX_CONCURRENT {
+                            n = cv.wait(n).unwrap();
+                        }
+                        *n += 1;
+                    }
+                    let (out, inflight, stream_lock, slots) = (Arc::clone(out), &inflight, &stream_lock, &slots);
+                    scope.spawn(move || {
+                        CANCEL.with(|c| *c.borrow_mut() = Some(Arc::clone(&cancel)));
+                        let reply = dispatch(handler, &v, id, &t, write_rx, &out, stream_lock, &cancel);
+                        let _ = emit(&out, &reply);
+                        inflight.lock().unwrap().remove(&id);
+                        let (m, cv) = slots;
+                        *m.lock().unwrap() -= 1;
+                        cv.notify_one();
+                    });
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch(handler: &dyn Handler, v: &Value, id: u64, t: &str, write_rx: Option<std::sync::mpsc::Receiver<Vec<u8>>>, out: &Shared, stream_lock: &Mutex<()>, cancel: &Arc<AtomicBool>) -> Value {
+    let loc = v.str_field("location").unwrap_or("").to_string();
+    let path = v.str_field("path").unwrap_or("/").to_string();
+    let reply = match t {
+        "Validate" => result(id, handler.validate(v.get("config").unwrap_or(&Value::Null))),
+        "Connect" => match handler.connect(&loc, v.str_field("role").unwrap_or("browse"), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
+            Ok(r) => ok(id, r),
+            Err(e) => err(id, &e),
+        },
+        "Disconnect" => {
+            handler.disconnect(&loc, v.str_field("role").unwrap_or("browse"));
+            ok(id, Value::obj().done())
+        }
+        "Capabilities" => match handler.capabilities(&loc) {
+            Ok(c) => ok(id, c),
+            Err(e) => err(id, &e),
+        },
+        "Scan" => {
+            let recursive = v.get("recursive").and_then(Value::as_bool).unwrap_or(false);
+            let r = handler.scan(&loc, &path, recursive, &mut |entries: Vec<Entry>| {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                let frame = Value::obj().u("id", id).v("entries", Value::Arr(entries.iter().map(entry_json).collect())).done();
+                let _ = emit(out, &frame);
+            });
+            match r {
+                Ok(n) => ok(id, Value::obj().u("n", n).done()),
+                Err(e) => err(id, &e),
+            }
+        }
+        "Stat" => match handler.stat(&loc, &path) {
+            Ok(m) => ok(id, m.to_json()),
+            Err(e) => err(id, &e),
+        },
+        "Read" | "Thumb" => {
+            let _stream = stream_lock.lock().unwrap();
+            let offset = v.u64_field("offset").unwrap_or(0);
+            let mut o = Outgoing { out, cancel: Arc::clone(cancel), bytes: 0 };
+            let r = if t == "Read" { handler.read(&loc, &path, offset, &mut o) } else { handler.thumb(&loc, &path, &mut o) };
+            let bytes = o.bytes;
+            {
+                let mut w = out.lock().unwrap();
+                let _ = write_binary(&mut **w, &[]);
+                let _ = w.flush();
+            }
+            match r {
+                Ok(()) => ok(id, Value::obj().u("bytes", bytes).done()),
+                Err(e) => err(id, &e),
+            }
+        }
+        "Write" => {
+            let rx = write_rx.expect("write channel");
+            let args = WriteArgs { size: v.u64_field("size"), mode: v.u64_field("mode").map(|m| m as u32), mtime_ms: v.u64_field("mtime"), data: Incoming { rx, buf: Vec::new(), pos: 0, done: false } };
+            match handler.write(&loc, &path, args) {
+                Ok(n) => ok(id, Value::obj().u("bytes", n).done()),
+                Err(e) => err(id, &e),
+            }
+        }
+        "Mkdir" => result(id, handler.mkdir(&loc, &path)),
+        "Rename" => result(id, handler.rename(&loc, v.str_field("from").unwrap_or(""), v.str_field("to").unwrap_or(""))),
+        "Delete" => result(id, handler.delete(&loc, &path)),
+        "SetMtime" => result(id, handler.set_mtime(&loc, &path, v.u64_field("mtime").unwrap_or(0))),
+        "Chmod" => result(id, handler.chmod(&loc, &path, v.u64_field("mode").unwrap_or(0) as u32)),
+        _ => err(id, &PluginError::unsupported()),
+    };
+    if cancel.load(Ordering::Relaxed) && reply.get("ok").is_some() && !matches!(t, "Validate" | "Connect" | "Disconnect" | "Capabilities" | "Stat") {
+        return err(id, &cancel_error());
     }
-    Ok(())
+    if cancel.load(Ordering::Relaxed) && reply.get("err").is_some() {
+        return err(id, &cancel_error());
+    }
+    reply
 }
 
 fn result(id: u64, r: Result<()>) -> Value {
@@ -459,7 +550,10 @@ impl ShareDescribe {
             .s("name", self.name)
             .s("icon", self.icon)
             .s("version", self.version)
-            .v("accepts", Value::obj().b("files", self.accepts_files).b("folders", self.accepts_folders).b("multiple", self.accepts_multiple).v("maxBytes", self.max_bytes.map(Value::Uint).unwrap_or(Value::Null)).done())
+            .v(
+                "accepts",
+                Value::obj().b("files", self.accepts_files).b("folders", self.accepts_folders).b("multiple", self.accepts_multiple).v("maxBytes", self.max_bytes.map(Value::Uint).unwrap_or(Value::Null)).done(),
+            )
             .s("targets", self.targets)
             .v("form", Value::Arr(self.form.clone()))
             .v("secretFields", Value::Arr(self.secret_fields.iter().map(|s| Value::Str(s.to_string())).collect()))
@@ -536,11 +630,17 @@ pub fn run_share(handler: &mut dyn ShareHandler) -> io::Result<()> {
             }
             "Configure" => result(id, handler.configure(&config, &secrets)),
             "Targets" => match handler.targets(&config, &secrets, v.str_field("query")) {
-                Ok(t) => ok(id, Value::obj().v("targets", Value::Arr(t.into_iter().map(|t| Value::obj().s("id", t.id).s("name", t.name).s("detail", t.detail).b("online", t.online).s("icon", t.icon).done()).collect())).done()),
+                Ok(t) => {
+                    ok(id, Value::obj().v("targets", Value::Arr(t.into_iter().map(|t| Value::obj().s("id", t.id).s("name", t.name).s("detail", t.detail).b("online", t.online).s("icon", t.icon).done()).collect())).done())
+                }
                 Err(e) => err(id, &e),
             },
             "Share" => {
-                let files: Vec<String> = v.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|u| u.as_str()).map(|u| if let Some(p) = u.strip_prefix("file://") { percent_decode(p) } else { u.to_string() }).collect()).unwrap_or_default();
+                let files: Vec<String> = v
+                    .get("uris")
+                    .and_then(Value::as_arr)
+                    .map(|a| a.iter().filter_map(|u| u.as_str()).map(|u| if let Some(p) = u.strip_prefix("file://") { percent_decode(p) } else { u.to_string() }).collect())
+                    .unwrap_or_default();
                 let compose = v.get("compose").cloned().unwrap_or(Value::Null);
                 let r = {
                     let mut p = ShareProgress { id, out: &mut stdout };
@@ -580,4 +680,179 @@ pub fn percent_decode(s: &str) -> String {
 /// A service plugin's Describe (dbus, highlight, ai): fixed-name plugins the daemon uses itself.
 pub fn service_describe(id: &str, name: &str, version: &str, requests: &[&str]) -> Value {
     Value::obj().s("kind", "service").s("id", id).s("name", name).s("version", version).v("requests", Value::Arr(requests.iter().map(|r| Value::Str(r.to_string())).collect())).done()
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct Slow;
+    impl Handler for Slow {
+        fn describe(&self) -> Describe {
+            Describe {
+                scheme: "slow",
+                display_name: "Slow",
+                version: "1",
+                form: vec![],
+                defaults: Value::obj().done(),
+                secret_fields: vec![],
+                detector_upload: "sizeMtime",
+                detector_download: "sizeMtime",
+                features: Features { set_mtime: false, mode: false, real_dirs: true, meta_in_scan: true, pipelining: false, partial_read: true },
+            }
+        }
+        fn validate(&self, _: &Value) -> Result<()> {
+            Ok(())
+        }
+        fn connect(&self, _: &str, _: &str, _: &Value, _: &Value) -> Result<Value> {
+            Ok(Value::obj().done())
+        }
+        fn capabilities(&self, _: &str) -> Result<Value> {
+            Ok(Value::obj().done())
+        }
+        fn scan(&self, _: &str, path: &str, _: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
+            // "/slow" lists forever until cancelled; anything else lists three entries at once.
+            if path == "/slow" {
+                let mut n = 0;
+                loop {
+                    if cancelled() {
+                        return Err(cancel_error());
+                    }
+                    sink(vec![Entry { name: format!("f{n}"), kind: Kind::File, meta: None, rel: String::new() }]);
+                    n += 1;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            sink((0..3).map(|i| Entry { name: format!("e{i}"), kind: Kind::File, meta: None, rel: String::new() }).collect());
+            Ok(3)
+        }
+        fn stat(&self, _: &str, _: &str) -> Result<Meta> {
+            Ok(Meta { size: 1, mtime_ms: 0, mode: None, owner: None, group: None })
+        }
+        fn read(&self, _: &str, _: &str, _: u64, out: &mut Outgoing) -> Result<()> {
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(5));
+                out.write_all(b"x").map_err(PluginError::io)?;
+            }
+            Ok(())
+        }
+        fn write(&self, _: &str, _: &str, mut args: WriteArgs) -> Result<u64> {
+            let mut v = Vec::new();
+            args.data.read_to_end(&mut v).map_err(PluginError::io)?;
+            Ok(v.len() as u64)
+        }
+        fn mkdir(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn rename(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn delete(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A pipe pair: the test writes requests into `req_w`, the loop writes replies into a Vec we can poll.
+    struct Pipe(mpsc::Receiver<Vec<u8>>, Vec<u8>);
+    impl Read for Pipe {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            if self.1.is_empty() {
+                match self.0.recv() {
+                    Ok(b) => self.1 = b,
+                    Err(_) => return Ok(0),
+                }
+            }
+            let n = self.1.len().min(out.len());
+            out[..n].copy_from_slice(&self.1[..n]);
+            self.1.drain(..n);
+            Ok(n)
+        }
+    }
+    #[derive(Clone)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn frames(sink: &Sink) -> Vec<(u8, Vec<u8>)> {
+        let data = sink.0.lock().unwrap().clone();
+        let mut cur = &data[..];
+        let mut out = Vec::new();
+        while let Ok(Some(f)) = read_frame(&mut cur) {
+            out.push(f);
+        }
+        out
+    }
+
+    fn send(tx: &mpsc::Sender<Vec<u8>>, v: &Value) {
+        let mut b = Vec::new();
+        write_json(&mut b, v).unwrap();
+        tx.send(b).unwrap();
+    }
+
+    fn wait_for(sink: &Sink, pred: impl Fn(&[(u8, Vec<u8>)]) -> bool) -> Vec<(u8, Vec<u8>)> {
+        for _ in 0..400 {
+            let f = frames(sink);
+            if pred(&f) {
+                return f;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("timed out: {:?}", frames(sink).iter().map(|(k, p)| (*k, String::from_utf8_lossy(p).into_owned())).collect::<Vec<_>>());
+    }
+
+    fn json_replies(f: &[(u8, Vec<u8>)]) -> Vec<Value> {
+        f.iter().filter(|(k, _)| *k == 0).filter_map(|(_, p)| kiki_json::parse(p).ok()).collect()
+    }
+
+    #[test]
+    fn requests_run_concurrently_and_cancel_stops_a_scan() {
+        let (tx, rx) = mpsc::channel();
+        let sink = Sink(Arc::new(Mutex::new(Vec::new())));
+        let out: Arc<Shared> = Arc::new(Mutex::new(Box::new(sink.clone())));
+        let handler = Slow;
+        let loop_thread = std::thread::spawn(move || run_on(&handler, Box::new(Pipe(rx, Vec::new())), &out));
+
+        // A slow Read (100 ms) then a Scan: the Scan reply must arrive before the Read finishes.
+        send(&tx, &Value::obj().u("id", 1).s("type", "Read").s("location", "l").s("path", "/f").done());
+        send(&tx, &Value::obj().u("id", 2).s("type", "Scan").s("location", "l").s("path", "/").done());
+        let f = wait_for(&sink, |f| json_replies(f).iter().any(|r| r.u64_field("id") == Some(2) && r.get("ok").is_some()));
+        assert!(!json_replies(&f).iter().any(|r| r.u64_field("id") == Some(1)), "scan answered while the read was still streaming");
+        wait_for(&sink, |f| json_replies(f).iter().any(|r| r.u64_field("id") == Some(1) && r.get("ok").is_some()));
+
+        // An endless scan is stopped by Cancel and reports Cancelled.
+        send(&tx, &Value::obj().u("id", 3).s("type", "Scan").s("location", "l").s("path", "/slow").done());
+        wait_for(&sink, |f| json_replies(f).iter().filter(|r| r.u64_field("id") == Some(3)).count() >= 3);
+        send(&tx, &Value::obj().u("id", 4).s("type", "Cancel").u("target", 3).done());
+        let f = wait_for(&sink, |f| json_replies(f).iter().any(|r| r.u64_field("id") == Some(3) && r.get("err").is_some()));
+        let e = json_replies(&f).into_iter().find(|r| r.u64_field("id") == Some(3) && r.get("err").is_some()).unwrap();
+        assert_eq!(e.get("err").unwrap().str_field("code"), Some("Cancelled"));
+        assert!(json_replies(&f).iter().any(|r| r.u64_field("id") == Some(4) && r.get("ok").is_some()), "Cancel itself is acknowledged");
+
+        // Write: binary frames route to the handler while another request runs.
+        send(&tx, &Value::obj().u("id", 5).s("type", "Write").s("location", "l").s("path", "/w").done());
+        let mut b = Vec::new();
+        write_binary(&mut b, b"hello ").unwrap();
+        write_binary(&mut b, b"world").unwrap();
+        tx.send(b).unwrap();
+        send(&tx, &Value::obj().u("id", 6).s("type", "Stat").s("location", "l").s("path", "/x").done());
+        let mut end = Vec::new();
+        write_binary(&mut end, &[]).unwrap();
+        tx.send(end).unwrap();
+        let f = wait_for(&sink, |f| json_replies(f).iter().any(|r| r.u64_field("id") == Some(5)));
+        let w = json_replies(&f).into_iter().find(|r| r.u64_field("id") == Some(5)).unwrap();
+        assert_eq!(w.get("ok").unwrap().u64_field("bytes"), Some(11));
+        assert!(json_replies(&f).iter().any(|r| r.u64_field("id") == Some(6) && r.get("ok").is_some()));
+
+        send(&tx, &Value::obj().u("id", 7).s("type", "Shutdown").done());
+        loop_thread.join().unwrap().unwrap();
+    }
 }

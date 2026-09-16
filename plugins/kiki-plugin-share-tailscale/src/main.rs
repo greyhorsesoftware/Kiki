@@ -30,11 +30,27 @@ fn peers() -> Result<Vec<Target>> {
 
 impl ShareHandler for Tailscale {
     fn describe(&self) -> ShareDescribe {
-        ShareDescribe { id: "tailscale", name: "Tailscale", icon: "cloud", version: "1.0", accepts_files: true, accepts_folders: false, accepts_multiple: true, max_bytes: None, targets: "list", form: vec![], secret_fields: vec![], compose: vec![] }
+        ShareDescribe {
+            id: "tailscale",
+            name: "Tailscale",
+            icon: "cloud",
+            version: "1.0",
+            accepts_files: true,
+            accepts_folders: false,
+            accepts_multiple: true,
+            max_bytes: None,
+            targets: "list",
+            form: vec![],
+            secret_fields: vec![],
+            compose: vec![],
+        }
     }
     fn targets(&mut self, _c: &Value, _s: &Value, query: Option<&str>) -> Result<Vec<Target>> {
         let mut t = peers()?;
-        if let Some(q) = query { let q = q.to_lowercase(); t.retain(|x| x.name.to_lowercase().contains(&q)); }
+        if let Some(q) = query {
+            let q = q.to_lowercase();
+            t.retain(|x| x.name.to_lowercase().contains(&q));
+        }
         Ok(t)
     }
     fn share(&mut self, _c: &Value, _s: &Value, files: &[String], target: Option<&str>, _compose: &Value, p: &mut ShareProgress) -> Result<ShareResult> {
@@ -45,7 +61,9 @@ impl ShareHandler for Tailscale {
         for (i, f) in files.iter().enumerate() {
             p.report(i as u64, total, bytes, bytes_total, &format!("sending {f}"));
             let st = Command::new("tailscale").args(["file", "cp"]).arg(f).arg(format!("{peer}:")).status().map_err(PluginError::io)?;
-            if !st.success() { return Err(PluginError::network(format!("tailscale file cp failed for {f}"))); }
+            if !st.success() {
+                return Err(PluginError::network(format!("tailscale file cp failed for {f}")));
+            }
             bytes += std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
         }
         p.report(total, total, bytes, bytes_total, "sent");
@@ -53,4 +71,6 @@ impl ShareHandler for Tailscale {
     }
 }
 
-fn main() { let _ = sdk::run_share(&mut Tailscale); }
+fn main() {
+    let _ = sdk::run_share(&mut Tailscale);
+}

@@ -111,7 +111,7 @@ pub fn unsubscribe(tx: &Sender<Value>) {
     queue().lock().unwrap().subscribers.retain(|s| s.send(Value::Null).is_ok());
 }
 
-fn broadcast(v: Value) {
+pub fn broadcast(v: Value) {
     let mut q = queue().lock().unwrap();
     q.subscribers.retain(|s| s.send(v.clone()).is_ok());
 }
@@ -121,7 +121,7 @@ fn broadcast(v: Value) {
 pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
     let kind = op.str_field("op").ok_or(("Protocol", "missing op".to_string()))?.to_string();
     let title = title_for(&op);
-    let undoable = !matches!(kind.as_str(), "delete" | "mirrorScan" | "mirrorRun" | "share");
+    let undoable = !matches!(kind.as_str(), "delete" | "emptyTrash" | "mirrorScan" | "mirrorRun" | "share");
     let (ptx, prx) = mpsc::channel();
     let job = {
         let mut q = queue().lock().unwrap();
@@ -200,7 +200,7 @@ fn pump() {
                     if matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
                         broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", true).done());
                     }
-                } else if job.kind == "delete" && job.status.lock().unwrap().state == State::Done {
+                } else if matches!(job.kind.as_str(), "delete" | "emptyTrash") && job.status.lock().unwrap().state == State::Done {
                     broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", false).done());
                 }
                 queue().lock().unwrap().running -= 1;
@@ -276,7 +276,17 @@ impl Job {
             return p;
         }
         let Some(tx) = &self.client else { return "skip".into() };
-        let meta = |p: &std::path::Path| std::fs::symlink_metadata(p).map(|m| crate::vfs::Meta { size: m.len(), mtime_ms: m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0), mode: None, uid: None, gid: None }).unwrap_or_default();
+        let meta = |p: &std::path::Path| {
+            std::fs::symlink_metadata(p)
+                .map(|m| crate::vfs::Meta {
+                    size: m.len(),
+                    mtime_ms: m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0),
+                    mode: None,
+                    uid: None,
+                    gid: None,
+                })
+                .unwrap_or_default()
+        };
         let _ = tx.send(
             proto::event("Prompt")
                 .u("job", self.id)
@@ -426,7 +436,12 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             if job.kind == "copy" {
                 Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
             } else {
-                Some(Value::obj().s("op", "movePairs").v("pairs", Value::Arr(moved.iter().map(|(a, b)| Value::Arr(vec![Value::Str(Uri::from_path(b).to_string()), Value::Str(Uri::from_path(a).to_string())])).collect())).done())
+                Some(
+                    Value::obj()
+                        .s("op", "movePairs")
+                        .v("pairs", Value::Arr(moved.iter().map(|(a, b)| Value::Arr(vec![Value::Str(Uri::from_path(b).to_string()), Value::Str(Uri::from_path(a).to_string())])).collect()))
+                        .done(),
+                )
             }
         }
         "movePairs" => {
@@ -483,6 +498,12 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             }
             Some(Value::obj().s("op", "trash").v("items", uri_list(&restored)).done())
         }
+        "emptyTrash" => {
+            let n = ops::empty_trash(&cancel)?;
+            job.set_totals(n, 0);
+            job.progress(n, 0);
+            None
+        }
         "delete" => {
             let items = uris(op, "items")?;
             job.set_totals(items.len() as u64, 0);
@@ -536,7 +557,11 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
         "compress" => {
             let items = uris(op, "items")?;
             let archive = uri(op, "archive")?;
-            let format = op.str_field("format").map(str::to_string).or_else(|| archive.file_name().and_then(|n| crate::archive::format_from_name(&n.to_string_lossy())).map(str::to_string)).ok_or(VfsError::Io("unknown archive format".into()))?;
+            let format = op
+                .str_field("format")
+                .map(str::to_string)
+                .or_else(|| archive.file_name().and_then(|n| crate::archive::format_from_name(&n.to_string_lossy())).map(str::to_string))
+                .ok_or(VfsError::Io("unknown archive format".into()))?;
             let (files, bytes) = items.iter().map(|p| ops::tree_size(p)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
             job.set_totals(files.max(1), bytes);
             crate::archive::compress(&items, &archive, &format, &cancel, &mut |_| job.progress(1, 0))?;
@@ -597,7 +622,13 @@ fn audit_summary(job: &Job, out: &crate::mirror::Outcome) {
     let mut st = job.status.lock().unwrap();
     st.done = st.total;
     drop(st);
-    broadcast(proto::event("Toast").u("job", job.id).s("text", format!("Mirror complete · {} copied · {} deleted{}", out.copies, out.deletes, if out.skipped > 0 { format!(" · {} skipped", out.skipped) } else { String::new() })).b("undoable", false).done());
+    broadcast(
+        proto::event("Toast")
+            .u("job", job.id)
+            .s("text", format!("Mirror complete · {} copied · {} deleted{}", out.copies, out.deletes, if out.skipped > 0 { format!(" · {} skipped", out.skipped) } else { String::new() }))
+            .b("undoable", false)
+            .done(),
+    );
 }
 
 fn title_for(op: &Value) -> String {
@@ -614,6 +645,7 @@ fn title_for(op: &Value) -> String {
         "trash" => format!("Move {what} to Trash"),
         "restore" => "Restore from Trash".into(),
         "delete" => format!("Delete {what}"),
+        "emptyTrash" => "Empty Trash".into(),
         "mkdir" => "New folder".into(),
         "rmdirIfEmpty" => "Remove folder".into(),
         "chmod" => format!("Change permissions of {what}"),
@@ -676,7 +708,9 @@ mod tests {
         std::fs::write(d.join("a.txt"), b"a").unwrap();
         std::fs::create_dir_all(d.join("dst")).unwrap();
         std::fs::write(d.join("dst/a.txt"), b"old").unwrap();
-        let cid = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("a.txt")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone())).unwrap();
+        let cid =
+            submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("a.txt")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone()))
+                .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {

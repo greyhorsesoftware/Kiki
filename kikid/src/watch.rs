@@ -48,7 +48,8 @@ mod imp {
                 crate::listing::mark_stale(&path);
             }
         }
-        let flags = WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::MOVED_FROM | WatchFlags::MOVED_TO | WatchFlags::MODIFY | WatchFlags::ATTRIB | WatchFlags::DELETE_SELF | WatchFlags::MOVE_SELF | WatchFlags::ONLYDIR;
+        let flags =
+            WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::MOVED_FROM | WatchFlags::MOVED_TO | WatchFlags::MODIFY | WatchFlags::ATTRIB | WatchFlags::DELETE_SELF | WatchFlags::MOVE_SELF | WatchFlags::ONLYDIR;
         match inotify::inotify_add_watch(&s.fd, &l.path, flags) {
             Ok(wd) => {
                 s.by_wd.insert(wd, (l.path.clone(), Instant::now()));

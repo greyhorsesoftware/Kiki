@@ -14,6 +14,7 @@ Rectangle {
     property var preview: null
     property var meta: row ? row.meta : null
     property bool standalone: false
+    signal openWith()
     signal open()
     signal chmod(int mode, bool recursive)
 
@@ -139,7 +140,7 @@ Rectangle {
             Row {
                 spacing: 8
                 Button { text: "Open"; primary: true; onClicked: insp.open() }
-                Button { text: "Open with…"; enabled: false }
+                Button { text: "Open with…"; enabled: insp.row && !insp.row.isDir; onClicked: insp.openWith() }
             }
         }
     }

@@ -2,7 +2,7 @@
 
 Builds on: `06-remote-locations.md` (plugin processes, plugin API), `01-daemon-and-listing.md` (windows, previews), `03-inspector.md` (thumbnails), `04-operations-and-undo.md` (jobs).
 
-**Status**: specified, not yet generated. The plugins link C libraries that are not available on the planning machine; build them first on Omarchy with `libmtp`, `libgphoto2` and `libimobiledevice` installed.
+**Status**: generated. `kiki-plugin-mtp`, `kiki-plugin-ptp` and `kiki-plugin-afc` link their C libraries through hand-written `extern "C"` blocks (no bindgen, no build script), so they type-check on the planning machine and link on Omarchy with `libmtp`, `libgphoto2` and `libimobiledevice` installed. The workspace excludes them from macOS test runs (`--exclude kiki-plugin-mtp --exclude kiki-plugin-ptp --exclude kiki-plugin-afc`); CI installs the libraries. **First build on Omarchy**: compare the struct layouts (`LIBMTP_file_t`, `LIBMTP_devicestorage_t`, `CameraFileInfo`) and the constants (`LIBMTP_FILETYPE_UNKNOWN`, `LOCKDOWN_E_*`) against the installed headers before trusting a listing. Hotplug is a two-second sysfs rescan rather than a netlink listener (same result, no socket code); the daemon side is `kikid/src/devices.rs`.
 
 ## Goal
 

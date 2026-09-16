@@ -55,4 +55,11 @@ Item {
             onContextMenu: pos => root.contextMenu(index, pos)
         }
     }
+    // Drops on empty space land in the folder being shown (rows sit above this and win).
+    DropArea {
+        anchors.fill: view; z: -1
+        keys: ["text/uri-list"]
+        enabled: !root.pane.isTrash
+        onDropped: drop => root.pane.dropInto(root.pane.uri, drop)
+    }
 }

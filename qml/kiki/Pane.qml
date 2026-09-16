@@ -49,4 +49,23 @@ QtObject {
         return head + auth + (k <= 0 ? "/" : path.slice(0, k))
     }
     function childUri(name) { return uri.replace(/\/+$/, "") + "/" + encodeURIComponent(name).replace(/%2F/g, "/") }
+    readonly property bool isTrash: uri.startsWith("trash://")
+
+    // Drag and drop (plan 02). The dragged payload is text/uri-list so drops also work from and
+    // into other Wayland apps.
+    function dragUris(index) {
+        const rows = selection.has(index) ? selection.positions() : [index]
+        return rows.map(i => { const r = listing.row(i); return r ? childUri(r.name) : null }).filter(u => u)
+    }
+    function dragMime(index) { return { "text/uri-list": dragUris(index).join("\r\n") + "\r\n" } }
+    // Drop `drop` (a DragEvent) into `dest`: move within one scheme, copy across, Ctrl forces copy.
+    function dropInto(dest, drop) {
+        const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : (drop.hasText ? drop.text.split(/\r?\n/).filter(l => l && !l.startsWith("#")) : [])
+        const items = urls.filter(u => u && parentOf(u) !== dest.replace(/\/+$/, "") && parentOf(u) + "/" !== dest && u.replace(/\/+$/, "") !== dest.replace(/\/+$/, ""))
+        if (!items.length) { drop.accepted = false; return }
+        const sameScheme = items.every(u => u.split("://")[0] === dest.split("://")[0])
+        const copy = (drop.modifiers & Qt.ControlModifier) || drop.proposedAction === Qt.CopyAction && !sameScheme || !sameScheme
+        drop.accept(copy ? Qt.CopyAction : Qt.MoveAction)
+        Kiki.Jobs.submit({ op: copy ? "copy" : "move", items: items, dest: dest })
+    }
 }

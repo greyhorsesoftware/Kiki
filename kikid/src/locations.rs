@@ -26,6 +26,9 @@ pub fn find(name: &str) -> Option<Value> {
 
 /// Finds by authority: the location name, else a `user@host` match against config.
 pub fn resolve_authority(scheme: &str, authority: &str) -> Option<Value> {
+    if let Some(d) = crate::devices::location_for(scheme, authority) {
+        return Some(d);
+    }
     let locs = all();
     if let Some(l) = locs.iter().find(|l| l.str_field("plugin") == Some(scheme) && l.str_field("name") == Some(authority)) {
         return Some(l.clone());
@@ -34,10 +37,8 @@ pub fn resolve_authority(scheme: &str, authority: &str) -> Option<Value> {
         Some((u, h)) => (Some(u), h),
         None => (None, authority),
     };
-    locs.into_iter().find(|l| {
-        l.str_field("plugin") == Some(scheme)
-            && l.get("config").map(|c| c.str_field("host") == Some(host) && user.map(|u| c.str_field("username") == Some(u)).unwrap_or(true)).unwrap_or(false)
-    })
+    locs.into_iter()
+        .find(|l| l.str_field("plugin") == Some(scheme) && l.get("config").map(|c| c.str_field("host") == Some(host) && user.map(|u| c.str_field("username") == Some(u)).unwrap_or(true)).unwrap_or(false))
 }
 
 fn write_all(items: &[Value]) -> std::io::Result<()> {
@@ -66,9 +67,7 @@ pub fn remove(name: &str) -> std::io::Result<()> {
 fn secret_keys(name: &str) -> Vec<String> {
     let Some(l) = find(name) else { return Vec::new() };
     let scheme = l.str_field("plugin").unwrap_or("");
-    plugin::describe(scheme)
-        .and_then(|d| d.get("secretFields").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
-        .unwrap_or_default()
+    plugin::describe(scheme).and_then(|d| d.get("secretFields").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------- keyring
@@ -83,10 +82,7 @@ pub mod keyring {
     }
 
     pub fn store(location: &str, field: &str, secret: &str) -> Result<(), VfsError> {
-        let mut child = tool()
-            .args(["store", "--label", &format!("kiki: {location} {field}"), "app", "kiki", "location", location, "field", field])
-            .spawn()
-            .map_err(|e| VfsError::Io(format!("secret-tool: {e}")))?;
+        let mut child = tool().args(["store", "--label", &format!("kiki: {location} {field}"), "app", "kiki", "location", location, "field", field]).spawn().map_err(|e| VfsError::Io(format!("secret-tool: {e}")))?;
         child.stdin.take().unwrap().write_all(secret.as_bytes()).map_err(|e| VfsError::Io(e.to_string()))?;
         let st = child.wait().map_err(|e| VfsError::Io(e.to_string()))?;
         if st.success() {
@@ -155,6 +151,11 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
     let s = Arc::new(Session { plugin, location: name, role: role.to_string() });
     sessions().lock().unwrap().insert(key, Arc::clone(&s));
     Ok(s)
+}
+
+/// Location names with a live browse session (devices show these as connected).
+pub fn connected_names() -> Vec<String> {
+    sessions().lock().unwrap().iter().filter(|(_, s)| s.plugin.alive()).map(|(_, s)| s.location.clone()).collect()
 }
 
 pub fn disconnect(name: &str) {

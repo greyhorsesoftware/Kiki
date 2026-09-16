@@ -1,0 +1,10 @@
+# The codebase favours wide, dense lines; keep rustfmt from rewrapping them.
+max_width = 220
+use_small_heuristics = "Max"
+fn_call_width = 200
+chain_width = 200
+struct_lit_width = 200
+struct_variant_width = 200
+array_width = 200
+attr_fn_like_width = 200
+single_line_if_else_max_width = 200

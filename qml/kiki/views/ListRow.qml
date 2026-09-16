@@ -48,8 +48,26 @@ Rectangle {
             onActiveFocusChanged: if (!activeFocus && r.pane.renamingIndex === r.rowIndex) r.pane.renamingIndex = -1
         }
     }
+    // Drop target: a folder row accepts files (move within the scheme, copy across, Ctrl copies).
+    DropArea {
+        anchors.fill: parent
+        enabled: r.row && r.row.isDir
+        keys: ["text/uri-list"]
+        onDropped: drop => r.pane.dropInto(r.pane.childUri(r.row.name), drop)
+        Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
+    }
+    // Drag source: an invisible proxy carries the selection as text/uri-list.
+    Item {
+        id: dragProxy
+        Drag.dragType: Drag.Automatic
+        Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+        Drag.proposedAction: Qt.MoveAction
+        Drag.mimeData: r.pane ? r.pane.dragMime(r.rowIndex) : ({})
+    }
     MouseArea {
         id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton
+        drag.target: dragProxy; drag.threshold: 8
+        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(Qt.point(mouse.x, mouse.y)); return }
             if (mouse.modifiers & Qt.ShiftModifier) r.pane.selection.range(r.rowIndex)

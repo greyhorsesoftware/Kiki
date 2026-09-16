@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
-tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros"] }
 russh = "0.52"
 russh-sftp = "2"
 

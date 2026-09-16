@@ -56,9 +56,8 @@ pub fn compress(items: &[PathBuf], archive: &Path, format: &str, cancel: &Atomic
         }
         cmd.arg(it.file_name().ok_or(VfsError::NotFound)?);
     }
-    run(cmd, cancel, progress).map_err(|e| {
+    run(cmd, cancel, progress).inspect_err(|_| {
         let _ = std::fs::remove_file(archive);
-        e
     })
 }
 
@@ -121,7 +120,12 @@ pub struct Member {
 
 /// Lists members with sizes (`bsdtar -tvf`), capped at 10,000 entries.
 pub fn list(archive: &Path) -> Result<Vec<Member>> {
-    let out = Command::new("bsdtar").arg("-tvf").arg(archive).stderr(Stdio::piped()).output().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
+    let out = Command::new("bsdtar")
+        .arg("-tvf")
+        .arg(archive)
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
     if !out.status.success() {
         return Err(VfsError::Io(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }
@@ -151,10 +155,7 @@ pub fn members_json(archive: &Path) -> Result<crate::json::Value> {
     use crate::json::Value;
     let m = list(archive)?;
     let n = m.len();
-    Ok(Value::obj()
-        .v("members", Value::Arr(m.into_iter().take(200).map(|x| Value::obj().s("name", x.name).u("size", x.size).b("isDir", x.is_dir).done()).collect()))
-        .u("n", n as u64)
-        .done())
+    Ok(Value::obj().v("members", Value::Arr(m.into_iter().take(200).map(|x| Value::obj().s("name", x.name).u("size", x.size).b("isDir", x.is_dir).done()).collect())).u("n", n as u64).done())
 }
 
 #[cfg(test)]

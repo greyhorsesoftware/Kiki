@@ -155,14 +155,19 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
         };
         if local.is_dir() && !accepts_folders {
             let zip = tmp.join(format!("{}.zip", local.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into())));
-            crate::archive::compress(&[local.clone()], &zip, "zip", cancel, &mut |_| {})?;
+            crate::archive::compress(std::slice::from_ref(&local), &zip, "zip", cancel, &mut |_| {})?;
             files.push(zip.to_string_lossy().into_owned());
         } else {
             files.push(local.to_string_lossy().into_owned());
         }
     }
     let (cfg, secrets) = config_for(id);
-    let mut req = Value::obj().s("type", "Share").v("config", cfg).v("secrets", secrets).v("uris", Value::Arr(files.iter().map(|f| Value::Str(Uri::from_path(std::path::Path::new(f)).to_string())).collect())).v("compose", compose.clone());
+    let mut req = Value::obj()
+        .s("type", "Share")
+        .v("config", cfg)
+        .v("secrets", secrets)
+        .v("uris", Value::Arr(files.iter().map(|f| Value::Str(Uri::from_path(std::path::Path::new(f)).to_string())).collect()))
+        .v("compose", compose.clone());
     if let Some(t) = target {
         req = req.s("target", t);
     }

@@ -17,6 +17,7 @@ FloatingWindow {
     property var favorites: []
     property var volumes: []
     property var locations: []
+    property var devices: []
     property bool inspector: Kiki.Settings.view.inspector
     property bool split: false
     property Kiki.Pane left: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
@@ -179,12 +180,41 @@ FloatingWindow {
         const text = u.map(x => x.startsWith("file://") ? decodeURIComponent(x.slice(7)) : x).join("\n")
         Quickshell.execDetached(["wl-copy", text])
     }
+    // Open with… (plan 02/03): the daemon lists the desktop entries for the file's MIME type.
+    function openWithMenu(pos) {
+        const u = selectedUris(); if (u.length !== 1) return
+        Kiki.Daemon.request("OpenWith", { uri: u[0] }, ok => {
+            if (!ok) return
+            const items = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: u }) }))
+            if (!items.length) items.push({ label: "No application for " + ok.mime, enabled: false, action: () => {} })
+            menu.open(items, pos || Qt.point(toolbar.width - 300 + 224, 44))
+        })
+    }
+    // Trash view (plan 04): restore to the original path, delete for good, or empty everything.
+    property var trashInfo: ({})
+    function loadTrashInfo() { Kiki.Daemon.request("TrashInfo", {}, ok => { if (ok) { const m = {}; for (const it of ok.items) m[it.name] = it; win.trashInfo = m } }) }
+    function trashNames() { return pane.selection.positions().map(p => { const r = pane.listing.row(p); return r ? r.name : null }).filter(n => n) }
+    function restoreSelection() { const n = trashNames(); if (n.length) Kiki.Jobs.submit({ op: "restore", names: n }) }
+    function deleteForever() { const u = selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "delete", items: u }) }
+    function emptyTrash() { Kiki.Jobs.submit({ op: "emptyTrash" }) }
+    Connections { target: win.pane; function onNavigated(uri) { if (uri.startsWith("trash://")) win.loadTrashInfo() } }
+    Connections { target: win.pane.listing; function onReset() { if (win.pane.isTrash) win.loadTrashInfo() } }
+
     function contextItems(index) {
         const r = index >= 0 ? pane.listing.row(index) : null
         const sel = pane.selection.count() > 0
+        if (pane.isTrash) {
+            const info = r && win.trashInfo[r.name]
+            return [
+                { label: info ? "Restore to " + Kiki.Format.display(info.path.replace(/\/[^/]*$/, "") || "/", win.home) : "Restore", key: "Enter", enabled: sel, action: () => win.restoreSelection() },
+                { label: "Delete permanently", key: "Del", danger: true, enabled: sel, action: () => win.deleteForever() },
+                { label: "Copy path", enabled: sel && !!info, action: () => Quickshell.execDetached(["wl-copy", info.path]) },
+                { label: "Empty Trash", danger: true, sep: true, enabled: pane.listing.count > 0, action: () => win.emptyTrash() },
+            ]
+        }
         const items = [
             { label: "Open", key: "Enter", enabled: sel, action: () => win.openSelected() },
-            { label: "Open with…", enabled: false, action: () => {} },
+            { label: "Open with…", enabled: sel && pane.selection.count() === 1 && r && !r.isDir, action: () => win.openWithMenu() },
             { label: "Copy", key: "Ctrl+C", sep: true, enabled: sel, action: () => win.copySelection(false) },
             { label: "Cut", key: "Ctrl+X", enabled: sel, action: () => win.copySelection(true) },
             { label: "Paste", key: "Ctrl+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
@@ -209,11 +239,13 @@ FloatingWindow {
         Kiki.Daemon.request("Favorites", {}, ok => { if (ok) favorites = ok.items })
         Kiki.Daemon.request("Volumes", {}, ok => { if (ok) volumes = ok.items })
         Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
+        Kiki.Daemon.request("Devices", {}, ok => { if (ok) devices = ok.devices })
     }
     function selectedUris() { return pane.selection.positions().map(p => { const r = pane.listing.row(p); return r ? pane.childUri(r.name) : null }).filter(u => u) }
     function openSelected() {
         const p = pane.selection.current; const r = p >= 0 ? pane.listing.row(p) : null
         if (!r) return
+        if (pane.isTrash) { win.restoreSelection(); return }
         if (r.isDir) pane.open(pane.childUri(r.name))
         else openExternal(pane.childUri(r.name))
     }
@@ -227,7 +259,7 @@ FloatingWindow {
     }
 
     Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
-    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged") win.loadSidebar() } }
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged" || msg.event === "DeviceAdded" || msg.event === "DeviceRemoved") win.loadSidebar(); if (msg.event === "DeviceRemoved" && win.pane.uri.startsWith(msg.uri.replace(/\/$/, ""))) win.pane.open("file://" + win.home) } }
 
     // Keymap (plan 02). Every action here is also reachable over IPC.
     Item {
@@ -251,8 +283,9 @@ FloatingWindow {
             case Qt.Key_Right: if (alt) pane.forward(); else return; break
             case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
+            case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else return; break
             case Qt.Key_F2: win.renameSelected(); break
-            case Qt.Key_Delete: win.trashSelection(); break
+            case Qt.Key_Delete: if (pane.isTrash) win.deleteForever(); else win.trashSelection(); break
             case Qt.Key_C: if (ctrl) win.copySelection(false); else return; break
             case Qt.Key_X: if (ctrl) win.copySelection(true); else return; break
             case Qt.Key_V: if (ctrl) win.paste(); else return; break
@@ -333,10 +366,27 @@ FloatingWindow {
         UI.Sidebar {
             id: sidebar
             height: parent.height
-            favorites: win.favorites; volumes: win.volumes; locations: win.locations; currentUri: win.pane.uri
+            favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
+            onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) })
+            onDeviceMenu: dev => menu.open([
+                { label: "Open", enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
+                { label: "Eject", key: "Ctrl+E", action: () => Kiki.Daemon.request("Eject", { uri: dev.uri }) },
+                { label: dev.busy ? "In use by " + dev.busy : dev.kind.toUpperCase() + " · " + dev.vendor + " " + dev.model, enabled: false, sep: true, action: () => {} },
+            ], Qt.point(40, 300))
             onOpen: uri => win.pane.open(uri)
             onAddLocation: locationDialog.open(null)
             onOpenLocation: loc => win.openLocation(loc)
+            onDropOn: (uri, drop) => win.pane.dropInto(uri, drop)
+            onAddFavorites: uris => {
+                const add = uris.filter(u => u.startsWith("file://") && !win.favorites.some(f => f.uri === u)).map(u => ({ name: decodeURIComponent(u.replace(/\/+$/, "").split("/").pop()) || "/", uri: u }))
+                if (add.length) Kiki.Daemon.request("SetFavorites", { items: win.favorites.concat(add) }, () => win.loadSidebar())
+            }
+            onMountVolume: vol => Kiki.Daemon.request("Mount", { device: vol.device }, (ok, err) => { if (ok) win.pane.open(ok.uri); else Kiki.Jobs.showToast({ text: "Mount failed: " + (err ? err.message : ""), undoable: false }) })
+            onVolumeMenu: vol => menu.open([
+                { label: vol.mounted === false ? "Mount" : "Open", action: () => vol.mounted === false ? Kiki.Daemon.request("Mount", { device: vol.device }, ok => { if (ok) win.pane.open(ok.uri) }) : win.pane.open(vol.uri) },
+                { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
+                { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
+            ], Qt.point(40, 200))
             onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }], Qt.point(40, 200))
         }
         Column {
@@ -409,6 +459,7 @@ FloatingWindow {
                     width: Kiki.Theme.inspectorWidth; height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onOpen: win.openSelected()
+                    onOpenWith: win.openWithMenu()
                     onEdit: (u, line) => win.editAt(u, line)
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
                 }

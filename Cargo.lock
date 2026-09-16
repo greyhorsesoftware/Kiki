@@ -997,6 +997,13 @@ name = "kiki-json"
 version = "0.1.0"
 
 [[package]]
+name = "kiki-plugin-afc"
+version = "0.1.0"
+dependencies = [
+ "kiki-plugin-sdk",
+]
+
+[[package]]
 name = "kiki-plugin-dbus"
 version = "0.1.0"
 dependencies = [
@@ -1042,6 +1049,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiki-plugin-mtp"
+version = "0.1.0"
+dependencies = [
+ "kiki-plugin-sdk",
+]
+
+[[package]]
+name = "kiki-plugin-ptp"
+version = "0.1.0"
+dependencies = [
+ "kiki-plugin-sdk",
+]
+
+[[package]]
 name = "kiki-plugin-sdk"
 version = "0.1.0"
 dependencies = [
@@ -1071,6 +1092,8 @@ name = "kiki-plugin-share-localsend"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
+ "ring",
+ "rustls",
 ]
 
 [[package]]
@@ -1078,6 +1101,10 @@ name = "kiki-plugin-share-mail"
 version = "0.1.0"
 dependencies = [
  "kiki-plugin-sdk",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
