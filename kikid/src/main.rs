@@ -1,11 +1,13 @@
 //! kikid: the kiki file manager daemon. See docs/0.1.0/01-daemon-and-listing.md.
 
+mod config;
 mod json;
 mod kinds;
 mod listing;
 mod proto;
 mod server;
 mod string_pool;
+mod toml;
 mod vfs;
 mod watch;
 

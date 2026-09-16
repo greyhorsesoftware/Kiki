@@ -178,6 +178,8 @@ Events:
 | `UpdateLocation` | `location`, `secrets` (only changed keys) | `{}` |
 | `RemoveLocation` | `name` | `{}` |
 | `Disconnect` | `name` | `{}` |
+| `Settings` | | the merged `settings.toml` as an object with the daemon's defaults filled in |
+| `SetSettings` | `patch: object` | `{}` (deep-merged into the file) |
 
 Events: `LocationsChanged {}`, `VolumesChanged {}`, `FavoritesChanged {}`.
 

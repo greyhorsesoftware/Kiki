@@ -1,0 +1,9 @@
+module kiki
+singleton Daemon 1.0 Daemon.qml
+singleton Theme 1.0 Theme.qml
+singleton Settings 1.0 Settings.qml
+singleton Format 1.0 Format.qml
+WindowCache 1.0 WindowCache.qml
+Selection 1.0 Selection.qml
+Pane 1.0 Pane.qml
+Shell 1.0 Shell.qml

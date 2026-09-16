@@ -128,6 +128,17 @@ impl Client {
                 Ok(u) => listing::open(&u).map(|_| Some(Value::obj().done())).map_err(vfs_err),
                 Err(e) => Err(e),
             },
+            "Favorites" => Ok(Some(Value::obj().v("items", crate::config::favorites()).done())),
+            "SetFavorites" => match b.get("items").and_then(Value::as_arr) {
+                Some(items) => crate::config::set_favorites(items).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
+                None => Err(("Protocol", "missing items".into())),
+            },
+            "Volumes" => Ok(Some(Value::obj().v("items", crate::config::volumes()).done())),
+            "Settings" => Ok(Some(crate::config::settings())),
+            "SetSettings" => match b.get("patch") {
+                Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
+                None => Err(("Protocol", "missing patch".into())),
+            },
             "Stat" => match parse_uri(b, "uri") {
                 Ok(u) => Listing::stat_uri(&u).map(Some).map_err(vfs_err),
                 Err(e) => Err(e),
