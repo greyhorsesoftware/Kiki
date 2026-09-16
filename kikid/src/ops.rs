@@ -319,6 +319,7 @@ mod tests {
 
     #[test]
     fn copy_move_trash_restore() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = temp("a");
         std::env::set_var("KIKI_TRASH_DIR", d.join("trash"));
         fs::create_dir_all(d.join("src/sub")).unwrap();

@@ -33,6 +33,20 @@ Rectangle {
         Text { width: 80; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; text: r.row && r.row.meta ? (r.row.isDir ? "—" : Kiki.Format.bytes(r.row.meta.size)) : ""; color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
         Text { width: 120; anchors.verticalCenter: parent.verticalCenter; text: r.row ? Kiki.Format.kindLabel(r.row.kind) : ""; color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
     }
+    // Inline rename (F2): a text input over the name column.
+    Rectangle {
+        visible: r.pane && r.pane.renamingIndex === r.rowIndex
+        x: 40; y: 2; width: r.width - 24 - 36 - 160 - 80 - 120 - 24; height: parent.height - 4; radius: 2
+        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent; z: 2
+        onVisibleChanged: if (visible) { edit.text = r.row ? r.row.name : ""; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
+        TextInput {
+            id: edit; anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; verticalAlignment: TextInput.AlignVCenter
+            color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; clip: true
+            onAccepted: { const name = text; r.pane.renamingIndex = -1; if (r.row && name && name !== r.row.name) r.pane.renameRequested(r.pane.childUri(r.row.name), name) }
+            Keys.onEscapePressed: r.pane.renamingIndex = -1
+            onActiveFocusChanged: if (!activeFocus && r.pane.renamingIndex === r.rowIndex) r.pane.renamingIndex = -1
+        }
+    }
     MouseArea {
         id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton
         onClicked: mouse => {

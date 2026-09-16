@@ -30,7 +30,49 @@ FloatingWindow {
             win.inspectedRow = r; win.inspectedUri = r ? win.pane.childUri(r.name) : ""
         }
     }
-    function submitChmod(uri, mode, recursive) { Kiki.Daemon.request("Submit", { op: { op: "chmod", items: [uri], mode: mode, recursive: recursive } }) }
+    function submitChmod(uri, mode, recursive) { Kiki.Jobs.submit({ op: "chmod", items: [uri], mode: mode, recursive: recursive }) }
+
+    // Operations (plan 04). The clipboard holds URIs and whether it was a cut.
+    property var clipboard: ({ uris: [], cut: false })
+    function copySelection(cut) { const u = selectedUris(); if (u.length) clipboard = { uris: u, cut: !!cut } }
+    function paste() {
+        if (!clipboard.uris.length) return
+        Kiki.Jobs.submit({ op: clipboard.cut ? "move" : "copy", items: clipboard.uris, dest: pane.uri })
+        if (clipboard.cut) clipboard = { uris: [], cut: false }
+    }
+    function trashSelection() { const u = selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "trash", items: u }) }
+    function newFolder() {
+        let name = "New folder", n = 2
+        const names = new Set(); for (let i = 0; i < pane.listing.count; i++) { const r = pane.listing.row(i); if (r) names.add(r.name) }
+        while (names.has(name)) name = "New folder " + n++
+        Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(name) }, ok => { if (ok) win.renameSoon = name })
+    }
+    property string renameSoon: ""
+    function renameSelected() { if (pane.selection.current >= 0) { if (pane.view !== "list") pane.view = "list"; pane.renamingIndex = pane.selection.current } }
+    Connections { target: win.pane; function onRenameRequested(uri, name) { Kiki.Jobs.submit({ op: "rename", uri: uri, name: name }) } }
+    // After a new folder lands in the listing, select it and start renaming.
+    Connections { target: win.pane.listing; function onReset() { if (!win.renameSoon) return; const name = win.renameSoon; win.renameSoon = ""; Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); win.renameSelected(); break } } }) } }
+    function copyPath() {
+        const u = selectedUris(); if (!u.length) return
+        const text = u.map(x => x.startsWith("file://") ? decodeURIComponent(x.slice(7)) : x).join("\n")
+        Quickshell.execDetached(["wl-copy", text])
+    }
+    function contextItems(index) {
+        const r = index >= 0 ? pane.listing.row(index) : null
+        const sel = pane.selection.count() > 0
+        const items = [
+            { label: "Open", key: "Enter", enabled: sel, action: () => win.openSelected() },
+            { label: "Open with…", enabled: false, action: () => {} },
+            { label: "Copy", key: "Ctrl+C", sep: true, enabled: sel, action: () => win.copySelection(false) },
+            { label: "Cut", key: "Ctrl+X", enabled: sel, action: () => win.copySelection(true) },
+            { label: "Paste", key: "Ctrl+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
+            { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
+            { label: "Rename", key: "F2", enabled: sel && pane.selection.count() === 1, action: () => win.renameSelected() },
+            { label: "Copy path", enabled: sel, action: () => win.copyPath() },
+            { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
+        ]
+        return items
+    }
 
     function start(uri) { pane.open(uri || ("file://" + home)) }
     function loadSidebar() {
@@ -79,6 +121,14 @@ FloatingWindow {
             case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
             case Qt.Key_S: if (ctrl && shift) win.split = !win.split; else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
+            case Qt.Key_F2: win.renameSelected(); break
+            case Qt.Key_Delete: win.trashSelection(); break
+            case Qt.Key_C: if (ctrl) win.copySelection(false); else return; break
+            case Qt.Key_X: if (ctrl) win.copySelection(true); else return; break
+            case Qt.Key_V: if (ctrl) win.paste(); else return; break
+            case Qt.Key_Z: if (ctrl && shift) Kiki.Jobs.redo(); else if (ctrl) Kiki.Jobs.undo(); else return; break
+            case Qt.Key_N: if (ctrl && shift) win.newFolder(); else return; break
+            case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
             case Qt.Key_A: if (ctrl) { for (let i = 0; i < pane.listing.count; i++) pane.selection.rows[i] = true; pane.selection.changed() } else return; break
             case Qt.Key_Escape: pane.selection.clear(); break
             default: return
@@ -102,6 +152,10 @@ FloatingWindow {
         function state(): string {
             return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
+        function undo(): void { Kiki.Jobs.undo() }
+        function redo(): void { Kiki.Jobs.redo() }
+        function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
+        function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false) it.action() }
         function windowState(pane: string): string { const l = win.pane.listing; return JSON.stringify({ count: l.count, viewport: [l.viewportFirst, l.viewportCount], held: Object.keys(l._rows).length }) }
         function timestamps(): string { return JSON.stringify({ now: Date.now() }) }
     }
@@ -149,12 +203,18 @@ FloatingWindow {
                 keys: win.pane.view === "columns"
                     ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
                     : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
-                status: (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
+                MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
+                status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
             }
         }
     }
 
-    Component { id: listView; Views.ListPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() } } }
-    Component { id: iconView; Views.IconPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() } } }
+    Component { id: listView; Views.ListPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } }
+    Component { id: iconView; Views.IconPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } }
+
+    UI.ContextMenu { id: menu; parent: win.contentItem }
+    UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
+    UI.CollisionPrompt { anchors.fill: parent }
+    UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
     Component { id: columnsView; Views.ColumnsPane { pane: win.pane; home: win.home; onActivate: uri => win.openExternal(uri) } }
 }

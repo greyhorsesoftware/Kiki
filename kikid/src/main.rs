@@ -16,6 +16,10 @@ mod toml;
 mod vfs;
 mod watch;
 
+/// Tests that set process-wide environment variables take this lock so they never interleave.
+#[cfg(test)]
+pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 

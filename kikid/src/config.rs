@@ -174,6 +174,7 @@ mod tests {
 
     #[test]
     fn favorites_round_trip_in_temp_config() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kiki-config-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("KIKI_CONFIG_DIR", &dir);

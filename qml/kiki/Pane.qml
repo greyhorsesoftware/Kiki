@@ -12,6 +12,8 @@ QtObject {
     property var history: []
     property int historyIndex: -1
     property bool focused: false
+    property int renamingIndex: -1
+    signal renameRequested(string uri, string name)
 
     property Kiki.WindowCache listing: Kiki.WindowCache {}
     property Kiki.Selection selection: Kiki.Selection {}

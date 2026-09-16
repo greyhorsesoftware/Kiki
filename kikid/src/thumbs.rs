@@ -339,6 +339,7 @@ mod tests {
 
     #[test]
     fn png_round_trip_with_keys() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kiki-thumbs-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         std::env::set_var("KIKI_THUMB_DIR", &dir);

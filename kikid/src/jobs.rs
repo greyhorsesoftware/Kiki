@@ -573,6 +573,7 @@ mod tests {
 
     #[test]
     fn trash_undo_redo_round_trip() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = std::env::temp_dir().join(format!("kiki-jobs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();

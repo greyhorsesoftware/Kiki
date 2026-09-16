@@ -3,6 +3,7 @@ singleton Daemon 1.0 kiki/Daemon.qml
 singleton Theme 1.0 kiki/Theme.qml
 singleton Settings 1.0 kiki/Settings.qml
 singleton Format 1.0 kiki/Format.qml
+singleton Jobs 1.0 kiki/Jobs.qml
 WindowCache 1.0 kiki/WindowCache.qml
 Selection 1.0 kiki/Selection.qml
 Pane 1.0 kiki/Pane.qml
