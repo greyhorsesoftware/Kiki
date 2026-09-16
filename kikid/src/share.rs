@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub fn share_dirs() -> Vec<PathBuf> {
-    let mut v = Vec::new();
     crate::plugin::plugin_dirs()
 }
 
