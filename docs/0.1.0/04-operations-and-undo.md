@@ -32,7 +32,7 @@ Copies of large trees use `copy_file_range` in a loop until all bytes are writte
 
 **Journal**: an ordered stack per daemon, capped at 100 entries, persisted to `~/.local/state/kiki/journal.json` so undo survives a daemon restart within the same session. Undo pops the top entry and submits the inverse as a job; redo (`Ctrl+Shift+Z`) re-runs the original. An inverse that cannot apply (the target changed since) fails loudly and stays on the stack.
 
-**Context menu**: Open, Open with…, Copy, Cut, Paste, Move to…, Rename, Compress… (plan 05), Extract here / Extract to… (plan 05, archives only), Copy path (the local path for `file://`, the full URI otherwise), Open in ▸ (plan 14), Share ▸ (plan 18), Move to Trash. Keys as in the mockup.
+**Context menu**: Open, Open with…, Copy, Cut, Paste, Move to…, Rename, Compress… (plan 05), Extract here / Extract to… (plan 05, archives only), Copy path (the local path for `file://`, the full URI otherwise), Open in ▸ (plan 14), Share ▸ (plan 18), AI ▸ (plan 19, text files and folders), Move to Trash. Keys as in the mockup.
 
 **Toast**: one line per completed destructive job ("Moved wallpapers.zip to Trash") with an Undo button, dismissed after 8 s or on the next job.
 

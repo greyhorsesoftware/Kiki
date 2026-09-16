@@ -85,6 +85,8 @@ Rules: a component never reaches for a model it was not given; lists take a mode
 | `Ctrl+Shift+P` | toggle project mode on the current folder (plan 16) |
 | `Alt+Enter`, `Alt+Shift+Enter` | open in the default tool, open the tool list (plan 14) |
 | `Alt+S` | share the selection (plan 18) |
+| `Alt+Q` | AI query on the selection (plan 19) |
+| `Ctrl+,` | settings (plan 20) |
 | `?` | keybinding cheat sheet (plan 10) |
 
 ## Verification

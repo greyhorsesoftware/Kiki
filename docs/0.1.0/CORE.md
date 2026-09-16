@@ -63,6 +63,8 @@ Each step ships on its own and is verified before the next starts.
 | 13 | `14-open-in.md` | 2, 9 | "Open in…": one TOML list of command templates for editors, AI harnesses and other tools; sessions with a reuse channel; toolbar button, context submenu, `e`, settings page (ships after 9) |
 | 17 | `17-devices.md` | 1, 3, 4, 6 | Devices section: Android over MTP, iPhone over AFC, cameras over PTP as plugin processes plus uevent hotplug and eject (ships after 6, any time before 10) |
 | 18 | `18-share.md` | 4, 5, 6, 14 | Share menu with share plugins as processes; Mail, Messages (KDE Connect, Signal, Matrix), Tailscale (Taildrop), LocalSend and experimental AirDrop (OpenDrop over OWL) shipped (ships after 14, before 10) |
+| 19 | `19-ai-query.md` | 3, 4, 6, 13, 14 | AI ▸ Query… on text files: a chat panel, local answers for counts, Claude through a helper process with credentials from env, keyring or the `ant` CLI (ships after 14, before 10) |
+| 20 | `20-settings.md` | every plan with a setting | One Settings window with a page per area; keymap served from one table (ships last before 10) |
 | 15 | `15-git-status.md` | 1, 2, 3 | Git badges in every view from `git status --porcelain=v2`, branch chip in the breadcrumb, inspector git detail (ships after 3, any time before 10) |
 | 16 | `16-project-mode.md` | 2, 9, 13, 14, 15 | `e` on a folder: kiki becomes a narrow project tree and arranges editor and agent beside it through Hyprland (ships after 15, before 10) |
 | 14 | `13-code-viewer-and-editor.md` | 3, 14 | Highlighted code viewer in the inspector; the editor bridge as the Open in entry marked `role = "editor"` (ships after Open in, before 10) |
