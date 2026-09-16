@@ -150,7 +150,7 @@ pub fn local_answer(question: &str, attachments: &[(String, String, bool)]) -> O
 }
 
 /// Streams a query: `AiDelta` events, then `AiDone` or `AiError`.
-pub fn query(tx: Sender<Value>, id: u64, session: String, uris: Vec<Uri>, question: String, history: Value) {
+pub fn query(tx: Sender<Value>, id: u64, _session: String, uris: Vec<Uri>, question: String, history: Value) {
     std::thread::Builder::new()
         .name("ai".into())
         .spawn(move || {

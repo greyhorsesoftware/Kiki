@@ -6,7 +6,7 @@ use crate::ops::{self, Progress};
 use crate::proto;
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};

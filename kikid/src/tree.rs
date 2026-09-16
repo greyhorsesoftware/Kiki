@@ -4,7 +4,7 @@ use crate::json::Value;
 use crate::kinds::Kind;
 use crate::listing;
 use crate::vfs::uri::Uri;
-use crate::vfs::{EntryType, VfsError};
+use crate::vfs::VfsError;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
