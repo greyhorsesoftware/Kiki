@@ -88,6 +88,11 @@ QtObject {
         let b = end
         while (b > a && _rows[b - 1]) b--
         if (b - a <= 0) return
+        // Hysteresis: if every visible row is held and only a sliver of padding is missing, wait
+        // for the scroll to move further rather than sending a tiny request per pixel.
+        let visibleHeld = true
+        for (let i = viewportFirst; i < Math.min(end, viewportFirst + viewportCount); i++) if (!_rows[i]) { visibleHeld = false; break }
+        if (visibleHeld && b - a < Math.max(1, Math.floor(Math.max(padAhead, padBehind) / 2))) return
         _request(a, Math.min(b - a, maxRequest))
     }
 

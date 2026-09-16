@@ -7,7 +7,7 @@ QtObject {
         if (n < 1024) return n + " B"
         const u = ["KB", "MB", "GB", "TB"]; let v = n / 1024, i = 0
         while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
-        return (v < 10 ? v.toFixed(1) : Math.round(v)) + " " + u[i]
+        return (v < 100 ? v.toFixed(1) : Math.round(v)) + " " + u[i]
     }
     // "just now", "5 min ago", "3 h ago", "2 days ago", "3 weeks ago", "5 months ago", "2 years ago"
     function relative(ms) {
