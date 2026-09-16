@@ -172,7 +172,7 @@
       "x": 3900,
       "y": 780,
       "w": 520,
-      "text": "Mirror view (proposal): split and the mirror toggle are gone from the toolbar. Mirror is the fourth entry in the view menu (Ctrl+4); a remote location opens in it by default, a local folder can switch to it. Left pane local, right pane remote; the bar above the panes names both sides, shows when they were last mirrored, and holds Swap sides and the Mirror… button that starts Configure → Review → Running (Ctrl+M). Drag or Ctrl+C / Ctrl+V between panes transfers as before."
+      "text": "Mirror view (proposal): split and the mirror toggle are gone from the toolbar. Mirror is the fourth entry in the view menu (Ctrl+4); a remote location opens in it by default, a local folder can switch to it. Left pane local, right pane remote; the bar above the panes names both sides, shows when they were last mirrored, and has a swap control between the two paths and one accent button, \"Mirror to homelab\", with the direction arrow, the Ctrl+M chip and a chevron for direction and options; it starts Configure → Review → Running. Drag or Ctrl+C / Ctrl+V between panes transfers as before."
     },
     {
       "id": "mirror-note",

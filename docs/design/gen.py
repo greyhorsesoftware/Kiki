@@ -435,18 +435,17 @@ def view_menu_open(active="mirror", hidden=False):
   {item("Show hidden files", "Ctrl+H", hidden, sep=True)}
 </div>"""
 
-def _bar_btn(label, primary=False):
-    if primary:
-        return f'<div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; background: {BLUE}; color: {BG}; font-weight: 600; border-radius: 2px;">{label}</div>'
-    return f'<div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 14px; border: 1px solid {GUT}; color: {FGD}; border-radius: 2px;">{label}</div>'
-
-mirror_bar = f"""<div style="display: flex; align-items: center; gap: 10px; height: 40px; flex: none; padding: 0 14px; border-bottom: 1px solid {LINE}; box-sizing: border-box; font-size: 12px;">
+mirror_bar = f"""<div style="display: flex; align-items: center; gap: 10px; height: 44px; flex: none; padding: 0 14px; border-bottom: 1px solid {LINE}; box-sizing: border-box; font-size: 12px;">
   {ico("hdd", size=14, color=FGD)}<span style="color: {FGD};">~/Projects/kiki</span>
-  <span style="display: flex; align-items: center; gap: 2px; color: {CM};">{ico("arr-r", size=12)}{ico("arr-l", size=12)}</span>
+  <div style="display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid {GUT}; border-radius: 2px; color: {CM};" title="Swap sides">{ico("mirror", size=12)}</div>
   {ico("server", size=14, color=GREEN)}<span style="color: {FGD};">homelab · /srv/kiki</span>
   <span style="flex-grow: 1;"></span>
-  <span style="color: {CM}; font-size: 11px;">last mirrored 2 h ago · 3 changed locally</span>
-  {_bar_btn("Swap sides")}{_bar_btn("Mirror…", primary=True)}
+  <span style="display: flex; align-items: center; gap: 6px; color: {CM}; font-size: 11px;"><span style="width: 6px; height: 6px; border-radius: 3px; background: {YELLOW};"></span>3 changed locally · last mirrored 2 h ago</span>
+  <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 6px 0 12px; background: {BLUE}; color: {BG}; border-radius: 2px; font-weight: 600;" title="Mirror local → homelab (Ctrl+M)">
+    {ico("arr-u", size=14, color=BG)}<span>Mirror to homelab</span>
+    <span style="padding: 1px 6px; border: 1px solid rgba(26, 27, 38, 0.35); border-radius: 2px; font-size: 10px; font-weight: 400; color: {BG};">⌃M</span>
+    <span style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-left: 2px; border-left: 1px solid rgba(26, 27, 38, 0.35); color: {BG};" title="Direction and options">{ico("chev-d", size=10, color=BG)}</span>
+  </div>
 </div>"""
 
 split_body = f"""{mirror_bar}<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
