@@ -15,7 +15,7 @@ A lean Rust daemon (`kikid`) that enumerates any directory into a string pool wi
 - `src/string_pool.rs` — the listing string pool.
 - `src/listing.rs` — phase 1 scan, phase 2 windows, sort and filter, the listing cache.
 - `src/watch.rs` — inotify via the kernel API on one fd, one watcher thread.
-- `src/server.rs` — Unix socket at `$XDG_RUNTIME_DIR/kiki.sock`, `poll` loop, one client state per connection.
+- `src/server.rs` — Unix socket at `$XDG_RUNTIME_DIR/kiki.sock`; a reader thread and a writer thread per connection, events fan out through a channel to the writer.
 
 **URIs and the resolver**: `Uri` is a validated newtype (scheme, authority, percent-decoded path). `resolve(uri) -> (BackendRef, PathBuf)`: `file://` and bare absolute paths resolve to the local backend; other schemes resolve to a plugin process by authority (plan 06). `parent()`, `join(name)` and `display()` (`~`-shortened for local, `name/path` for a location) feed breadcrumbs.
 
@@ -42,7 +42,7 @@ capabilities() -> { trash, set_mtime, mode, real_dirs, digest_kind, separator }
 
 **Allocator tuning**: at startup kikid calls `mallopt` three times through `libc`: `M_MMAP_THRESHOLD` pinned to 131072 so the dynamic threshold never rises and freed large buffers return to the kernel, `M_ARENA_MAX` 2 so a dozen threads do not retain a dozen heaps, and `M_TRIM_THRESHOLD` 1 MiB so the main heap trims promptly. To keep the pinned threshold cheap, buffers used in loops are allocated once and reused: the `getdents` buffer per scanner, the copy buffer per job, the decode buffer per thumbnail worker. Kept only if the measurement below shows it matters.
 
-**Watch**: one inotify fd, one thread, events coalesced for 50 ms into `Changed { id, added, removed, modified }`. Added rows are appended to the string pool and index arrays are patched, not rebuilt.
+**Watch**: one inotify fd, one thread, events coalesced for 50 ms. In 0.1.0 a change triggers a rescan of that directory that keeps `Meta` for names still present and sends `Reset`; patching the pool in place instead of rescanning is a later optimisation and needs no protocol change.
 
 **Protocol** (added by this plan; every message has a request id):
 - `Open { id, uri }` with a client-chosen id, so `Open` and the first `Window` go out in one write; then `Count { id, n, done }` events as phase 1 progresses

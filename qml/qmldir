@@ -1,0 +1,3 @@
+module kiki
+singleton Daemon 1.0 kiki/Daemon.qml
+WindowCache 1.0 kiki/WindowCache.qml

@@ -7,7 +7,8 @@ Version: `1` (0.1.0). Clients send `Hello` first; a daemon that cannot serve the
 ## Transport and framing
 
 - Unix stream socket at `$XDG_RUNTIME_DIR/kiki.sock`, one connection per client. The daemon is socket-activated by systemd and stays running.
-- Every frame is: `u32` little-endian payload length, `u8` frame type, payload.
+- Two framings, chosen per connection by the first byte the client sends. A `{` selects **text framing**: newline-delimited JSON, one object per line, which is what the QML shell uses since it reads a line stream and never needs binary frames. Anything else selects **binary framing**, used by tools and tests that stream bytes:
+- Every binary frame is: `u32` little-endian payload length, `u8` frame type, payload.
   - type `0x00`: JSON. The payload is one UTF-8 JSON object.
   - type `0x01`: binary. Raw bytes belonging to the most recent streaming request on this connection (see `Read`/`Write` below). A zero-length binary frame ends a stream.
 - Maximum JSON frame: 16 MiB. Maximum binary frame: 1 MiB (senders chunk larger data).
