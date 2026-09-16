@@ -4,7 +4,7 @@ Builds on: `04-operations-and-undo.md` (context menu), `03-inspector.md` (inspec
 
 ## Goal
 
-Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. The model is Claude, called from a helper process, with the key never in the daemon or the shell.
+Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. Jarvis is provider-agnostic: by default it follows the AI Omarchy is set up to launch (read from the AI web-app keybinding in `~/.config/hypr/bindings.conf`, a heuristic the user can override in Settings), and it speaks each provider's API directly from the `jarvis` service plugin: Anthropic's Messages API, the OpenAI-compatible chat completions API (OpenAI, xAI, Ollama, any base URL), and Gemini's streaming API. Keys never enter the daemon or the shell.
 
 ## UI
 
@@ -27,7 +27,7 @@ Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and
 
 **Calling Claude**: the Messages API over raw HTTPS (Rust has no official SDK). Defaults per the Claude API reference: model `claude-opus-5`, streaming, adaptive thinking (omit the `thinking` parameter, which is the default), `max_tokens` 16000, `output_config.effort` `medium` for short factual answers and `high` when the question asks for analysis, and the server-side refusal fallback enabled (`anthropic-beta: server-side-fallback-2026-07-01`, `fallbacks: "default"`); the helper checks `stop_reason` and shows a refusal as a message rather than a blank. A system prompt tells the model it is answering about the attached files, to be concise, and to say when a question needs the whole file when only a head was attached. Attachments are placed first in the user turn so the prefix caches across follow-up questions in the same session (`cache_control` on the attachment block).
 
-**Credentials**, in order: `ANTHROPIC_API_KEY` in the daemon's environment; the key stored in the keyring under `{app: kiki, service: anthropic}` from Settings; if the `ant` CLI is installed and logged in, `ant auth print-credentials --access-token` with the OAuth beta header, so users of Claude Code need no separate key. The Settings page shows which source is active.
+**Credentials**, per provider, in order: the provider's environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `JARVIS_API_KEY` for custom); the keyring entry `{app: kiki, location: jarvis, field: <provider>}` from Settings; for anthropic, the `ant` CLI's login (`ant auth print-credentials --access-token` with the OAuth beta header) so Claude Code users need no separate key; Ollama needs none. The Settings page shows the provider, who chose it (Omarchy, settings or default) and the credential source. Model and base URL are settings with per-provider defaults (`claude-opus-5`, `gpt-5`, `gemini-2.5-pro`, `grok-4`, `llama3.1`).
 
 **Size cap**: attachments are capped at 200,000 characters total (a head, with a note); larger files get the first and last 50,000 characters and the model is told. PDFs go through `pdftotext` first. Binary files are refused with a message.
 

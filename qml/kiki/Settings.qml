@@ -10,12 +10,13 @@ Singleton {
     property var editor: ({ terminal: "auto", placement: "right", tabWidth: 4 })
     property var git: ({ enabled: true, showIgnored: "dim", folders: "aggregate" })
     property var project: ({ width: 320, arrange: true, agent: true })
+    property var jarvis: ({ provider: "omarchy", model: "", baseUrl: "" })
     property bool loaded: false
 
     function load() {
         Kiki.Daemon.request("Settings", {}, (ok, err) => {
             if (!ok) return
-            for (const k of ["view", "timers", "editor", "git", "project"]) if (ok[k]) settings[k] = Object.assign({}, settings[k], ok[k])
+            for (const k of ["view", "timers", "editor", "git", "project", "jarvis"]) if (ok[k]) settings[k] = Object.assign({}, settings[k], ok[k])
             loaded = true
         })
     }

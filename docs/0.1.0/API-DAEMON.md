@@ -228,8 +228,8 @@ Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action":
 | `ResetSettings` | | `{}` |
 | `ChooserResult` | `token`, `uris: [Uri] \| null` | `{}` (the shell's answer to `ShowChooser`) |
 | `SetOpenIn` | `tools: [tool]` | `{}` |
-| `AiStatus` | | `{ configured, model, source: "env" \| "keyring" \| "ant" \| null }` |
-| `AiConfigure` | `apiKey?` | `AiStatus` result |
+| `AiStatus` | | `{ configured, provider, chosenBy: "omarchy" \| "settings" \| "default", omarchyProvider, model, baseUrl, source: "env" \| "keyring" \| "ant" \| "local" \| null, providers }` |
+| `AiConfigure` | `provider?` (`omarchy` to follow Omarchy), `keyFor?` + `apiKey?`, `model?`, `baseUrl?` | `AiStatus` result |
 | `AiQuery` | `session`, `uris`, `question`, `history: [{ role, text }]` | `{ id }` then events `AiDelta { id, text }`, `AiDone { id, text, local, usage }`, `AiError { id, code, message }` |
 
 Text views (plan 13): `OpenText { lid, uri } -> { total, lang }`; `Window` on that `lid` returns `{ n, spans: [{ text, class }] }` rows.

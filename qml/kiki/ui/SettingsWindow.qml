@@ -137,12 +137,19 @@ FloatingWindow {
     } }
     Component { id: ai; Column { spacing: 12
         property var status: ({})
-        Component.onCompleted: Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok })
-        Text { text: status.configured ? "Jarvis is ready · source: " + status.source + " · model " + status.model : "Jarvis is not configured"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-        Row2 { label: "Anthropic API key"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        function refresh() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok }) }
+        Component.onCompleted: refresh()
+        Text { text: status.configured ? "Jarvis is ready · " + status.provider + " · credential from " + status.source : "Jarvis is not configured for " + (status.provider || "…"); color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Row2 { label: "Provider"; Choice { options: ["omarchy", "anthropic", "openai", "gemini", "xai", "ollama", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => { Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } } }
+        Text { text: "omarchy = follow the AI web app in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Row2 { label: "API key for " + (status.provider || ""); Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextInput { id: keyInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; echoMode: TextInput.Password; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
-            Button { text: "Save to keyring"; primary: true; onClicked: Kiki.Daemon.request("AiConfigure", { apiKey: keyInput.text }, (ok, err) => { keyInput.text = ""; if (ok) { sw.saved(); Kiki.Daemon.request("AiStatus", {}, ok2 => { if (ok2) status = ok2 }) } }) } }
-        Text { text: "Or log in with the Claude CLI (ant auth login); kiki uses that credential when no key is set. Pricing: anthropic.com/pricing"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
+            Button { text: "Save to keyring"; primary: true; onClicked: Kiki.Daemon.request("AiConfigure", { keyFor: status.provider, apiKey: keyInput.text }, () => { keyInput.text = ""; refresh(); sw.saved() }) } }
+        Row2 { label: "Model (blank = provider default)"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+            TextInput { anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.model || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { model: text }, () => { Kiki.Settings.load(); sw.saved() }) } } }
+        Row2 { label: "Base URL (ollama, custom)"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+            TextInput { anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.baseUrl || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { baseUrl: text }, () => { Kiki.Settings.load(); sw.saved() }) } } }
+        Text { text: "Keys are read from ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY or JARVIS_API_KEY, then the keyring; anthropic also uses the Claude CLI login (ant auth login). Ollama needs no key."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
     } }
     Component { id: sharePage; Column { spacing: 10
         Repeater { model: sw.sharePlugins; delegate: Column { required property var modelData; spacing: 6; width: parent.width
