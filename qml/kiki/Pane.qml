@@ -34,6 +34,7 @@ QtObject {
         selection.clear()
         // Per-folder memory (plan 02): restore this folder's view and sort, else keep the current ones.
         const pref = Kiki.Settings.viewPref(target.replace(/\/+$/, "") || target)
+        hasPref = !!pref
         _applying = true
         if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc"; showHidden = pref.hidden !== undefined ? pref.hidden : (Kiki.Settings.view.showHidden === true) }
         else showHidden = Kiki.Settings.view.showHidden === true
@@ -44,6 +45,23 @@ QtObject {
         navigated(target)
     }
     property bool _applying: false
+    property bool hasPref: false
+    // Smart default (plan 24): with no memory for this folder, a picture folder opens in icon view.
+    property string _smartChecked: ""
+    readonly property var pictureNames: ["pictures", "photos", "dcim", "screenshots", "wallpapers", "camera", "camera roll"]
+    function _smart() {
+        if (_smartChecked === uri || hasPref || Kiki.Settings.view.smartView === false || view === "mirror") return
+        _smartChecked = uri
+        const name = decodeURIComponent(uri.replace(/\/+$/, "").split("/").pop() || "").toLowerCase()
+        let pick = pictureNames.indexOf(name) >= 0 ? "icon" : ""
+        if (!pick) {
+            const n = Math.min(listing.count, 200); let held = 0, media = 0
+            for (let i = 0; i < n; i++) { const r = listing.row(i); if (!r) continue; held++; if (r.kind === "image" || r.kind === "video") media++ }
+            if (held >= 12 && media / held >= 0.6) pick = "icon"
+        }
+        if (pick && pick !== view) { _applying = true; view = pick; _applying = false }
+    }
+    Connections { target: listing; function onDoneChanged() { if (listing.done) _smart() } }
     function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }

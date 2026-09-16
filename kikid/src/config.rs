@@ -93,6 +93,7 @@ pub fn settings() -> Value {
             .b("inspector", false)
             .b("showHidden", false)
             .b("relativeDates", true)
+            .b("smartView", true)
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
             .done(),
@@ -104,6 +105,7 @@ pub fn settings() -> Value {
     m.insert("jarvis".into(), Value::obj().s("provider", "omarchy").s("cliCommand", "").done());
     m.insert("index".into(), Value::obj().v("roots", Value::Arr(vec![])).v("excludes", Value::Arr(vec![])).done());
     m.insert("integration".into(), Value::obj().b("asked", false).done());
+    m.insert("mirror".into(), Value::obj().v("last", Value::obj().done()).done());
     merge(&mut m, &v);
     Value::Obj(m)
 }
@@ -149,7 +151,7 @@ pub fn keymap() -> Value {
     let rows: &[(&str, &str, &str)] = &[
         ("/ or Ctrl+F", "search", "02"),
         ("Ctrl+L", "edit path", "02"),
-        ("Ctrl+1 / 2 / 3", "icon / list / columns", "02"),
+        ("Ctrl+1 / 2 / 3 / 4", "icon / list / columns / mirror", "02"),
         ("j k, Up Down", "move selection (a row of tiles in icon view)", "02"),
         ("h l, Left Right", "columns: pop and push; icon view: previous and next tile", "02"),
         ("Home End, PgUp PgDn", "first, last, page up, page down (Shift extends)", "02"),
@@ -166,10 +168,10 @@ pub fn keymap() -> Value {
         ("Del", "move to trash", "04"),
         ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"),
         ("Ctrl+Shift+N", "new folder", "04"),
-        ("Ctrl+Shift+S", "split", "07"),
-        ("Tab", "switch pane (split)", "07"),
-        ("F6", "move across (split)", "07"),
-        ("Ctrl+M", "mirror", "08"),
+        ("Ctrl+4", "mirror view (two panes)", "24"),
+        ("Tab", "switch pane (mirror view)", "24"),
+        ("F6", "move across (mirror view)", "24"),
+        ("Ctrl+M", "mirror to the remote (upload)", "08"),
         ("Tab (in search)", "cycle scope", "12"),
         ("e", "edit file / project mode on a folder", "13"),
         ("Alt+Enter", "open in default tool", "14"),

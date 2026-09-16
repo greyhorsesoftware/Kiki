@@ -8,7 +8,7 @@ Small changes that make the shell feel finished: one view button instead of thre
 
 ## View button and menu
 
-- The three-segment view switcher is one 52 px button showing the current view's icon with a chevron. It opens a menu: **Icon view** (`Ctrl+1`), **List view** (`Ctrl+2`), **Columns view** (`Ctrl+3`) with the active one checked, then a separator and **Show hidden files** (`Ctrl+H`) with a check mark when on.
+- The three-segment view switcher is one 52 px button showing the current view's icon with a chevron. It opens a menu: **Icon view** (`Ctrl+1`), **List view** (`Ctrl+2`), **Columns view** (`Ctrl+3`), **Mirror view** (`Ctrl+4`, plan 24) with the active one checked, then a separator and **Show hidden files** (`Ctrl+H`) with a check mark when on.
 - `ContextMenu` items gained an optional `checked` field: true or false draws a check column, undefined draws none, so the same component serves both menus.
 
 ## Hidden files

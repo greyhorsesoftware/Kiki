@@ -59,7 +59,7 @@ Spec ─▶ scan ─▶ master map + replica map ─▶ diff (pure) ─▶ Plan 
 
 ## UI (Quickshell)
 
-Entry point: a **Mirror** button in the split-mode toolbar (`Ctrl+M`), enabled only when the remote pane is connected. It replaces the two panes with a workspace; leaving restores them (a running job continues).
+Entry point (plan 24): the **Mirror to \<location\>** button in the Mirror view's bar (`Ctrl+M`), whose chevron picks upload or download; formerly a toolbar button in split mode, enabled only when the remote pane is connected. It replaces the two panes with a workspace; leaving restores them (a running job continues).
 
 Header on every screen: local path, remote host and path, direction arrows (upload = local → remote, the default; download = remote → local), locked after Configure.
 

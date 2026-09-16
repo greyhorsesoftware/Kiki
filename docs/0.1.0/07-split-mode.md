@@ -1,5 +1,7 @@
 # 07 — Split mode
 
+> Superseded in part by `24-mirror-view.md`: the split toggle and `Ctrl+Shift+S` are gone; the two panes are the **Mirror view** (`Ctrl+4`), entered automatically for remote locations. The pane behaviour, transfers and `Tab`/`F6` below still apply.
+
 Builds on: `02-shell-and-views.md`, `06-remote-locations.md`.
 
 Mockup: `SplitView.dc.html`.

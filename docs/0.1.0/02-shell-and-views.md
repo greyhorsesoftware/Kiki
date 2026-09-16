@@ -79,7 +79,7 @@ Rules: a component never reaches for a model it was not given; lists take a mode
 |---|---|
 | `/`, `Ctrl+F` | search |
 | `Ctrl+L` | edit path |
-| `Ctrl+1` `Ctrl+2` `Ctrl+3` | icon / list / columns |
+| `Ctrl+1` `Ctrl+2` `Ctrl+3` `Ctrl+4` | icon / list / columns / mirror |
 | `j` `k`, `Up` `Down` | move selection; in icon view Up/Down move by a row of tiles |
 | `h` `l`, `Left` `Right` | columns: pop/push; icon view: previous/next tile |
 | `Home` `End`, `PgUp` `PgDn` | first, last, page (Shift extends the selection) |
@@ -95,8 +95,8 @@ Rules: a component never reaches for a model it was not given; lists take a mode
 | `F2` | rename (plan 04) |
 | `Del` | move to trash (plan 04) |
 | `Ctrl+Z` `Ctrl+Shift+Z` | undo, redo (plan 04) |
-| `Ctrl+Shift+S` | split (plan 07) |
-| `Ctrl+M` | mirror (plan 08) |
+| `Ctrl+4` | Mirror view: two panes, local and remote (plan 24) |
+| `Ctrl+M` | mirror to the remote from Mirror view (plan 08) |
 | `e` | file: edit in the chosen editor (plan 13); folder: project mode (plan 16) |
 | `Ctrl+Shift+P` | toggle project mode on the current folder (plan 16) |
 | `Alt+Enter`, `Alt+Shift+Enter` | open in the default tool, open the tool list (plan 14) |

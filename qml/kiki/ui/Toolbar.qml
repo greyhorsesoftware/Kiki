@@ -46,7 +46,7 @@ Rectangle {
             id: crumb
             repo: bar.repo
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - 42 - (bar.split ? 42 : 0) - (bar.openInDefault !== "" ? openInWidth : 0)
+            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - 42 - (bar.openInDefault !== "" ? openInWidth : 0)
             property int openInWidth: 150
             uri: bar.pane.uri; home: bar.home
             onNavigate: uri => bar.pane.open(uri)
@@ -63,9 +63,7 @@ Rectangle {
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "share"; tip: "Share"; onClicked: bar.share() }
         ViewSwitcher { id: viewButton; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
     property alias viewButton: viewButton
-        ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "split"; active: bar.split; onClicked: bar.toggleSplit() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "info"; active: bar.inspector; onClicked: bar.toggleInspector() }
-        ToggleButton { visible: bar.split; anchors.verticalCenter: parent.verticalCenter; icon: "mirror"; active: bar.mirror; tip: "Mirror local and remote"; onClicked: bar.toggleMirror() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "gear"; tip: "Settings (Ctrl+,)"; onClicked: bar.settings() }
     }
 }

@@ -19,18 +19,48 @@ FloatingWindow {
     property var locations: []
     property var devices: []
     property bool inspector: Kiki.Settings.view.inspector
-    property bool split: false
+    // Mirror view (plan 24): "mirror" is the left pane's view; the right pane appears with it.
+    readonly property bool split: left.view === "mirror"
     property Kiki.Pane left: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
     property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false }
     property Kiki.Pane pane: left
+    property var lastLocation: null
     function focusPane(p) { left.focused = p === left; right.focused = p === right; pane = p }
-    // Selecting a location opens it side by side: local_uri on the left, remote_uri on the right.
+    // Selecting a location opens Mirror view: local_uri on the left, remote_uri on the right.
     function openLocation(loc) {
-        if (loc.localUri) { left.open(loc.localUri) }
+        lastLocation = loc
+        if (loc.localUri) left.open(loc.localUri)
         right.open(loc.remoteUri)
-        split = true
+        left.view = "mirror"
         focusPane(right)
     }
+    // Entering Mirror view from a local folder: the right pane gets the last location, else home.
+    function enterMirror() {
+        if (left.view === "mirror") return
+        if (!right.uri) right.open(lastLocation && lastLocation.remoteUri ? lastLocation.remoteUri : "file://" + home)
+        left.view = "mirror"
+    }
+    function leaveMirror() { if (left.view === "mirror") left.view = Kiki.Settings.view["default"] === "mirror" ? "list" : Kiki.Settings.view["default"] }
+    function swapPanes() { const l = left.uri, r = right.uri; if (!l || !r) return; left.open(r); right.open(l) }
+    // A remote URI opened directly (breadcrumb, IPC, Show in folder) opens in Mirror view with its location's local path beside it.
+    Connections { target: win.left; function onNavigated(uri) { const m = uri.match(/^([a-z]+):\/\/([^/]+)/); if (!m || m[1] === "file" || m[1] === "trash" || win.left.view === "mirror" || win.left.hasPref) return
+        if (Kiki.Settings.view.smartView === false) return
+        const loc = win.locations.find(l => l.plugin === m[1] && l.name === m[2]); if (!loc) return
+        win.lastLocation = loc; win.right.open(uri); if (loc.localUri) win.left.open(loc.localUri); win.left.view = "mirror"; win.focusPane(win.right) } }
+    // Last mirror time per remote root, kept in settings so the bar can say "last mirrored 2 h ago".
+    property var lastMirror: Kiki.Settings.mirror && Kiki.Settings.mirror.last ? Kiki.Settings.mirror.last : ({})
+    function remoteUri() { return left.uri.startsWith("file://") ? right.uri : left.uri }
+    function localUri() { return left.uri.startsWith("file://") ? left.uri : right.uri }
+    function recordMirror() { const m = Object.assign({}, lastMirror); m[remoteUri()] = Date.now(); lastMirror = m; Kiki.Daemon.request("SetSettings", { patch: { mirror: { last: m } } }) }
+    function mirrorOptions(pos) {
+        menu.open([
+            { label: "Upload · local → " + (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1], key: "Ctrl+M", action: () => win.startMirror(true) },
+            { label: "Download · " + (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1] + " → local", action: () => win.startMirror(false) },
+            { label: "Swap sides", sep: true, action: () => win.swapPanes() },
+            { label: "Open remote alone", action: () => { const r = win.remoteUri(); win.left.view = "list"; win.left.open(r) } },
+        ], pos)
+    }
+    function startMirror(upload) { if (!split) enterMirror(); mirrorWs.upload = upload; mirrorOpen = true }
     function otherPane() { return pane === left ? right : left }
     function transfer(move) {
         const u = selectedUris(); if (!u.length || !split) return
@@ -38,7 +68,7 @@ FloatingWindow {
     }
     onSplitChanged: if (!split) { focusPane(left); mirrorOpen = false }
     property bool mirrorOpen: false
-    function toggleMirror() { if (!split) return; mirrorOpen = !mirrorOpen }
+    function toggleMirror() { if (!split) { startMirror(true); return } mirrorOpen = !mirrorOpen }
     property string toast: ""
     // Search (plan 12). Folder scope filters the listing; other scopes open a results view.
     property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
@@ -186,6 +216,7 @@ FloatingWindow {
             { label: "Icon view", key: "Ctrl+1", checked: pane.view === "icon", action: () => pane.view = "icon" },
             { label: "List view", key: "Ctrl+2", checked: pane.view === "list", action: () => pane.view = "list" },
             { label: "Columns view", key: "Ctrl+3", checked: pane.view === "columns", action: () => pane.view = "columns" },
+            { label: "Mirror view", key: "Ctrl+4", checked: win.split, action: () => win.enterMirror() },
             { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
         ]
         menu.open(items, Qt.point(toolbar.x + toolbar.viewButton.x, 44))
@@ -294,6 +325,7 @@ FloatingWindow {
             case Qt.Key_1: if (ctrl) pane.view = "icon"; else return; break
             case Qt.Key_2: if (ctrl) pane.view = "list"; else return; break
             case Qt.Key_3: if (ctrl) pane.view = "columns"; else return; break
+            case Qt.Key_4: if (ctrl) win.enterMirror(); else return; break
             case Qt.Key_J: win.moveSelection(1, shift); break
             case Qt.Key_K: win.moveSelection(-1, shift); break
             case Qt.Key_Down: win.moveSelection(win.rowStep, shift); break
@@ -327,7 +359,7 @@ FloatingWindow {
             case Qt.Key_Question: settingsWin.open("keys"); break
             case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
             case Qt.Key_Q: if (alt) win.aiQuery(); else return; break
-            case Qt.Key_S: if (alt) win.shareMenu(); else if (ctrl && shift) win.split = !win.split; else return; break
+            case Qt.Key_S: if (alt) win.shareMenu(); else return; break
             default: return
             }
             event.accepted = true
@@ -345,7 +377,7 @@ FloatingWindow {
         function selection(): string { return JSON.stringify(win.selectedUris()) }
         function uri(pane: string): string { return win.pane.uri }
         function inspector(on: string): void { win.inspector = on === "on" }
-        function split(on: string): void { win.split = on === "on" }
+        function split(on: string): void { if (on === "on") win.enterMirror(); else win.leaveMirror() }
         function project(action: string, uri: string): void { if (action === "enter") win.enterProject(uri || win.pane.uri); else win.leaveProject() }
         function projectState(): string { return JSON.stringify({ root: win.projectRoot, active: win.projectMode, width: win.width }) }
         function edit(uri: string, line: string): void { win.editAt(uri, parseInt(line) || 1) }
@@ -355,7 +387,7 @@ FloatingWindow {
         function aiQuery(uri: string, question: string): void { win.pane.selection.clear(); win.aiOpen = true; aiPanel.openFor([uri]); if (question) aiPanel.ask(question) }
         function aiClose(): void { win.aiOpen = false }
         function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else settingsWin.visible = false }
-        function mirror(on: string): void { win.mirrorOpen = on === "open" && win.split }
+        function mirror(on: string): void { if (on === "open") win.startMirror(true); else win.mirrorOpen = false }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
         function transfer(kind: string): void { win.transfer(kind === "move") }
@@ -431,8 +463,6 @@ FloatingWindow {
                 onSettings: settingsWin.open("general")
                 onShare: win.shareMenu()
                 onToggleInspector: win.inspector = !win.inspector
-                onToggleSplit: win.split = !win.split
-                onToggleMirror: win.toggleMirror()
             }
             Views.SearchResults {
                 id: resultsView
@@ -446,13 +476,23 @@ FloatingWindow {
                 id: mirrorWs
                 visible: win.mirrorOpen
                 width: parent.width; height: parent.height - toolbar.height - bar.height
-                localUri: win.left.uri; remoteUri: win.right.uri; home: win.home
+                localUri: win.localUri(); remoteUri: win.remoteUri(); home: win.home
                 onClosed: win.mirrorOpen = false
-                onRelist: { win.left.listing.refresh(); win.right.listing.refresh() }
+                onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
+            }
+            UI.MirrorBar {
+                id: mirrorBar
+                visible: win.split && !win.mirrorOpen && !win.searching
+                width: parent.width
+                left: win.left; right: win.right; home: win.home
+                lastMirrored: win.lastMirror[win.remoteUri()] || null
+                onSwap: win.swapPanes()
+                onMirror: upload => win.startMirror(upload)
+                onOptions: pos => win.mirrorOptions(Qt.point(pos.x + 224, pos.y + 48))
             }
             Row {
                 visible: !win.mirrorOpen && !win.searching
-                width: parent.width; height: parent.height - toolbar.height - bar.height
+                width: parent.width; height: parent.height - toolbar.height - bar.height - (mirrorBar.visible ? mirrorBar.height : 0)
                 // Left pane (the only pane when not split)
                 Column {
                     width: (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0); height: parent.height
@@ -460,7 +500,7 @@ FloatingWindow {
                     Loader {
                         id: viewLoader
                         width: parent.width; height: parent.height - (win.split ? 34 : 0)
-                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : listView)
+                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : listView)   // "mirror" renders as a list
                         onLoaded: item.pane = win.left
                     }
                 }

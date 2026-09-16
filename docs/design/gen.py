@@ -147,7 +147,7 @@ def search_box(placeholder, search):
             f'{scope_btn}<span style="flex-grow: 1; white-space: nowrap;">{text}<span style="display: inline-block; width: 1px; height: 14px; margin-left: 1px; background: {FG}; vertical-align: -2px;"></span></span>'
             f'<span style="display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: {CM};">{ico("x", size=10)}</span></div>')
 
-def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirror=None, search=None, merged=False):
+def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirror=None, search=None, merged=True):
     parts = []
     for i, c in enumerate(crumbs):
         if i: parts.append(f'<span style="color: {GUT};">{ico("chev-r", size=12)}</span>')
@@ -489,7 +489,7 @@ def mirror_footer(left, right):
 
 def mirror_window(body, footer, direction="upload", keys=None, status=""):
     ws = f'<div style="display: flex; flex-direction: column; flex-grow: 1; min-height: 0;">{mirror_header(direction)}{body}{footer}{statusbar(status, keys=keys or [])}</div>'
-    return window(sidebar("homelab"), toolbar(["homelab", "srv", "www", "greyhorse"], "list", "Search homelab", split=True, mirror=True) + ws)
+    return window(sidebar("homelab"), toolbar(["homelab", "srv", "www", "greyhorse"], "mirror", "Search homelab") + ws)
 
 def select(value, width="260px", disabled=False):
     c = GUT if disabled else FG
