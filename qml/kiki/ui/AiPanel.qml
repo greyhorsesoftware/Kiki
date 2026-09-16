@@ -75,7 +75,7 @@ Rectangle {
                     if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && !(event.modifiers & Qt.ShiftModifier)) { ai.ask(text); event.accepted = true }
                     else if (event.key === Qt.Key_Escape) { ai.close(); event.accepted = true }
                 }
-                Text { visible: !input.text.length && !input.activeFocus; text: "Ask about this file… (count lines, how many times does \"x\" appear)"; color: Kiki.Theme.muted; font: input.font; width: parent.width; wrapMode: Text.Wrap }
+                Text { visible: !input.text.length && !input.activeFocus; text: "Ask Jarvis about this file… (count lines, how many times does \"x\" appear)"; color: Kiki.Theme.muted; font: input.font; width: parent.width; wrapMode: Text.Wrap }
             }
         }
         Text { text: (ai.usage.input + ai.usage.output) ? ai.usage.input + " in · " + ai.usage.output + " out tokens this session" : "Enter to send · Shift+Enter for a newline"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 10 }

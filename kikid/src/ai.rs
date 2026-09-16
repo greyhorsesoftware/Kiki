@@ -1,4 +1,4 @@
-//! AI query (plan 19): attachments, local answers for exact questions, and the Claude helper.
+//! Jarvis, the AI query (plan 19): attachments, local answers for exact questions, and the Claude helper.
 
 use crate::json::Value;
 use crate::plugin::Msg;
@@ -116,7 +116,7 @@ pub fn query(tx: Sender<Value>, id: u64, session: String, uris: Vec<Uri>, questi
                 let _ = tx.send(proto::event("AiDone").u("id", id).s("text", a).b("local", true).v("usage", Value::obj().u("input", 0).u("output", 0).done()).done());
                 return;
             }
-            let helper = match crate::helpers::get("kiki-plugin-ai") {
+            let helper = match crate::helpers::get("kiki-plugin-jarvis") {
                 Ok(h) => h,
                 Err(e) => {
                     let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", e.message()).done());

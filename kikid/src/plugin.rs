@@ -28,7 +28,7 @@ pub fn find_binary(scheme: &str) -> Option<PathBuf> {
     plugin_dirs().into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
-const SERVICES: &[&str] = &["dbus", "highlight", "ai"];
+const SERVICES: &[&str] = &["dbus", "highlight", "jarvis"];
 
 /// Every plugin binary present: (name suffix, path). User directory wins, first seen wins.
 pub fn inventory() -> Vec<(String, PathBuf)> {

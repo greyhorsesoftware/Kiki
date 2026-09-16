@@ -20,7 +20,7 @@ A separate 900×640 window (so it can stay open beside the main one) with a page
 | **Share** | installed share plugins: enabled switch, each plugin's form, reorder | share configs, plan 18 |
 | **Git** | enabled; ignored files: dim, hide, normal; folder aggregation | `settings.toml [git]` |
 | **Project mode** | tree width; tree on, strip, hidden; arrange windows; agent slot on | `settings.toml [project]` |
-| **AI** | provider; API key (stored to keyring, shown masked with Clear); model; active credential source; a Test button; link to pricing | keyring, plan 19 |
+| **Jarvis** | provider; API key (stored to keyring, shown masked with Clear); model; active credential source; a Test button; link to pricing | keyring, plan 19 |
 | **Devices** | detected devices and their kind; rename; forget a remembered device | `devices.toml`, plan 17 |
 | **About** | version, daemon socket, plugin directory, log location, Reset all settings |
 

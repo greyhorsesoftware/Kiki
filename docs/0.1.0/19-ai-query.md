@@ -1,14 +1,14 @@
-# 19 — AI query
+# 19 — Jarvis (AI query)
 
 Builds on: `04-operations-and-undo.md` (context menu), `03-inspector.md` (inspector panel), `13-code-viewer-and-editor.md` (text detection), `06-remote-locations.md` (keyring, helper framing), `14-open-in.md` (Claude Code entry).
 
 ## Goal
 
-Right-click a text file (or select several), choose **AI ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. The model is Claude, called from a helper process, with the key never in the daemon or the shell.
+Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. The model is Claude, called from a helper process, with the key never in the daemon or the shell.
 
 ## UI
 
-- **Context menu**: an **AI ▸** submenu on files whose kind is `text`, `code`, `document` (text mime) or `pdf`, and on folders. Items: **Query…** first, then **Summarise** (a canned query), **Explain this file**, and **Open in Claude Code** (plan 14's entry, when detected). The submenu is hidden when no provider is configured, with a single item "Set up AI…" that opens Settings (plan 20).
+- **Context menu**: a **Jarvis ▸** submenu on files whose kind is `text`, `code`, `document` (text mime) or `pdf`, and on folders. Items: **Query…** first, then **Summarise** (a canned query), **Explain this file**, and **Open in Claude Code** (plan 14's entry, when detected). The submenu is hidden when no provider is configured, with a single item "Set up AI…" that opens Settings (plan 20).
 - **Chat panel**: replaces the inspector area (300 px, widens to 420 px) with a header showing the file name and a Close button, a transcript (user turns right-aligned in the surface colour, assistant turns plain, streamed), and an input box at the bottom with `Enter` to send and `Shift+Enter` for a newline. `Esc` closes. The panel remembers the transcript per file for the session.
 - **Attached context**: the file's contents (up to the size cap below) are sent with the first question and kept in the conversation. For several selected files, each is attached with its name. For a folder, the first level of names and sizes is attached, not contents.
 - **Local shortcuts first**: before calling the model, the helper answers a small set of exact questions itself so they are instant and free: line, word and byte counts; "how many times does X appear" for a quoted or backticked term; file size and dates. These show with a small "computed locally" label. Anything else goes to the model.
@@ -16,7 +16,7 @@ Right-click a text file (or select several), choose **AI ▸ Query…**, and a c
 
 ## Helper process
 
-`kiki-helper-ai`, a Rust binary on the plugin framing (`API-PLUGIN.md`), spawned by the daemon on first use, idle-exit after 10 minutes. Its dependencies (TLS, HTTP) live in the helper only.
+`kiki-plugin-jarvis`, a service plugin on the plugin framing (`API-PLUGIN.md`), spawned by the daemon on first use, idle-exit after 10 minutes. Its dependencies (TLS, HTTP) live in the helper only.
 
 | Request | Fields | Reply |
 |---|---|---|

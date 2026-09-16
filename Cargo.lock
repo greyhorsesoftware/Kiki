@@ -1127,14 +1127,6 @@ name = "kiki-json"
 version = "0.1.0"
 
 [[package]]
-name = "kiki-plugin-ai"
-version = "0.1.0"
-dependencies = [
- "kiki-plugin-sdk",
- "ureq",
-]
-
-[[package]]
 name = "kiki-plugin-dbus"
 version = "0.1.0"
 dependencies = [
@@ -1177,6 +1169,14 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+]
+
+[[package]]
+name = "kiki-plugin-jarvis"
+version = "0.1.0"
+dependencies = [
+ "kiki-plugin-sdk",
+ "ureq",
 ]
 
 [[package]]

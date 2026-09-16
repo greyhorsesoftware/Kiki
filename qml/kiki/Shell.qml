@@ -196,9 +196,9 @@ FloatingWindow {
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
             { label: "Open in…", enabled: win.openInTools.length > 0, action: () => win.openInMenu() },
             { label: "Share…", key: "Alt+S", enabled: sel && win.sharePlugins.length > 0, action: () => win.shareMenu() },
-            { label: win.aiStatus.configured ? "AI: Query…" : "AI: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
-            { label: "AI: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
-            { label: "AI: Explain this file", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Explain what this file does and how it is structured.") },
+            { label: win.aiStatus.configured ? "Jarvis: Query…" : "Jarvis: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
+            { label: "Jarvis: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
+            { label: "Jarvis: Explain this file", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Explain what this file does and how it is structured.") },
             { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
         return items

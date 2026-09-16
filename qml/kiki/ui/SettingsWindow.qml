@@ -37,7 +37,7 @@ FloatingWindow {
 
     readonly property var pages: [
         { id: "general", label: "General" }, { id: "keys", label: "Keys" }, { id: "locations", label: "Locations" }, { id: "search", label: "Search" },
-        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "AI" }, { id: "plugins", label: "Plugins" }, { id: "about", label: "About" }
+        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "plugins", label: "Plugins" }, { id: "about", label: "About" }
     ]
 
     Row {
@@ -138,7 +138,7 @@ FloatingWindow {
     Component { id: ai; Column { spacing: 12
         property var status: ({})
         Component.onCompleted: Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok })
-        Text { text: status.configured ? "Configured · source: " + status.source + " · model " + status.model : "Not configured"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Text { text: status.configured ? "Jarvis is ready · source: " + status.source + " · model " + status.model : "Jarvis is not configured"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
         Row2 { label: "Anthropic API key"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextInput { id: keyInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; echoMode: TextInput.Password; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
             Button { text: "Save to keyring"; primary: true; onClicked: Kiki.Daemon.request("AiConfigure", { apiKey: keyInput.text }, (ok, err) => { keyInput.text = ""; if (ok) { sw.saved(); Kiki.Daemon.request("AiStatus", {}, ok2 => { if (ok2) status = ok2 }) } }) } }

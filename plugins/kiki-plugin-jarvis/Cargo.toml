@@ -1,12 +1,12 @@
 [package]
-name = "kiki-plugin-ai"
+name = "kiki-plugin-jarvis"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Claude queries for kiki's AI panel, over raw HTTPS"
+description = "Jarvis: kiki's assistant, Claude over raw HTTPS"
 
 [[bin]]
-name = "kiki-plugin-ai"
+name = "kiki-plugin-jarvis"
 path = "src/main.rs"
 
 [dependencies]
