@@ -9,6 +9,7 @@ use std::path::Path;
 pub struct RawEntry {
     pub name: OsString,
     pub kind: EntryType,
+    pub meta: Option<Meta>,
 }
 
 /// A directory opened for scanning and later relative stats.
@@ -35,6 +36,18 @@ impl DirHandle {
     /// Metadata for one child, relative to this directory, never following symlinks.
     pub fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
         stat_impl(self, name)
+    }
+}
+
+impl super::Source for DirHandle {
+    fn scan(&self, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize> {
+        scan_impl(self, sink)
+    }
+    fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
+        stat_impl(self, name)
+    }
+    fn watchable(&self) -> bool {
+        true
     }
 }
 
@@ -82,7 +95,7 @@ fn scan_impl(h: &DirHandle, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize
                 libc::DT_UNKNOWN => EntryType::Unknown,
                 _ => EntryType::Other,
             };
-            chunk.push(RawEntry { name: OsString::from_vec(name.to_vec()), kind });
+            chunk.push(RawEntry { name: OsString::from_vec(name.to_vec()), kind, meta: None });
             total += 1;
             if chunk.len() >= CHUNK {
                 sink(std::mem::replace(&mut chunk, Vec::with_capacity(CHUNK)));
@@ -132,7 +145,7 @@ fn scan_impl(h: &DirHandle, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize
             Ok(_) => EntryType::Other,
             Err(_) => EntryType::Unknown,
         };
-        chunk.push(RawEntry { name: e.file_name(), kind });
+        chunk.push(RawEntry { name: e.file_name(), kind, meta: None });
         total += 1;
         if chunk.len() >= 1024 {
             sink(std::mem::replace(&mut chunk, Vec::with_capacity(1024)));

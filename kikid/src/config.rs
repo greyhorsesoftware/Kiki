@@ -17,6 +17,14 @@ pub fn home() -> PathBuf {
     std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/"))
 }
 
+pub fn read_named(name: &str) -> Value {
+    read_toml(name)
+}
+
+pub fn write_named(name: &str, v: &Value) -> std::io::Result<()> {
+    write_toml(name, v)
+}
+
 fn read_toml(name: &str) -> Value {
     let path = config_dir().join(name);
     match std::fs::read_to_string(&path) {

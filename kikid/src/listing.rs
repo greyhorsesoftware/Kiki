@@ -5,7 +5,7 @@ use crate::proto;
 use crate::string_pool::StringPool;
 use crate::vfs::local::{self, DirHandle};
 use crate::vfs::uri::Uri;
-use crate::vfs::{EntryType, Meta, Result, VfsError};
+use crate::vfs::{EntryType, Meta, Result, Source, VfsError};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
@@ -88,8 +88,9 @@ struct Enrich {
 
 pub struct Listing {
     pub uri: Uri,
+    /// Local path for local listings; for remote ones the URI string (used as the cache key).
     pub path: PathBuf,
-    dir: DirHandle,
+    dir: Box<dyn Source>,
     inner: Mutex<Inner>,
 }
 
@@ -131,7 +132,7 @@ fn stat_pool() -> &'static StatPool {
 // ---------------------------------------------------------------- cache
 
 struct Cache {
-    map: HashMap<PathBuf, Arc<Listing>>,
+    map: HashMap<String, Arc<Listing>>,
     entries: usize,
 }
 
@@ -142,11 +143,9 @@ fn cache() -> &'static Mutex<Cache> {
 
 /// Opens (or reuses) the listing for a local path. `cached` tells whether it was served from memory.
 pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
-    if !uri.is_local() {
-        return Err(VfsError::Unsupported);
-    }
-    let path = uri.to_path();
-    if let Some(l) = cache().lock().unwrap().map.get(&path).cloned() {
+    let key = uri.to_string();
+    let path = if uri.is_local() { uri.to_path() } else { PathBuf::from(&key) };
+    if let Some(l) = cache().lock().unwrap().map.get(&key).cloned() {
         let mut inner = l.inner.lock().unwrap();
         inner.last_used = Instant::now();
         let stale = inner.stale;
@@ -156,7 +155,12 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
         }
         return Ok((l, !stale));
     }
-    let dir = DirHandle::open(&path)?;
+    let dir: Box<dyn Source> = if uri.is_local() {
+        Box::new(DirHandle::open(&path)?)
+    } else {
+        let (session, rpath) = crate::locations::resolve(uri)?;
+        Box::new(crate::vfs::remote::RemoteDir { session, path: rpath })
+    };
     let listing = Arc::new(Listing {
         uri: uri.clone(),
         path: path.clone(),
@@ -183,11 +187,13 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
     });
     {
         let mut c = cache().lock().unwrap();
-        c.map.insert(path, Arc::clone(&listing));
+        c.map.insert(key, Arc::clone(&listing));
     }
     let l2 = Arc::clone(&listing);
     thread::Builder::new().name("scan".into()).spawn(move || l2.scan()).expect("spawn scanner");
-    crate::watch::watch(&listing);
+    if listing.dir.watchable() {
+        crate::watch::watch(&listing);
+    }
     Ok((listing, false))
 }
 
@@ -197,38 +203,57 @@ fn evict_if_needed() {
     if c.entries <= CACHE_ENTRIES {
         return;
     }
-    let mut candidates: Vec<(Instant, PathBuf, usize)> = c
+    let mut candidates: Vec<(Instant, String, usize)> = c
         .map
         .iter()
-        .filter_map(|(p, l)| {
+        .filter_map(|(k, l)| {
             let i = l.inner.lock().unwrap();
             if i.subscribers.is_empty() {
-                Some((i.last_used, p.clone(), i.pool.len()))
+                Some((i.last_used, k.clone(), i.pool.len()))
             } else {
                 None
             }
         })
         .collect();
     candidates.sort();
-    for (_, p, n) in candidates {
+    for (_, k, n) in candidates {
         if c.entries <= CACHE_ENTRIES {
             break;
         }
-        if let Some(l) = c.map.remove(&p) {
-            crate::watch::unwatch(&l);
+        if let Some(l) = c.map.remove(&k) {
+            if l.dir.watchable() {
+                crate::watch::unwatch(&l);
+            }
             c.entries = c.entries.saturating_sub(n);
         }
     }
 }
 
+fn key_of(path: &std::path::Path) -> String {
+    Uri::from_path(path).to_string()
+}
+
 pub fn mark_stale(path: &std::path::Path) {
-    if let Some(l) = cache().lock().unwrap().map.get(path).cloned() {
+    if let Some(l) = cache().lock().unwrap().map.get(&key_of(path)).cloned() {
         l.inner.lock().unwrap().stale = true;
     }
 }
 
 pub fn find(path: &std::path::Path) -> Option<Arc<Listing>> {
-    cache().lock().unwrap().map.get(path).cloned()
+    cache().lock().unwrap().map.get(&key_of(path)).cloned()
+}
+
+/// Drops every cached listing of a remote location (after a job wrote there, or a disconnect).
+pub fn invalidate_authority(scheme: &str, authority: &str) {
+    let prefix = format!("{scheme}://{authority}");
+    let mut c = cache().lock().unwrap();
+    let keys: Vec<String> = c.map.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+    for k in keys {
+        if let Some(l) = c.map.remove(&k) {
+            let n = l.inner.lock().unwrap().pool.len();
+            c.entries = c.entries.saturating_sub(n);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- listing
@@ -237,11 +262,11 @@ impl Listing {
     /// Phase 1: enumerate names and kinds into the pool, publishing counts as chunks land.
     fn scan(self: &Arc<Self>) {
         let start = Instant::now();
-        let result = self.dir.scan(|chunk| {
+        let result = self.dir.scan(&mut |chunk| {
             let mut inner = self.inner.lock().unwrap();
             for e in chunk {
                 let idx = inner.pool.push(e.name.as_bytes(), e.kind);
-                inner.meta.push(None);
+                inner.meta.push(e.meta);
                 inner.queued.push(false);
                 inner.thumb.push(None);
                 inner.thumb_queued.push(false);
@@ -298,10 +323,10 @@ impl Listing {
         let old: HashMap<Vec<u8>, Option<Meta>> = old_pool_names.into_iter().zip(old_meta).collect();
         let mut pool = StringPool::with_capacity(old.len());
         let mut meta = Vec::with_capacity(old.len());
-        let result = self.dir.scan(|chunk| {
+        let result = self.dir.scan(&mut |chunk| {
             for e in chunk {
                 pool.push(e.name.as_bytes(), e.kind);
-                meta.push(old.get(e.name.as_bytes()).cloned().flatten());
+                meta.push(e.meta.or_else(|| old.get(e.name.as_bytes()).cloned().flatten()));
             }
         });
         let mut inner = self.inner.lock().unwrap();
@@ -609,6 +634,11 @@ impl Listing {
     }
 
     pub fn stat_uri(uri: &Uri) -> Result<Value> {
+        if !uri.is_local() {
+            let (session, rpath) = crate::locations::resolve(uri)?;
+            let v = session.plugin.request(Value::obj().s("type", "Stat").s("location", session.location.clone()).s("path", rpath).done())?;
+            return Ok(meta_json(&crate::vfs::remote::meta_from(&v)));
+        }
         let path = uri.to_path();
         let parent = path.parent().ok_or(VfsError::NotFound)?;
         let name = path.file_name().ok_or(VfsError::NotFound)?;

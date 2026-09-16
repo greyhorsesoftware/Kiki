@@ -1,6 +1,7 @@
 //! Backends and the URI resolver.
 
 pub mod local;
+pub mod remote;
 pub mod uri;
 
 use std::io;
@@ -85,3 +86,11 @@ impl From<io::Error> for VfsError {
 }
 
 pub type Result<T> = std::result::Result<T, VfsError>;
+
+/// What a listing needs from a backend: enumerate names and kinds, and stat one child.
+pub trait Source: Send + Sync {
+    fn scan(&self, sink: &mut dyn FnMut(Vec<local::RawEntry>)) -> Result<usize>;
+    fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>;
+    /// True when inotify can watch it (local directories only).
+    fn watchable(&self) -> bool;
+}

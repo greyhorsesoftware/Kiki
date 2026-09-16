@@ -212,7 +212,17 @@ pub fn write(v: &Value) -> String {
                     if let Value::Obj(t) = item {
                         out.push_str(&format!("\n[[{k}]]\n"));
                         for (tk, tv) in t {
-                            out.push_str(&format!("{} = {}\n", tk, scalar(tv)));
+                            if !matches!(tv, Value::Obj(_)) {
+                                out.push_str(&format!("{} = {}\n", tk, scalar(tv)));
+                            }
+                        }
+                        for (tk, tv) in t {
+                            if let Value::Obj(sub) = tv {
+                                out.push_str(&format!("[{k}.{tk}]\n"));
+                                for (sk, sv) in sub {
+                                    out.push_str(&format!("{} = {}\n", sk, scalar(sv)));
+                                }
+                            }
                         }
                     }
                 }
@@ -277,6 +287,10 @@ uri = "file:///home/david/Projects"
         let out = write(&v);
         let v2 = parse(&out).unwrap();
         assert_eq!(v, v2);
+        let nested = "[[location]]\nname = \"homelab\"\n[location.config]\nhost = \"h\"\nport = 22\n";
+        let n = parse(nested).unwrap();
+        assert_eq!(n.get("location").unwrap().as_arr().unwrap()[0].get("config").unwrap().u64_field("port"), Some(22));
+        assert_eq!(parse(&write(&n)).unwrap(), n);
     }
 
     #[test]

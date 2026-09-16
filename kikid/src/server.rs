@@ -113,7 +113,7 @@ impl Client {
         let b = &req.body;
         let result: Result<Option<Value>, (&str, String)> = match req.kind.as_str() {
             "Hello" => Ok(Some(
-                Value::obj().u("version", proto::PROTOCOL_VERSION).s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION"))).v("plugins", Value::Arr(vec![])).done(),
+                Value::obj().u("version", proto::PROTOCOL_VERSION).s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION"))).v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect())).done(),
             )),
             "Ping" => Ok(Some(Value::obj().done())),
             "Version" => Ok(Some(Value::obj().s("version", env!("CARGO_PKG_VERSION")).done())),
@@ -138,6 +138,34 @@ impl Client {
             "SetSettings" => match b.get("patch") {
                 Some(p) => crate::config::set_settings(p).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing patch".into())),
+            },
+            "Plugins" => Ok(Some(Value::obj().v("plugins", Value::Arr(crate::plugin::describe_all())).done())),
+            "Locations" => Ok(Some(Value::obj().v("locations", crate::locations::json_list()).done())),
+            "TestLocation" => match b.get("location") {
+                Some(loc) => crate::locations::test(loc, b.get("secrets").unwrap_or(&Value::Null)).map(|_| Some(Value::obj().done())).map_err(vfs_err),
+                None => Err(("Protocol", "missing location".into())),
+            },
+            "AddLocation" | "UpdateLocation" => match b.get("location") {
+                Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null)).map(|_| {
+                    let _ = self.tx.send(proto::event("LocationsChanged").done());
+                    Some(Value::obj().done())
+                }).map_err(vfs_err),
+                None => Err(("Protocol", "missing location".into())),
+            },
+            "RemoveLocation" => match b.str_field("name") {
+                Some(n) => {
+                    if let Some(l) = crate::locations::find(n) { if let Some(p) = l.str_field("plugin") { crate::listing::invalidate_authority(p, n); } }
+                    crate::locations::remove(n).map(|_| { let _ = self.tx.send(proto::event("LocationsChanged").done()); Some(Value::obj().done()) }).map_err(|e| ("Io", e.to_string()))
+                }
+                None => Err(("Protocol", "missing name".into())),
+            },
+            "Disconnect" => match b.str_field("name") {
+                Some(n) => {
+                    if let Some(l) = crate::locations::find(n) { if let Some(p) = l.str_field("plugin") { crate::listing::invalidate_authority(p, n); } }
+                    crate::locations::disconnect(n);
+                    Ok(Some(Value::obj().done()))
+                }
+                None => Err(("Protocol", "missing name".into())),
             },
             "Preview" => match parse_uri(b, "uri") {
                 Ok(u) => crate::preview::preview(&u).map(Some).map_err(vfs_err),

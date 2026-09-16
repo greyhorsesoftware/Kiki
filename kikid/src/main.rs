@@ -1,25 +1,8 @@
 //! kikid: the kiki file manager daemon. See docs/0.1.0/01-daemon-and-listing.md.
 
-mod archive;
-mod config;
-mod jobs;
-mod json;
-mod kinds;
-mod listing;
-mod md5;
-mod ops;
-mod preview;
-mod proto;
-mod server;
-mod string_pool;
-mod thumbs;
-mod toml;
-mod vfs;
-mod watch;
+use kikid::{listing, server, vfs};
 
-/// Tests that set process-wide environment variables take this lock so they never interleave.
-#[cfg(test)]
-pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
