@@ -1,0 +1,170 @@
+{
+  "artboards": [
+    {
+      "file": "Main.dc.html",
+      "title": "Columns + Inspector",
+      "x": 0,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "IconView.dc.html",
+      "title": "Icon view + inspector + context menu",
+      "x": 1300,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "ListView.dc.html",
+      "title": "List view + inspector + undo toast",
+      "x": 2600,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "SplitView.dc.html",
+      "title": "Split \u00b7 local | remote",
+      "x": 3900,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "SearchEverywhere.dc.html",
+      "title": "Search \u00b7 Everywhere",
+      "x": 5200,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "SearchFolder.dc.html",
+      "title": "Search \u00b7 This folder + scope menu",
+      "x": 6500,
+      "y": 0,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "AddLocationSFTP.dc.html",
+      "title": "Add location \u00b7 SFTP",
+      "x": 0,
+      "y": 900,
+      "w": 520,
+      "h": 630
+    },
+    {
+      "file": "AddLocationFTPS.dc.html",
+      "title": "Add location \u00b7 FTPS",
+      "x": 620,
+      "y": 900,
+      "w": 520,
+      "h": 630
+    },
+    {
+      "file": "OpenDialog.dc.html",
+      "title": "Portal Open dialog",
+      "x": 1240,
+      "y": 900,
+      "w": 860,
+      "h": 560
+    },
+    {
+      "file": "InspectorPermissions.dc.html",
+      "title": "Inspector \u00b7 Permissions tab",
+      "x": 2200,
+      "y": 900,
+      "w": 316,
+      "h": 680
+    },
+    {
+      "file": "MirrorConfigure.dc.html",
+      "title": "Mirror \u00b7 Configure",
+      "x": 0,
+      "y": 1720,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "MirrorReview.dc.html",
+      "title": "Mirror \u00b7 Review",
+      "x": 1300,
+      "y": 1720,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "MirrorRunning.dc.html",
+      "title": "Mirror \u00b7 Running",
+      "x": 2600,
+      "y": 1720,
+      "w": 1200,
+      "h": 760
+    },
+    {
+      "file": "ProjectMode.dc.html",
+      "title": "Project mode \u00b7 kiki | editor | agent",
+      "x": 0,
+      "y": 2600,
+      "w": 2200,
+      "h": 776
+    }
+  ],
+  "annotations": [
+    {
+      "id": "brief",
+      "x": 0,
+      "y": -170,
+      "w": 560,
+      "text": "kiki \u00b7 file manager for Omarchy\nRust backend + Quickshell (QML) front end. Tokyo Night palette, Cascadia Mono, 2px Hyprland-style active border, no title bar.\nRow 1: the three views plus split mode. Row 2: Locations + dialog (generated from each location plugin's form; SFTP and FTPS ship first), the xdg-desktop-portal Open dialog kiki provides to other apps, and the inspector's Permissions tab. Row 3: mirror."
+    },
+    {
+      "id": "columns-note",
+      "x": 0,
+      "y": 780,
+      "w": 520,
+      "text": "Columns: each folder click pushes a column; a file click replaces the next column with the tabbed inspector (General / Permissions). Ancestor selections dim to grey, the active one is blue. Deeper paths scroll the column strip horizontally; the inspector keeps a 300px minimum."
+    },
+    {
+      "id": "ops-note",
+      "x": 2600,
+      "y": 780,
+      "w": 520,
+      "text": "Every destructive op (trash, move, rename, extract, chmod) is journaled so Ctrl+Z undoes it. The toast is the visible half of the undo stack.\nThe inspector panel is toggled from the toolbar (info button) in icon and list views; in columns view it is always the last column."
+    },
+    {
+      "id": "split-note",
+      "x": 3900,
+      "y": 780,
+      "w": 520,
+      "text": "Split: selecting a remote location opens it side by side. The left pane goes to the location's local path, the right to its remote path. Drag or Ctrl+C / Ctrl+V between panes transfers; transfers show in the status bar and are undoable. The split toggle in the toolbar turns it off (remote alone)."
+    },
+    {
+      "id": "mirror-note",
+      "x": 0,
+      "y": 1620,
+      "w": 1100,
+      "text": "Mirror (row 3): the mirror button in the split-mode toolbar replaces the two panes with this workspace. Configure builds the spec; Preflight scans (same frame, progress bar in place of the form); Review is the mandatory preview with per-row opt-out; Running shows each action's status with N in flight (3 by default). Done is the Running table plus a summary line. Not undoable by design; see docs/0.1.0/08-mirror.md."
+    },
+    {
+      "id": "search-note",
+      "x": 5200,
+      "y": 780,
+      "w": 520,
+      "text": "Search: `/` focuses the box. Scope lives in the field two ways: type a prefix (`everywhere:` or a location name with a colon, which becomes a chip), or open the scope menu from the chevron / chip. Plain text searches this folder, filtering the open listing in place. Everywhere replaces the pane with ranked two-line results: match highlighted, parent folder under it. Backspace on an empty query removes the chip; Tab cycles scopes. Enter opens; Ctrl+Enter reveals in folder; Esc returns to the folder you were in. See docs/0.1.0/12-search.md."
+    },
+    {
+      "id": "project-note",
+      "x": 0,
+      "y": 2480,
+      "w": 900,
+      "text": "Project mode (row 4): `e` on a folder. kiki collapses to a 320px project tree (header with project name, branch chip, Leave; filter; tree with git badges; shortcut bar). Hyprland tiles the editor entry (here Neovim, focused, blue border) and the agent entry (here Claude Code) to its right; kiki drives the arrangement, nothing is embedded. Clicking a file in the tree switches the editor buffer; Alt+Enter sends the selection to the agent. Esc leaves project mode and the other two keep running. See docs/0.1.0/16-project-mode.md."
+    }
+  ],
+  "launch": {
+    "view": "canvas"
+  }
+}

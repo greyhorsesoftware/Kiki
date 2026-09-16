@@ -1,0 +1,24 @@
+# Maintainer: David Clark <david.j.clark@icloud.com>
+# Repackages the release build from GitHub. Updated by the release workflow.
+pkgname=kiki-bin
+_pkgname=kiki
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/davidjclark/kiki"
+license=('MIT')
+depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative' 'libmtp' 'libgphoto2' 'libimobiledevice' 'usbmuxd')
+provides=('kiki')
+conflicts=('kiki')
+install=kiki.install
+source_x86_64=("${url}/releases/download/v${pkgver}/${_pkgname}-${pkgver}-1-x86_64.pkg.tar.zst")
+source_aarch64=("${url}/releases/download/v${pkgver}/${_pkgname}-${pkgver}-1-aarch64.pkg.tar.zst")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  # The release asset is a complete pacman package; unpack its payload into $pkgdir.
+  bsdtar -xf "${srcdir}/${_pkgname}-${pkgver}-1-${CARCH}.pkg.tar.zst" -C "${pkgdir}" \
+    --exclude .PKGINFO --exclude .BUILDINFO --exclude .MTREE --exclude .INSTALL
+}

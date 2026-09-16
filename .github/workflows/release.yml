@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build kiki package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo libmtp libgphoto2 libimobiledevice usbmuxd
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v4
+      - name: Set version from tag
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" packaging/PKGBUILD
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "FILE=kiki-${VERSION}-1-${{ matrix.arch }}.pkg.tar.zst" >> "$GITHUB_ENV"
+      - name: makepkg
+        run: |
+          chown -R builder .
+          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm'
+          ls -l packaging/*.pkg.tar.zst
+      - name: Checksum
+        run: cd packaging && sha256sum "$FILE" > "$FILE.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.arch }}
+          path: |
+            packaging/${{ env.FILE }}
+            packaging/${{ env.FILE }}.sha256
+
+  release:
+    name: Publish GitHub release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+  aur:
+    name: Publish kiki-bin to the AUR
+    runs-on: ubuntu-latest
+    needs: [build, release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: Fill in version and checksums
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          SHA_X86=$(cut -d' ' -f1 "dist/kiki-${VERSION}-1-x86_64.pkg.tar.zst.sha256")
+          SHA_ARM=$(cut -d' ' -f1 "dist/kiki-${VERSION}-1-aarch64.pkg.tar.zst.sha256")
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/; \
+                  s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${SHA_X86}')/; \
+                  s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${SHA_ARM}')/" packaging/aur/kiki-bin/PKGBUILD
+          cat packaging/aur/kiki-bin/PKGBUILD
+      - uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: kiki-bin
+          pkgbuild: packaging/aur/kiki-bin/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ needs.build.outputs.version }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519

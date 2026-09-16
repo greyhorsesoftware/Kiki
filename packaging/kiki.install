@@ -1,0 +1,20 @@
+post_install() {
+  xdg-mime default org.kiki.App.desktop inode/directory 2>/dev/null || true
+  update-desktop-database -q 2>/dev/null || true
+  systemctl --global enable kiki.socket 2>/dev/null || true
+  echo ":: kiki is now the handler for folders. Log out and in, or run: systemctl --user start kiki.socket"
+}
+
+post_upgrade() {
+  update-desktop-database -q 2>/dev/null || true
+  systemctl --user try-restart kikid.service 2>/dev/null || true
+}
+
+pre_remove() {
+  systemctl --global disable kiki.socket 2>/dev/null || true
+}
+
+post_remove() {
+  update-desktop-database -q 2>/dev/null || true
+  echo ":: kiki removed. Set a new folder handler with: xdg-mime default <app>.desktop inode/directory"
+}

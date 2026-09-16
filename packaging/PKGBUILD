@@ -1,0 +1,59 @@
+# Maintainer: David Clark <david.j.clark@icloud.com>
+# Source package: builds kiki from the repository checkout one level up.
+pkgname=kiki
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
+arch=('x86_64' 'aarch64')
+url="https://github.com/davidjclark/kiki"
+license=('MIT')
+depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative' 'libmtp' 'libgphoto2' 'libimobiledevice' 'usbmuxd')
+makedepends=('rust' 'cargo' 'clang' 'pkgconf')
+optdepends=('openssh: SFTP host key tools'
+            'tailscale: share files over Taildrop'
+            'kdeconnect: share to a paired phone'
+            'signal-cli: share via Signal'
+            'opendrop: AirDrop to Apple devices (needs owl and a supported Wi-Fi adapter)')
+install=kiki.install
+options=('!lto')
+
+_srcdir="${startdir}/.."
+
+build() {
+  cd "${_srcdir}"
+  export CARGO_TARGET_DIR="${srcdir}/target"
+  cargo build --release --locked --workspace
+}
+
+check() {
+  cd "${_srcdir}"
+  export CARGO_TARGET_DIR="${srcdir}/target"
+  cargo test --release --locked --workspace
+}
+
+package() {
+  local t="${srcdir}/target/release"
+  install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
+  install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
+  install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
+  install -Dm755 "${t}/kiki-plugin-ptp"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ptp"
+  install -Dm755 "${t}/kiki-plugin-mtp"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-mtp"
+  install -Dm755 "${t}/kiki-plugin-afc"  "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-afc"
+  install -Dm755 "${t}/kiki-share-mail"      "${pkgdir}/usr/lib/kiki/share/kiki-share-mail"
+  install -Dm755 "${t}/kiki-share-messages"  "${pkgdir}/usr/lib/kiki/share/kiki-share-messages"
+  install -Dm755 "${t}/kiki-share-tailscale" "${pkgdir}/usr/lib/kiki/share/kiki-share-tailscale"
+  install -Dm755 "${t}/kiki-share-localsend" "${pkgdir}/usr/lib/kiki/share/kiki-share-localsend"
+  install -Dm755 "${t}/kiki-share-airdrop"   "${pkgdir}/usr/lib/kiki/share/kiki-share-airdrop"
+  install -Dm755 "${_srcdir}/packaging/bin/kiki" "${pkgdir}/usr/bin/kiki"
+
+  install -d "${pkgdir}/usr/share/kiki"
+  cp -r "${_srcdir}/qml/." "${pkgdir}/usr/share/kiki/"
+
+  install -Dm644 "${_srcdir}/packaging/systemd/kiki.socket"   "${pkgdir}/usr/lib/systemd/user/kiki.socket"
+  install -Dm644 "${_srcdir}/packaging/systemd/kikid.service" "${pkgdir}/usr/lib/systemd/user/kikid.service"
+  install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
+  install -Dm644 "${_srcdir}/packaging/org.kiki.App.service"  "${pkgdir}/usr/share/dbus-1/services/org.kiki.App.service"
+  install -Dm644 "${_srcdir}/packaging/kiki.portal"           "${pkgdir}/usr/share/xdg-desktop-portal/portals/kiki.portal"
+  install -Dm644 "${_srcdir}/packaging/kiki-portals.conf"     "${pkgdir}/usr/share/xdg-desktop-portal/kiki-portals.conf"
+  install -Dm644 "${_srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

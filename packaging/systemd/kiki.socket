@@ -1,0 +1,9 @@
+[Unit]
+Description=kiki file manager daemon socket
+
+[Socket]
+ListenStream=%t/kiki.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

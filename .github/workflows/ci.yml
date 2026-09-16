@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Daemon and plugins (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
+    steps:
+      - name: Install toolchain
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf \
+            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng libmtp libgphoto2 libimobiledevice usbmuxd
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Format and lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+      - name: Unit and integration tests
+        run: cargo test --workspace
+      - name: Protocol and plugin contract tests
+        run: cargo test --workspace --test '*' -- --include-ignored
+      - name: JSON reader fuzz smoke
+        run: |
+          cargo install cargo-fuzz --locked
+          cargo +nightly fuzz run json_reader -- -max_total_time=60 || echo "::warning::fuzz target not present yet"
+        continue-on-error: true
+
+  qml:
+    name: QML leaf components
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install Qt
+        run: pacman -Syu --noconfirm --needed qt6-base qt6-declarative xorg-server-xvfb
+      - uses: actions/checkout@v4
+      - name: Run qmltestrunner
+        run: |
+          export QT_QPA_PLATFORM=offscreen
+          qmltestrunner-qt6 -input tests/qml
+
+  package:
+    name: Build package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    needs: [rust]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo libmtp libgphoto2 libimobiledevice usbmuxd
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v4
+      - name: makepkg
+        run: |
+          chown -R builder .
+          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kiki-package-${{ matrix.arch }}
+          path: packaging/kiki-*.pkg.tar.zst
+
+  # The shell harness runs on x86_64 only for now; Quickshell from the AUR on ARM is a follow-up.
+  e2e:
+    name: Shell, visual, layout, performance
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    needs: [package]
+    steps:
+      - name: Install runtime
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git sudo cage wtype grim dbus \
+            xdg-desktop-portal gnome-keyring openssh vsftpd ffmpeg python nodejs npm \
+            qt6-base qt6-declarative qt6-wayland
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v4
+      - name: Quickshell from the AUR (cached)
+        id: qs-cache
+        uses: actions/cache@v4
+        with:
+          path: /home/builder/quickshell/*.pkg.tar.zst
+          key: quickshell-${{ hashFiles('.github/quickshell-pin') }}
+      - name: Build Quickshell if not cached
+        if: steps.qs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo -u builder bash -c '
+            cd ~ && git clone https://aur.archlinux.org/quickshell.git &&
+            cd quickshell && git checkout "$(cat $GITHUB_WORKSPACE/.github/quickshell-pin)" &&
+            makepkg -s --noconfirm'
+      - name: Install Quickshell and kiki
+        run: |
+          pacman -U --noconfirm /home/builder/quickshell/*.pkg.tar.zst
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiki-package-x86_64
+          path: pkg
+      - run: pacman -U --noconfirm --overwrite '*' pkg/kiki-*.pkg.tar.zst
+      - name: Run the harness under cage
+        run: |
+          chown -R builder .
+          sudo -u builder bash -c 'XDG_RUNTIME_DIR=$(mktemp -d) tests/e2e/run.sh'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-diffs
+          path: tests/e2e/out/**

@@ -1,0 +1,16 @@
+[package]
+name = "kikid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "kiki file manager daemon"
+
+[[bin]]
+name = "kikid"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "0.38", features = ["fs", "net", "process", "std"] }
