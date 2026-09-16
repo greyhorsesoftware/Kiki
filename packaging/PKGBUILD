@@ -36,7 +36,7 @@ package() {
   install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
   install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
-  for p in dbus highlight jarvis share-mail share-messages share-tailscale share-localsend share-airdrop; do
+  for p in dbus highlight share-mail share-messages share-tailscale share-localsend share-airdrop; do
     install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
   done
   for p in ptp mtp afc; do

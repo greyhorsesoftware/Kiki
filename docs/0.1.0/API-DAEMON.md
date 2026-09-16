@@ -228,8 +228,8 @@ Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action":
 | `ResetSettings` | | `{}` |
 | `ChooserResult` | `token`, `uris: [Uri] \| null` | `{}` (the shell's answer to `ShowChooser`) |
 | `SetOpenIn` | `tools: [tool]` | `{}` |
-| `AiStatus` | | `{ configured, provider, chosenBy: "omarchy" \| "settings" \| "default", omarchyProvider, model, baseUrl, source: "env" \| "keyring" \| "ant" \| "local" \| null, providers }` |
-| `AiConfigure` | `provider?` (`omarchy` to follow Omarchy), `keyFor?` + `apiKey?`, `model?`, `baseUrl?`, `mode?` (`auto` \| `cli` \| `api`), `cliCommand?` | `AiStatus` result (also carries `mode`, `cli`, `cliAvailable`) |
+| `AiStatus` | | `{ configured, provider, chosenBy: "omarchy" \| "settings" \| "default", omarchyProvider, cli, cliAvailable, providers }` |
+| `AiConfigure` | `provider?` (`omarchy` to follow Omarchy), `cliCommand?` | `AiStatus` result |
 | `AiCancel` | `id` | `{ cancelled }` |
 | `AiQuery` | `session`, `uris`, `question`, `history: [{ role, text }]` | `{ id }` then events `AiDelta { id, text }`, `AiDone { id, text, local, usage }`, `AiError { id, code, message }` |
 

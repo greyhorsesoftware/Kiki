@@ -6,7 +6,7 @@ Protocol version: `1`.
 
 ## Discovery and lifecycle
 
-- Name: `kiki-plugin-<name>`, executable, in `/usr/lib/kiki/plugins/` or `~/.local/lib/kiki/plugins/` (user directory wins). `Describe` returns `kind`: `location` (then `<name>` is the URI scheme: lowercase ASCII letters, digits, `+`, `-`, `.`), `share` (`<name>` is `share-<id>`), or `service` (a fixed name the daemon uses: `dbus`, `highlight`, `jarvis`; their request sets are documented in plans 09, 13 and 19).
+- Name: `kiki-plugin-<name>`, executable, in `/usr/lib/kiki/plugins/` or `~/.local/lib/kiki/plugins/` (user directory wins). `Describe` returns `kind`: `location` (then `<name>` is the URI scheme: lowercase ASCII letters, digits, `+`, `-`, `.`), `share` (`<name>` is `share-<id>`), or `service` (a fixed name the daemon uses: `dbus`, `highlight`; their request sets are documented in plans 09, 13 and 19).
 - At daemon start, each plugin is spawned once, sent `Describe`, and exited. The result is cached until the plugin file's mtime changes.
 - The daemon spawns the plugin on the first request for its scheme and keeps one process per scheme. All locations of that scheme share it; the plugin keeps a session per `(location, role)`.
 - Environment: `KIKI_PLUGIN_PROTOCOL=1`, `KIKI_PLUGIN_SCHEME=<scheme>`, plus the user's environment. No arguments.

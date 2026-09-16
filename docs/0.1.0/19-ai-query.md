@@ -4,7 +4,7 @@ Builds on: `04-operations-and-undo.md` (context menu), `03-inspector.md` (inspec
 
 ## Goal
 
-Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. Jarvis is provider-agnostic: by default it follows the AI Omarchy is set up to launch (read from the AI web-app keybinding in `~/.config/hypr/bindings.conf`, a heuristic the user can override in Settings), and it speaks each provider's API directly from the `jarvis` service plugin: Anthropic's Messages API, the OpenAI-compatible chat completions API (OpenAI, xAI, Ollama, any base URL), and Gemini's streaming API. Keys never enter the daemon or the shell.
+Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and a chat box opens beside the listing where the user asks questions about the file in plain words: "count lines", "how many times does `Ping` appear", "summarise this", "what does this config do". Answers stream in. Jarvis has one mode: it runs the AI the user has selected as that AI's own command-line tool in print mode, from the file's folder, with a prompt that names the file, and streams the tool's output into the panel. The tool's own login is used, so kiki holds no API keys. Which AI: Omarchy's choice by default (the AI web app in the keybinding in `~/.config/hypr/bindings.conf`, a heuristic), overridable in Settings, or a custom command.
 
 ## UI
 
@@ -14,26 +14,17 @@ Right-click a text file (or select several), choose **Jarvis ▸ Query…**, and
 - **Local shortcuts first**: before calling the model, the helper answers a small set of exact questions itself so they are instant and free: line, word and byte counts; "how many times does X appear" for a quoted or backticked term; file size and dates. These show with a small "computed locally" label. Anything else goes to the model.
 - **Key**: `Alt+Q` opens Query on the selection.
 
-## Helper process
+## Running the tool
 
-`kiki-plugin-jarvis`, a service plugin on the plugin framing (`API-PLUGIN.md`), spawned by the daemon on first use, idle-exit after 10 minutes. Its dependencies (TLS, HTTP) live in the helper only.
-
-| Request | Fields | Reply |
+| AI | Command | Notes |
 |---|---|---|
-| `Describe` | | `{ providers: ["anthropic"], configured: bool, model: string }` |
-| `Configure` | `provider`, `secrets: { apiKey }`, `model?` | `{}` or `Auth` after a one-token test request |
-| `Query` | `id`, `session: string`, `question`, `attachments: [{ name, text }]`, `history: [{ role, text }]` | streamed `Delta { id, text }` then `{ text, local: bool, usage: { input, output } }` |
-| `Cancel` | `id` | `{}` |
+| anthropic | `claude -p "{prompt}" --output-format text` | Claude Code's print mode |
+| openai | `codex exec "{prompt}"` | Codex CLI |
+| gemini | `gemini -p "{prompt}"` | Gemini CLI |
+| xai | `grok "{prompt}"` | when a Grok CLI is installed |
+| custom | the command from Settings with `{prompt}` and `{files}` | any tool |
 
-**Calling Claude**: the Messages API over raw HTTPS (Rust has no official SDK). Defaults per the Claude API reference: model `claude-opus-5`, streaming, adaptive thinking (omit the `thinking` parameter, which is the default), `max_tokens` 16000, `output_config.effort` `medium` for short factual answers and `high` when the question asks for analysis, and the server-side refusal fallback enabled (`anthropic-beta: server-side-fallback-2026-07-01`, `fallbacks: "default"`); the helper checks `stop_reason` and shows a refusal as a message rather than a blank. A system prompt tells the model it is answering about the attached files, to be concise, and to say when a question needs the whole file when only a head was attached. Attachments are placed first in the user turn so the prefix caches across follow-up questions in the same session (`cache_control` on the attachment block).
-
-**Modes.** `cli` runs the selected provider's own command-line tool in print mode from the file's directory (`claude -p … --output-format text`, `codex exec …`, `gemini -p …`, or a custom command with `{prompt}` and `{files}`), with a prompt that names the files so the tool reads them itself, and streams its stdout into the panel. It uses the tool's own login, so no key is needed, and Esc kills the process. `api` calls the provider directly from the `jarvis` plugin. `auto`, the default, uses `cli` when the tool is on `PATH`, else `api`.
-
-**Credentials** (API mode), per provider, in order: the provider's environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `JARVIS_API_KEY` for custom); the keyring entry `{app: kiki, location: jarvis, field: <provider>}` from Settings; for anthropic, the `ant` CLI's login (`ant auth print-credentials --access-token` with the OAuth beta header) so Claude Code users need no separate key; Ollama needs none. The Settings page shows the provider, who chose it (Omarchy, settings or default) and the credential source. Model and base URL are settings with per-provider defaults (`claude-opus-5`, `gpt-5`, `gemini-2.5-pro`, `grok-4`, `llama3.1`).
-
-**Size cap**: attachments are capped at 200,000 characters total (a head, with a note); larger files get the first and last 50,000 characters and the model is told. PDFs go through `pdftotext` first. Binary files are refused with a message.
-
-**Cost visibility**: the panel footer shows tokens used this session from `usage`. There is no per-question price shown, since pricing changes; the Settings page links to the pricing page.
+The prompt is "Read `<file>` and answer concisely in plain text. Question: …", preceded by the session's earlier turns as `User:` / `Assistant:` lines so follow-ups keep context. The process runs in the first file's directory with `KIKI_SELECTION` in its environment; stdout streams to the panel as it arrives, stderr is shown on failure, Esc kills it. Local shortcuts (counts, occurrences) still answer without running anything.
 
 ## Protocol additions
 

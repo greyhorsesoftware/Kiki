@@ -1,7 +1,7 @@
-//! Jarvis (plan 19): provider selection (follows Omarchy's AI unless overridden), attachments, local answers, the jarvis plugin.
+//! Jarvis (plan 19): runs the AI the user has selected (Omarchy's choice unless overridden) as its own
+//! command-line tool in print mode with the file, streams the answer; exact questions are answered locally.
 
 use crate::json::Value;
-use crate::plugin::Msg;
 use crate::proto;
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
@@ -10,7 +10,7 @@ use std::sync::mpsc::Sender;
 pub const ATTACH_CAP: usize = 200_000;
 pub const HEAD_TAIL: usize = 50_000;
 
-pub const PROVIDERS: &[&str] = &["anthropic", "openai", "gemini", "xai", "ollama", "custom"];
+pub const PROVIDERS: &[&str] = &["anthropic", "openai", "gemini", "xai", "custom"];
 
 fn jarvis_settings() -> Value {
     crate::config::settings().get("jarvis").cloned().unwrap_or(Value::Null)
@@ -48,38 +48,6 @@ pub fn provider() -> (String, &'static str) {
     }
 }
 
-fn env_key(provider: &str) -> Option<String> {
-    let var = match provider {
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "openai" => "OPENAI_API_KEY",
-        "gemini" => "GEMINI_API_KEY",
-        "xai" => "XAI_API_KEY",
-        "custom" => "JARVIS_API_KEY",
-        _ => return None,
-    };
-    std::env::var(var).ok().filter(|k| !k.is_empty())
-}
-
-/// (credential, source) for a provider: env, keyring, the `ant` CLI for anthropic, or none (ollama needs none).
-fn credential(provider: &str) -> (Option<String>, Option<&'static str>) {
-    if let Some(k) = env_key(provider) {
-        return (Some(k), Some("env"));
-    }
-    if let Some(k) = crate::locations::keyring::lookup("jarvis", provider) {
-        return (Some(k), Some("keyring"));
-    }
-    if provider == "anthropic" && crate::openin::on_path("ant") {
-        let ok = std::process::Command::new("ant").args(["auth", "status"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
-        if ok {
-            return (None, Some("ant"));
-        }
-    }
-    if provider == "ollama" {
-        return (None, Some("local"));
-    }
-    (None, None)
-}
-
 /// CLI print-mode command for a provider's own tool: (binary, args with {prompt}); the tool reads files itself.
 pub fn cli_for(provider: &str) -> Option<(String, Vec<String>)> {
     let js = jarvis_settings();
@@ -93,70 +61,36 @@ pub fn cli_for(provider: &str) -> Option<(String, Vec<String>)> {
         "openai" => ("codex", vec!["exec", "{prompt}"]),
         "gemini" => ("gemini", vec!["-p", "{prompt}"]),
         "xai" => ("grok", vec!["{prompt}"]),
-        _ => return None,
+        _ => return None, // "custom" needs cliCommand
     };
     Some((bin.to_string(), args.iter().map(|a| a.to_string()).collect()))
 }
 
-/// "api" | "cli" | "auto" (cli when the provider's tool is installed, else api).
-pub fn mode() -> (&'static str, bool) {
-    let js = jarvis_settings();
-    let (p, _) = provider();
-    let cli_ok = cli_for(&p).map(|(bin, _)| crate::openin::on_path(&bin)).unwrap_or(false);
-    match js.str_field("mode") {
-        Some("cli") => ("cli", cli_ok),
-        Some("api") => ("api", cli_ok),
-        _ => (if cli_ok { "cli" } else { "api" }, cli_ok),
-    }
-}
-
 pub fn status() -> Value {
     let (p, chosen_by) = provider();
-    let (_, source) = credential(&p);
-    let s = jarvis_settings();
-    let (m, cli_ok) = mode();
-    let configured = if m == "cli" { cli_ok } else { source.is_some() };
+    let cli = cli_for(&p);
+    let available = cli.as_ref().map(|(bin, _)| crate::openin::on_path(bin)).unwrap_or(false);
     Value::obj()
-        .b("configured", configured)
-        .s("mode", m)
-        .b("cliAvailable", cli_ok)
-        .opt_s("cli", cli_for(&p).map(|(b, _)| b).as_deref())
+        .b("configured", available)
         .s("provider", p.clone())
         .s("chosenBy", chosen_by)
         .opt_s("omarchyProvider", omarchy_provider())
-        .opt_s("model", s.str_field("model").filter(|m| !m.is_empty()))
-        .opt_s("baseUrl", s.str_field("baseUrl").filter(|m| !m.is_empty()))
-        .opt_s("source", source)
+        .opt_s("cli", cli.map(|(b, _)| b).as_deref())
+        .b("cliAvailable", available)
         .v("providers", Value::Arr(PROVIDERS.iter().map(|x| Value::Str(x.to_string())).collect()))
         .done()
 }
 
-/// Settings → Jarvis: provider ("omarchy" to follow Omarchy), a key for a provider, model, base URL.
-pub fn configure(provider_choice: Option<&str>, key_for: Option<&str>, api_key: Option<&str>, model: Option<&str>, base_url: Option<&str>, mode: Option<&str>, cli_command: Option<&str>) -> Result<(), VfsError> {
+/// Settings → Jarvis: provider ("omarchy" to follow Omarchy) and an optional custom command.
+pub fn configure(provider_choice: Option<&str>, cli_command: Option<&str>) -> Result<(), VfsError> {
     let mut patch = Value::obj();
-    if let Some(m) = mode {
-        patch = patch.s("mode", m);
+    if let Some(p) = provider_choice {
+        patch = patch.s("provider", p);
     }
     if let Some(c) = cli_command {
         patch = patch.s("cliCommand", c);
     }
-    if let Some(p) = provider_choice {
-        patch = patch.s("provider", p);
-    }
-    if let Some(m) = model {
-        patch = patch.s("model", m);
-    }
-    if let Some(b) = base_url {
-        patch = patch.s("baseUrl", b);
-    }
-    crate::config::set_settings(&Value::obj().v("jarvis", patch.done()).done()).map_err(|e| VfsError::Io(e.to_string()))?;
-    if let Some(p) = key_for {
-        match api_key {
-            Some(k) if !k.is_empty() => crate::locations::keyring::store("jarvis", p, k)?,
-            _ => crate::locations::keyring::clear("jarvis", p),
-        }
-    }
-    Ok(())
+    crate::config::set_settings(&Value::obj().v("jarvis", patch.done()).done()).map_err(|e| VfsError::Io(e.to_string()))
 }
 
 fn attachment(u: &Uri) -> Result<(String, String, bool), VfsError> {
@@ -234,68 +168,15 @@ pub fn query(tx: Sender<Value>, id: u64, session: String, uris: Vec<Uri>, questi
                 let _ = tx.send(proto::event("AiDone").u("id", id).s("text", a).b("local", true).v("usage", Value::obj().u("input", 0).u("output", 0).done()).done());
                 return;
             }
-            let (m, cli_ok) = mode();
-            if m == "cli" {
-                if !cli_ok {
-                    let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", "the provider's command-line tool is not installed; switch Jarvis to API mode in Settings").done());
-                    return;
-                }
-                run_cli(tx, id, &uris, &question, &history);
+            let (p, _) = provider();
+            let available = cli_for(&p).map(|(bin, _)| crate::openin::on_path(&bin)).unwrap_or(false);
+            if !available {
+                let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", format!("{}'s command-line tool is not installed; install it or set a custom command in Settings → Jarvis", p)).done());
                 return;
             }
-            let helper = match crate::helpers::get("kiki-plugin-jarvis") {
-                Ok(h) => h,
-                Err(e) => {
-                    let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", e.message()).done());
-                    return;
-                }
-            };
-            let (prov, _) = provider();
-            let (key, source) = credential(&prov);
-            let js = jarvis_settings();
-            let req = Value::obj()
-                .s("type", "Query")
-                .s("session", session)
-                .s("question", question)
-                .s("provider", prov.clone())
-                .s("apiKey", key.unwrap_or_default())
-                .s("source", source.unwrap_or("none"))
-                .opt_s("model", js.str_field("model").filter(|m| !m.is_empty()))
-                .opt_s("baseUrl", js.str_field("baseUrl").filter(|m| !m.is_empty()))
-                .v("attachments", Value::Arr(attachments.iter().map(|(n, t, tr)| Value::obj().s("name", n.clone()).s("text", t.clone()).b("truncated", *tr).done()).collect()))
-                .v("history", history)
-                .done();
-            let tx2 = tx.clone();
-            let r = helper.request_stream(req, |m| {
-                if let Msg::Json(v) = m {
-                    if let Some(t) = v.str_field("delta") {
-                        let _ = tx2.send(proto::event("AiDelta").u("id", id).s("text", t).done());
-                    }
-                }
-            });
-            match r {
-                Ok(v) => {
-                    let _ = tx.send(proto::event("AiDone").u("id", id).s("text", v.str_field("text").unwrap_or("")).b("local", false).v("usage", v.get("usage").cloned().unwrap_or(Value::Null)).done());
-                }
-                Err(e) => {
-                    let _ = tx.send(proto::event("AiError").u("id", id).s("code", e.code()).s("message", e.message()).done());
-                }
-            }
+            run_cli(tx, id, &uris, &question, &history);
         })
         .expect("spawn ai");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn local_answers() {
-        let a = vec![("x.rs".to_string(), "fn main() {}\nfn ping() {}\nfn Ping() {}\n".to_string(), false)];
-        assert_eq!(local_answer("count lines", &a).unwrap(), "x.rs: 3 lines");
-        assert!(local_answer("how many times does `fn` appear", &a).unwrap().contains("3 time"));
-        assert!(local_answer("how many times does \"ping\" appear", &a).unwrap().contains("1 time(s) exactly, 2 ignoring case"));
-        assert!(local_answer("what does this do", &a).is_none());
-    }
 }
 
 /// CLI mode: run the provider's tool in print mode from the first file's directory with a prompt

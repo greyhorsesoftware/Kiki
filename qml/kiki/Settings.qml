@@ -10,7 +10,7 @@ Singleton {
     property var editor: ({ terminal: "auto", placement: "right", tabWidth: 4 })
     property var git: ({ enabled: true, showIgnored: "dim", folders: "aggregate" })
     property var project: ({ width: 320, arrange: true, agent: true })
-    property var jarvis: ({ provider: "omarchy", mode: "auto", model: "", baseUrl: "", cliCommand: "" })
+    property var jarvis: ({ provider: "omarchy", cliCommand: "" })
     property bool loaded: false
 
     function load() {
