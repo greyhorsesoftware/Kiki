@@ -521,6 +521,24 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             }
             Some(Value::obj().s("op", "chmodList").v("list", Value::Arr(prev)).done())
         }
+        "compress" => {
+            let items = uris(op, "items")?;
+            let archive = uri(op, "archive")?;
+            let format = op.str_field("format").map(str::to_string).or_else(|| archive.file_name().and_then(|n| crate::archive::format_from_name(&n.to_string_lossy())).map(str::to_string)).ok_or(VfsError::Io("unknown archive format".into()))?;
+            let (files, bytes) = items.iter().map(|p| ops::tree_size(p)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+            job.set_totals(files.max(1), bytes);
+            crate::archive::compress(&items, &archive, &format, &cancel, &mut |_| job.progress(1, 0))?;
+            Some(Value::obj().s("op", "delete").v("items", uri_list(&[archive])).b("_silent", true).done())
+        }
+        "extract" => {
+            let archive = uri(op, "archive")?;
+            let dest = uri(op, "dest")?;
+            let n = crate::archive::list(&archive)?.len() as u64;
+            job.set_totals(n.max(1), 0);
+            let top = crate::archive::extract(&archive, &dest, &cancel, &mut |_| job.progress(1, 0))?;
+            let created: Vec<PathBuf> = top.iter().map(|t| dest.join(t)).collect();
+            Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
+        }
         other => return Err(VfsError::Io(format!("unknown op {other}"))),
     };
     Ok(if unjournaled { None } else { inverse })
@@ -543,6 +561,8 @@ fn title_for(op: &Value) -> String {
         "mkdir" => "New folder".into(),
         "rmdirIfEmpty" => "Remove folder".into(),
         "chmod" => format!("Change permissions of {what}"),
+        "compress" => format!("Compress {what}"),
+        "extract" => "Extract archive".into(),
         "chmodList" => "Restore permissions".into(),
         other => other.to_string(),
     }

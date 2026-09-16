@@ -1,0 +1,53 @@
+import QtQuick
+import Quickshell
+import ".." as Kiki
+
+// Compress…: archive name, format, into the current folder.
+Rectangle {
+    id: dlg
+    property var items: []            // URIs
+    property string dest: ""          // folder URI
+    signal submit(string archiveUri, string format)
+    visible: false
+    anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.5); z: 90
+    property var formats: ["zip", "tar.gz", "tar.zst", "tar.xz", "tar", "7z"]
+    property int formatIndex: 0
+    function open(uris, folder) {
+        items = uris; dest = folder; visible = true
+        const base = uris.length === 1 ? decodeURIComponent(uris[0].split("/").pop()).replace(/\.[^.]+$/, "") : "archive"
+        nameInput.text = base; nameInput.forceActiveFocus(); nameInput.selectAll()
+    }
+    MouseArea { anchors.fill: parent }
+    Rectangle {
+        anchors.centerIn: parent; width: 460; height: 210; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        Column {
+            anchors.fill: parent; anchors.margins: 20; spacing: 14
+            Text { text: "Compress " + (dlg.items.length === 1 ? "1 item" : dlg.items.length + " items"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+            Row {
+                spacing: 8; width: parent.width
+                Rectangle {
+                    width: parent.width - 150; height: 32; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+                    TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.go() }
+                }
+                Rectangle {
+                    width: 142; height: 32; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+                    Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: "." + dlg.formats[dlg.formatIndex]; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
+                    MouseArea { anchors.fill: parent; onClicked: dlg.formatIndex = (dlg.formatIndex + 1) % dlg.formats.length }
+                }
+            }
+            Text { text: "Into " + Kiki.Format.display(dlg.dest, Quickshell.env("HOME")); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+            Row {
+                spacing: 8; anchors.right: parent.right
+                Button { text: "Cancel"; onClicked: dlg.visible = false }
+                Button { text: "Compress"; primary: true; onClicked: dlg.go() }
+            }
+        }
+    }
+    function go() {
+        const name = nameInput.text.trim(); if (!name) return
+        visible = false
+        submit(dest.replace(/\/+$/, "") + "/" + encodeURIComponent(name + "." + formats[formatIndex]), formats[formatIndex])
+    }
+    Keys.onEscapePressed: visible = false
+}

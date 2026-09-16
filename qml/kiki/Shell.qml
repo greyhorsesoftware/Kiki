@@ -68,6 +68,9 @@ FloatingWindow {
             { label: "Paste", key: "Ctrl+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
             { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
             { label: "Rename", key: "F2", enabled: sel && pane.selection.count() === 1, action: () => win.renameSelected() },
+            { label: "Compress…", enabled: sel, action: () => compressDialog.open(win.selectedUris(), pane.uri) },
+            { label: "Extract here", enabled: r && r.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.uri }) },
+            { label: "Extract to…", enabled: r && r.kind === "archive", action: () => { const folder = r.name.replace(/\.(tar\.(gz|xz|zst|bz2)|tgz|txz|tzst|zip|7z|tar)$/i, ""); Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(folder) }, ok => { if (ok) Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.childUri(folder) }) }) } },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
             { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
@@ -215,6 +218,7 @@ FloatingWindow {
     UI.ContextMenu { id: menu; parent: win.contentItem }
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
+    UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }
     UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
     Component { id: columnsView; Views.ColumnsPane { pane: win.pane; home: win.home; onActivate: uri => win.openExternal(uri) } }
 }

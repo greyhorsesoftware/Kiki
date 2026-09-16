@@ -32,7 +32,7 @@ pub fn preview(uri: &Uri) -> Result<Value> {
             let (w, h) = image::image_dimensions(&p).unwrap_or((0, 0));
             Ok(Value::obj().s("path", p.to_string_lossy()).u("width", w as u64).u("height", h as u64).done())
         }
-        Kind::Archive => Err(VfsError::Unsupported), // plan 05 fills in members
+        Kind::Archive => crate::archive::members_json(&path),
         _ => text_head(&path),
     }
 }

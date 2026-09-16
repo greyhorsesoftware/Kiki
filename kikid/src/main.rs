@@ -1,5 +1,6 @@
 //! kikid: the kiki file manager daemon. See docs/0.1.0/01-daemon-and-listing.md.
 
+mod archive;
 mod config;
 mod jobs;
 mod json;

@@ -104,6 +104,11 @@ Rectangle {
                     sourceSize: Qt.size(512, 512)
                 }
                 Column {
+                    visible: insp.preview && insp.preview.members !== undefined
+                    anchors.fill: parent; anchors.margins: 10
+                    Repeater { model: insp.preview && insp.preview.members ? insp.preview.members.slice(0, 9) : []; delegate: Text { required property var modelData; text: (modelData.isDir ? "" : "  ") + modelData.name; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; elide: Text.ElideMiddle; width: 250 } }
+                }
+                Column {
                     visible: insp.preview && insp.preview.children !== undefined
                     anchors.fill: parent; anchors.margins: 10
                     Repeater { model: insp.preview && insp.preview.children ? insp.preview.children.slice(0, 9) : []; delegate: Text { required property string modelData; text: modelData; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
@@ -112,7 +117,7 @@ Rectangle {
             }
             Column {
                 spacing: 8; width: parent.width
-                Field { label: "Type"; value: Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + " items" : "") }
+                Field { label: "Type"; value: Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
                 Field { label: "Host"; value: insp.uri.startsWith("file://") ? "local" : insp.uri.split("://")[1].split("/")[0] }
                 Field { label: "Location"; value: Kiki.Format.display(insp.uri.slice(0, insp.uri.lastIndexOf("/")) || insp.uri, insp.home) }
             }
