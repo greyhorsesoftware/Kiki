@@ -7,7 +7,9 @@ Rectangle {
     id: insp
     property string uri: ""
     property var row: null           // the listing row when known (name, kind, meta)
-    property string tab: "general"   // general | permissions
+    property string tab: "general"   // code | general | permissions
+    signal edit(string uri, int line)
+    function isText() { const k = kind(); return k === "code" || k === "text" || (k === "document" && /\.(md|txt|rst|log|csv)$/i.test(name())) }
     property string home: ""
     property var preview: null
     property var meta: row ? row.meta : null
@@ -18,7 +20,7 @@ Rectangle {
     color: Kiki.Theme.bg
     Rectangle { visible: !standalone; width: 1; height: parent.height; color: Kiki.Theme.line }
 
-    onUriChanged: { preview = null; if (uri) reload() }
+    onUriChanged: { preview = null; if (uri) { reload(); if (isText() && tab === "general") tab = "code"; if (!isText() && tab === "code") tab = "general" } }
     function reload() {
         const u = uri
         Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) preview = ok || null })
@@ -61,7 +63,7 @@ Rectangle {
             Row {
                 spacing: 20; height: parent.height
                 Repeater {
-                    model: [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
+                    model: insp.isText() ? [{ id: "code", label: "Code" }, { id: "general", label: "General" }, { id: "permissions", label: "Permissions" }] : [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
                     delegate: Item {
                         required property var modelData
                         width: t.implicitWidth + 4; height: 32
@@ -72,7 +74,10 @@ Rectangle {
                 }
             }
         }
-        Loader { width: parent.width; height: parent.height - 120; sourceComponent: insp.tab === "general" ? general : permissions }
+        Loader { width: parent.width; height: parent.height - 120; sourceComponent: insp.tab === "code" ? codeTab : (insp.tab === "general" ? general : permissions) }
+    }
+    Component { id: codeTab; CodeTab { uri: insp.uri; home: insp.home; onEdit: (u, line) => insp.edit(u, line) } }
+    Item {
     }
 
     component Field: Row {

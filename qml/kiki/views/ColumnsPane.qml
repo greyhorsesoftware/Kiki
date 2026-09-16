@@ -9,6 +9,7 @@ Item {
     property Kiki.Pane pane
     signal activate(string uri)
     signal fileSelected(string uri)
+    signal edit(string uri, int line)
     property int columnWidth: 220
     property string home: ""
     property var columns: []          // [{ uri, cache, selected }]
@@ -50,6 +51,7 @@ Item {
             x: row.width; width: Math.max(300, strip.width - row.width); height: strip.height
             uri: root.inspectedUri; row: root.inspectedRow; home: root.home
             onOpen: root.activate(root.inspectedUri)
+            onEdit: (u, line) => root.edit(u, line)
         }
         Row {
             id: row

@@ -78,9 +78,31 @@ FloatingWindow {
     function editSelected() {
         const uris = selectedUris(); if (!uris.length) return
         const r = pane.listing.row(pane.selection.current)
-        if (r && r.isDir) { Kiki.Jobs.showToast({ text: "Project mode is plan 16", undoable: false }); return }
-        Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uris[0]] }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+        if (r && r.isDir) { enterProject(uris[0]); return }
+        editAt(uris[0], 1)
     }
+    function editAt(uri, line) { Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri], line: line }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
+    // Project mode (plan 16): kiki becomes the tree; editor and agent are arranged beside it.
+    property bool projectMode: false
+    property string projectRoot: ""
+    property int savedWidth: 1200
+    function enterProject(uri) {
+        projectRoot = uri; projectMode = true; savedWidth = win.width
+        win.width = Kiki.Settings.project.width || 320
+        const spawned = []
+        Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri] }, (ok, err) => {
+            if (ok) spawned.push({ role: "editor", class: "kiki-tool", pid: ok.pid })
+            if (Kiki.Settings.project.agent) Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] }, (ok2, err2) => { if (ok2) spawned.push({ role: "agent", class: "kiki-tool", pid: ok2.pid }); arrangeProject(spawned) })
+            else arrangeProject(spawned)
+        })
+    }
+    function arrangeProject(spawned) {
+        if (!Kiki.Settings.project.arrange) return
+        const windows = [{ role: "kiki", class: "kiki", pid: 0 }].concat(spawned)
+        Kiki.Daemon.request("Arrange", { layout: "project", root: projectRoot, windows: windows, leftWidth: Kiki.Settings.project.width || 320 }, (ok, err) => { if (ok && ok.missing.length) Kiki.Jobs.showToast({ text: "Could not place: " + ok.missing.join(", "), undoable: false }) })
+    }
+    function leaveProject() { projectMode = false; win.width = savedWidth; pane.open(projectRoot) }
+
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
@@ -208,6 +230,7 @@ FloatingWindow {
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
             case Qt.Key_E: win.editSelected(); break
+            case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
             case Qt.Key_Q: if (alt) Kiki.Jobs.showToast({ text: "AI query is plan 19", undoable: false }); else return; break
             default: return
             }
@@ -227,6 +250,11 @@ FloatingWindow {
         function uri(pane: string): string { return win.pane.uri }
         function inspector(on: string): void { win.inspector = on === "on" }
         function split(on: string): void { win.split = on === "on" }
+        function project(action: string, uri: string): void { if (action === "enter") win.enterProject(uri || win.pane.uri); else win.leaveProject() }
+        function projectState(): string { return JSON.stringify({ root: win.projectRoot, active: win.projectMode, width: win.width }) }
+        function edit(uri: string, line: string): void { win.editAt(uri, parseInt(line) || 1) }
+        function reveal(uri: string): void { if (win.projectMode) projectTree.reveal(uri); else { const p = uri.replace(/\/[^/]*$/, ""); win.pane.open(p); const name = decodeURIComponent(uri.split("/").pop()); Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } }) } }
+        function saved(uri: string): void { win.pane.listing.refresh() }
         function mirror(on: string): void { win.mirrorOpen = on === "open" && win.split }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
@@ -246,7 +274,18 @@ FloatingWindow {
 
     property alias toolbar: toolbar
 
+    Views.ProjectTree {
+        id: projectTree
+        visible: win.projectMode
+        anchors.fill: parent
+        rootUri: win.projectMode ? win.projectRoot : ""
+        home: win.home; repo: win.repo
+        onOpenFile: uri => win.editAt(uri, 1)
+        onSendToAgent: uri => Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] })
+        onLeave: win.leaveProject()
+    }
     Row {
+        visible: !win.projectMode
         anchors.fill: parent
         UI.Sidebar {
             id: sidebar
@@ -325,6 +364,7 @@ FloatingWindow {
                     width: Kiki.Theme.inspectorWidth; height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onOpen: win.openSelected()
+                    onEdit: (u, line) => win.editAt(u, line)
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
                 }
             }
@@ -349,5 +389,5 @@ FloatingWindow {
     UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar() }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }
     UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
-    Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri) } }
+    Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri); onEdit: (u, line) => win.editAt(u, line) } }
 }

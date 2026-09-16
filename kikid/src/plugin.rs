@@ -65,7 +65,15 @@ pub struct Plugin {
 impl Plugin {
     pub fn spawn(scheme: &str) -> Result<Arc<Plugin>, VfsError> {
         let bin = find_binary(scheme).ok_or_else(|| VfsError::Io(format!("no plugin for scheme {scheme}")))?;
-        let mut child = Command::new(&bin)
+        let p = Self::spawn_path(&bin, scheme)?;
+        let d = p.request(Value::obj().s("type", "Describe").done())?;
+        let _ = p.describe.set(d);
+        Ok(p)
+    }
+
+    /// Spawns any binary speaking the plugin framing; `Describe` is not called.
+    pub fn spawn_path(bin: &std::path::Path, scheme: &str) -> Result<Arc<Plugin>, VfsError> {
+        let mut child = Command::new(bin)
             .env("KIKI_PLUGIN_PROTOCOL", "1")
             .env("KIKI_PLUGIN_SCHEME", scheme)
             .stdin(Stdio::piped())
@@ -121,8 +129,6 @@ impl Plugin {
                 p2.pending.lock().unwrap().clear(); // process ended: outstanding requests fail
             })
             .expect("spawn plugin reader");
-        let d = plugin.request(Value::obj().s("type", "Describe").done())?;
-        let _ = plugin.describe.set(d);
         Ok(plugin)
     }
 

@@ -36,6 +36,8 @@ struct Client {
     plans: HashMap<u64, (u64, String)>,
     /// Search results served as windowed views: lid -> rows
     searches: HashMap<u64, Vec<Value>>,
+    trees: HashMap<u64, crate::tree::Tree>,
+    texts: HashMap<u64, std::path::PathBuf>,
 }
 
 impl Client {
@@ -73,7 +75,7 @@ impl Client {
                 }
             })
             .expect("spawn writer");
-        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new() };
+        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new(), texts: HashMap::new() };
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -127,6 +129,15 @@ impl Client {
                     if self.plans.contains_key(&lid) {
                         return self.reply(id, self.plan_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
                     }
+                    if self.texts.contains_key(&lid) {
+                        return self.reply(id, self.text_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
+                    }
+                    if let Some(t) = self.trees.get(&lid) {
+                        let first = b.u64_field("first").unwrap_or(0) as usize;
+                        let count = b.u64_field("count").unwrap_or(60).min(512) as usize;
+                        let rows: Vec<Value> = (first..(first + count).min(t.visible.len())).filter_map(|r| t.row_json(r)).collect();
+                        return self.reply(id, Ok(Value::obj().u("first", first as u64).u("n", t.visible.len() as u64).b("done", true).v("rows", Value::Arr(rows)).done()));
+                    }
                     if let Some(rows) = self.searches.get(&lid) {
                         let first = b.u64_field("first").unwrap_or(0) as usize;
                         let count = b.u64_field("count").unwrap_or(60).min(512) as usize;
@@ -135,6 +146,25 @@ impl Client {
                     }
                 }
                 self.window(b)
+            }
+            "OpenText" => self.open_text(b),
+            "OpenTree" => match (b.u64_field("lid"), parse_uri(b, "uri")) {
+                (Some(lid), Ok(u)) => match crate::tree::Tree::open(&u) {
+                    Ok(t) => { let n = t.visible.len() as u64; self.trees.insert(lid, t); let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done()); Ok(Some(Value::obj().u("n", n).done())) }
+                    Err(e) => Err(vfs_err(e)),
+                },
+                (None, _) => Err(("Protocol", "missing lid".into())),
+                (_, Err(e)) => Err(e),
+            },
+            "TreeExpand" => self.tree_expand(b),
+            "TreeFilter" => self.tree_filter(b),
+            "TreeReveal" => self.tree_reveal(b),
+            "Arrange" => {
+                let windows: Vec<Value> = b.get("windows").and_then(Value::as_arr).map(|a| a.to_vec()).unwrap_or_default();
+                let width = b.u64_field("leftWidth").unwrap_or(320) as u32;
+                let tx = self.tx.clone();
+                std::thread::spawn(move || { let r = crate::tree::arrange(&windows, width); let _ = tx.send(proto::ok(id, r)); });
+                Ok(None)
             }
             "Search" => self.search(b),
             "IndexStatus" => Ok(Some(crate::index::status_json())),
@@ -360,6 +390,8 @@ impl Client {
         }
         self.plans.remove(&lid);
         self.searches.remove(&lid);
+        self.trees.remove(&lid);
+        self.texts.remove(&lid);
         Ok(Some(Value::obj().done()))
     }
 
@@ -443,6 +475,58 @@ impl Client {
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
         let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
         Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::current().built_at)).done()))
+    }
+
+    fn tree_expand(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let t = self.trees.get_mut(&lid).ok_or(("NotFound", "no tree".to_string()))?;
+        t.expand(b.u64_field("first").unwrap_or(0) as usize, b.get("expanded").and_then(Value::as_bool).unwrap_or(true)).map_err(vfs_err)?;
+        let n = t.visible.len() as u64;
+        let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
+        Ok(Some(Value::obj().u("n", n).done()))
+    }
+
+    fn tree_filter(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let t = self.trees.get_mut(&lid).ok_or(("NotFound", "no tree".to_string()))?;
+        t.set_filter(b.str_field("text").unwrap_or(""));
+        let n = t.visible.len() as u64;
+        let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
+        Ok(Some(Value::obj().u("n", n).done()))
+    }
+
+    fn tree_reveal(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let u = parse_uri(b, "uri")?;
+        let t = self.trees.get_mut(&lid).ok_or(("NotFound", "no tree".to_string()))?;
+        let row = t.reveal(&u).map_err(vfs_err)?;
+        let n = t.visible.len() as u64;
+        let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
+        Ok(Some(Value::obj().u("row", row as u64).done()))
+    }
+
+    /// Text views (plan 13): lines come from the highlight helper per window.
+    fn open_text(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
+        let u = parse_uri(b, "uri")?;
+        if !u.is_local() {
+            return Err(("Unsupported", "code view of remote files is a later version".into()));
+        }
+        let helper = crate::helpers::highlight().map_err(vfs_err)?;
+        let r = helper.request(Value::obj().s("type", "Highlight").s("path", u.to_path().to_string_lossy()).u("first", 0).u("count", 1).done()).map_err(vfs_err)?;
+        let total = r.u64_field("total").unwrap_or(0);
+        let lang = r.str_field("lang").unwrap_or("plain").to_string();
+        self.texts.insert(lid, u.to_path());
+        let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", total).b("done", true).done());
+        Ok(Some(Value::obj().u("total", total).s("lang", lang).done()))
+    }
+
+    fn text_window(&self, lid: u64, first: usize, count: usize) -> Result<Value, (&'static str, String)> {
+        let path = self.texts.get(&lid).ok_or(("NotFound", "no text view".to_string()))?;
+        let helper = crate::helpers::highlight().map_err(vfs_err)?;
+        let r = helper.request(Value::obj().s("type", "Highlight").s("path", path.to_string_lossy()).u("first", first as u64).u("count", count.min(512) as u64).done()).map_err(vfs_err)?;
+        let rows = r.get("lines").cloned().unwrap_or(Value::Arr(vec![]));
+        Ok(Value::obj().u("first", first as u64).u("n", r.u64_field("total").unwrap_or(0)).b("done", true).v("rows", rows).done())
     }
 
     fn mirror_plan(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {

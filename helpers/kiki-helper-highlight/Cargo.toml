@@ -1,0 +1,31 @@
+[package]
+name = "kiki-helper-highlight"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Syntax highlighting for kiki's code viewer, via tree-sitter"
+
+[[bin]]
+name = "kiki-helper-highlight"
+path = "src/main.rs"
+
+[dependencies]
+kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
+tree-sitter = "0.25"
+tree-sitter-highlight = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-bash = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-yaml = "0.7"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-md = "0.5"
+tree-sitter-lua = "0.2"
