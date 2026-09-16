@@ -27,7 +27,7 @@ Omarchy ships GVfs (Nautilus depends on it), so the session already runs `gvfsd`
 |---|---|---|
 | Name | text, required | the URI authority |
 | Host | text, required | name or address; **Browse…** next to it lists discovered hosts |
-| Share | text, required | **Browse shares…** enumerates the server's shares once host and credentials are filled (libsmbclient lists `smb://host/`) |
+| Share | text, required | **Browse shares…** enumerates the server's shares once host and credentials are filled (GIO enumerates `smb://host/`) |
 | Authentication | select | Password (default), Kerberos ticket, Guest |
 | Username | text | required for Password |
 | Password | password | keyring; secret field |
@@ -40,7 +40,7 @@ Remote URI: `smb://<name>/<path>` where `<name>` is the location; the host and s
 
 ## Capabilities and behaviour
 
-- `Capabilities`: `trash: false`, `setMtime: true` (`smbc_utimes`), `mode: false` (DOS attributes are not a mode; the inspector's Permissions tab shows Read-only, Hidden, Archive as three switches later, not in this plan), `realDirs: true`, `digestKind: null`, `separator: "/"`, `partialRead: true` (stream seek), `fastScan: "gio"` (informational: attributes arrive with the listing).
+- `Capabilities`: `trash: false`, `setMtime: true` (`time::modified` attribute), `mode: false` (DOS attributes are not a mode; the inspector's Permissions tab shows Read-only, Hidden, Archive as three switches later, not in this plan), `realDirs: true`, `digestKind: null`, `separator: "/"`, `partialRead: true` (stream seek), `fastScan: "gio"` (informational: attributes arrive with the listing).
 - **Listing**: attributes arrive with the names (see the client section), so `metaInScan: true` costs nothing. Dot-files are not the hidden convention on SMB; the plugin maps GIO's `standard::is-hidden` (the DOS Hidden attribute) to `hidden: true` in `Meta` so the daemon's hidden filter (plan 23) honours it.
 - **Reads and writes**: 1 MiB stream buffers; `pipelining: false`. The job session runs on its own thread over the same mount, so a transfer never blocks a listing.
 - **Rename, delete, mkdir**: direct. Delete of a non-empty folder is `NotEmpty` as everywhere.
