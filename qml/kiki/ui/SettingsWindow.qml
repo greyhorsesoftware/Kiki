@@ -93,6 +93,8 @@ FloatingWindow {
     Component { id: general; Column { spacing: 12
         Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
+        Row2 { label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+        Row2 { label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "default for new panes; Ctrl+H or the view menu toggles a pane"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         Row2 { label: "Inspector on by default"; Switch { on: Kiki.Settings.view.inspector === true; onToggled: sw.set("view", "inspector", !on) } }
         Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
             Button { text: "Forget all"; onClicked: { Kiki.Daemon.request("ClearViewPrefs", {}); sw.saved() } } }

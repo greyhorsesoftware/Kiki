@@ -91,6 +91,8 @@ pub fn settings() -> Value {
             .s("sort", "name")
             .s("order", "asc")
             .b("inspector", false)
+            .b("showHidden", false)
+            .b("relativeDates", true)
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
             .done(),
@@ -145,10 +147,16 @@ pub fn reset_all() -> std::io::Result<()> {
 /// The keymap, served from one table so the cheat sheet and the Settings page agree.
 pub fn keymap() -> Value {
     let rows: &[(&str, &str, &str)] = &[
-        ("/", "search", "02"),
+        ("/ or Ctrl+F", "search", "02"),
         ("Ctrl+L", "edit path", "02"),
         ("Ctrl+1 / 2 / 3", "icon / list / columns", "02"),
-        ("h j k l, arrows", "move selection; h/l pop and push columns", "02"),
+        ("j k, Up Down", "move selection (a row of tiles in icon view)", "02"),
+        ("h l, Left Right", "columns: pop and push; icon view: previous and next tile", "02"),
+        ("Home End, PgUp PgDn", "first, last, page up, page down (Shift extends)", "02"),
+        ("Alt+Up", "parent folder", "02"),
+        ("Ctrl+H", "show hidden files", "02"),
+        ("Ctrl+A, Esc", "select all, clear selection", "02"),
+        ("Ctrl+Shift+C", "copy path", "04"),
         ("Enter", "open", "02"),
         ("Backspace, Alt+Left", "back", "02"),
         ("F5", "refresh", "02"),

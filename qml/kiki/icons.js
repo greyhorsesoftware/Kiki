@@ -11,6 +11,7 @@ var paths = {
   "home": "<path d=\"M2.5 7.5 8 3l5.5 4.5V13a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1z\"></path><path d=\"M6.5 14V9.5h3V14\"></path>",
   "download": "<path d=\"M8 2v8\"></path><path d=\"m5 7 3 3 3-3\"></path><path d=\"M3 12v1.5h10V12\"></path>",
   "trash": "<path d=\"M3 4h10\"></path><path d=\"M6 4V2.5h4V4\"></path><path d=\"m4 4 .6 9.5h6.8L12 4\"></path>",
+  "gear": "<circle cx=\"8\" cy=\"8\" r=\"2.2\"></circle><path d=\"M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2\"></path>",
   "eject": "<path d=\"M3 12.5h10\"></path><path d=\"M8 3.5 3.5 9.5h9L8 3.5z\"></path>",
   "usb": "<path d=\"M8 2v10\"></path><path d=\"M8 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z\"></path><path d=\"M8 9 5 7V5\"></path><path d=\"M8 10.5 11 8.5V6\"></path><path d=\"M6.5 3.5 8 2l1.5 1.5\"></path>",
   "hdd": "<rect x=\"2\" y=\"9\" width=\"12\" height=\"4\" rx=\"1\"></rect><path d=\"M2.5 9 4 3.5h8L13.5 9\"></path><path d=\"M11 11h1\"></path>",

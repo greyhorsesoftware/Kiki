@@ -180,6 +180,16 @@ FloatingWindow {
         const text = u.map(x => x.startsWith("file://") ? decodeURIComponent(x.slice(7)) : x).join("\n")
         Quickshell.execDetached(["wl-copy", text])
     }
+    // View menu (plan 02): one toolbar button, the three views, then hidden files.
+    function viewMenu() {
+        const items = [
+            { label: "Icon view", key: "Ctrl+1", checked: pane.view === "icon", action: () => pane.view = "icon" },
+            { label: "List view", key: "Ctrl+2", checked: pane.view === "list", action: () => pane.view = "list" },
+            { label: "Columns view", key: "Ctrl+3", checked: pane.view === "columns", action: () => pane.view = "columns" },
+            { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
+        ]
+        menu.open(items, Qt.point(toolbar.x + toolbar.viewButton.x, 44))
+    }
     // Open with… (plan 02/03): the daemon lists the desktop entries for the file's MIME type.
     function openWithMenu(pos) {
         const u = selectedUris(); if (u.length !== 1) return
@@ -257,6 +267,15 @@ FloatingWindow {
         if (extend) pane.selection.range(next); else pane.selection.set(next)
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(next)
     }
+    function selectAt(index, extend) {
+        const n = pane.listing.count; if (!n) return
+        const i = Math.max(0, Math.min(n - 1, index))
+        if (extend) pane.selection.range(i); else pane.selection.set(i)
+        viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
+    }
+    // Up/Down step one row: in the icon grid that is one row of tiles, elsewhere one entry.
+    readonly property int rowStep: viewLoader.item && viewLoader.item.perRow ? viewLoader.item.perRow : 1
+    readonly property int pageStep: viewLoader.item && viewLoader.item.pageSize ? viewLoader.item.pageSize : 20
 
     Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged" || msg.event === "DeviceAdded" || msg.event === "DeviceRemoved") win.loadSidebar(); if (msg.event === "DeviceRemoved" && win.pane.uri.startsWith(msg.uri.replace(/\/$/, ""))) win.pane.open("file://" + win.home) } }
@@ -270,23 +289,30 @@ FloatingWindow {
             const ctrl = event.modifiers & Qt.ControlModifier, shift = event.modifiers & Qt.ShiftModifier, alt = event.modifiers & Qt.AltModifier
             switch (event.key) {
             case Qt.Key_Slash: toolbar.search.focus(); break
+            case Qt.Key_F: if (ctrl) toolbar.search.focus(); else return; break
             case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (pane.view === "columns") win.openSelected(); else return; break
             case Qt.Key_1: if (ctrl) pane.view = "icon"; else return; break
             case Qt.Key_2: if (ctrl) pane.view = "list"; else return; break
             case Qt.Key_3: if (ctrl) pane.view = "columns"; else return; break
-            case Qt.Key_J: case Qt.Key_Down: win.moveSelection(1, shift); break
-            case Qt.Key_K: case Qt.Key_Up: win.moveSelection(-1, shift); break
-            case Qt.Key_H: if (pane.view === "columns") pane.up(); else return; break
+            case Qt.Key_J: win.moveSelection(1, shift); break
+            case Qt.Key_K: win.moveSelection(-1, shift); break
+            case Qt.Key_Down: win.moveSelection(win.rowStep, shift); break
+            case Qt.Key_Up: if (alt) pane.up(); else win.moveSelection(-win.rowStep, shift); break
+            case Qt.Key_Home: win.selectAt(0, shift); break
+            case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift); break
+            case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift); break
+            case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift); break
+            case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (pane.view === "columns") pane.up(); else return; break
             case Qt.Key_Return: case Qt.Key_Enter: if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } win.openSelected(); break
             case Qt.Key_Backspace: pane.back(); break
-            case Qt.Key_Left: if (alt) pane.back(); else return; break
-            case Qt.Key_Right: if (alt) pane.forward(); else return; break
+            case Qt.Key_Left: if (alt) pane.back(); else if (pane.view === "icon") win.moveSelection(-1, shift); else if (pane.view === "columns") pane.up(); else return; break
+            case Qt.Key_Right: if (alt) pane.forward(); else if (pane.view === "icon") win.moveSelection(1, shift); else if (pane.view === "columns") win.openSelected(); else return; break
             case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
-            case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else return; break
+            case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else win.editSelected(); break
             case Qt.Key_F2: win.renameSelected(); break
             case Qt.Key_Delete: if (pane.isTrash) win.deleteForever(); else win.trashSelection(); break
-            case Qt.Key_C: if (ctrl) win.copySelection(false); else return; break
+            case Qt.Key_C: if (ctrl && shift) win.copyPath(); else if (ctrl) win.copySelection(false); else return; break
             case Qt.Key_X: if (ctrl) win.copySelection(true); else return; break
             case Qt.Key_V: if (ctrl) win.paste(); else return; break
             case Qt.Key_Z: if (ctrl && shift) Kiki.Jobs.redo(); else if (ctrl) Kiki.Jobs.undo(); else return; break
@@ -295,10 +321,8 @@ FloatingWindow {
             case Qt.Key_A: if (ctrl) { for (let i = 0; i < pane.listing.count; i++) pane.selection.rows[i] = true; pane.selection.changed() } else return; break
             case Qt.Key_Escape: pane.selection.clear(); break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
-            case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
-            case Qt.Key_E: win.editSelected(); break
             case Qt.Key_Comma: if (ctrl) settingsWin.open("general"); else return; break
             case Qt.Key_Question: settingsWin.open("keys"); break
             case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
@@ -403,6 +427,8 @@ FloatingWindow {
                 onScopeMenu: win.scopeMenu()
                 onOpenIn: id => win.openIn(id)
                 onOpenInMenu: win.openInMenu()
+                onViewMenu: win.viewMenu()
+                onSettings: settingsWin.open("general")
                 onShare: win.shareMenu()
                 onToggleInspector: win.inspector = !win.inspector
                 onToggleSplit: win.split = !win.split

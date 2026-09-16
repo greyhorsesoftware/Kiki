@@ -60,6 +60,7 @@ QtObject {
 
     function sort(role, order) { d().request("Sort", { lid: lid, role: role, order: order }) }
     function filter(text) { d().request("Filter", { lid: lid, text: text }) }
+    function showHidden(show) { d().request("ShowHidden", { lid: lid, show: show }) }
     function refresh() { d().request("Refresh", { lid: lid }) }
 
     function _wanted() {

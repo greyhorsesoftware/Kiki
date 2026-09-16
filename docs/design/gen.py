@@ -10,6 +10,7 @@ BLUE="#7aa2f7"; CYAN="#7dcfff"; PURPLE="#bb9af7"; GREEN="#9ece6a"; YELLOW="#e0af
 ALIASES = {"phone": "hdd", "mail": "doc", "message": "doc", "share": "arr-u", "sparkle": "info", "eject": "arr-u", "usb": "hdd"}
 def ico(name, size=16, color="currentColor", sw=1.5):
     paths = {
+        "gear": '<circle cx="8" cy="8" r="2.2"></circle><path d="M8 1.8v1.7M8 12.5v1.7M1.8 8h1.7M12.5 8h1.7M3.6 3.6l1.2 1.2M11.2 11.2l1.2 1.2M3.6 12.4l1.2-1.2M11.2 4.8l1.2-1.2"></path>',
         "folder": '<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3l1.5 1.5h4.5A1.5 1.5 0 0 1 14 6v6.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5z"></path>',
         "file": '<path d="M4 2h5l3 3v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"></path><path d="M9 2v3h3"></path>',
         "doc": '<path d="M4 2h5l3 3v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"></path><path d="M9 2v3h3"></path><path d="M5.5 8.5h5"></path><path d="M5.5 11h5"></path>',
@@ -161,10 +162,11 @@ def toolbar(crumbs, view, search_placeholder, split=False, inspector=False, mirr
   <div style="display: flex; gap: 2px;">{nav_btn("arr-l")}{nav_btn("arr-r", enabled=False)}</div>
   <div style="display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px; margin-left: 4px; flex-grow: 1; min-width: 0; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; white-space: nowrap; overflow: hidden;">{crumb_html}</div>
   {search_box(search_placeholder, search)}
-  <div style="display: flex; gap: 2px; padding: 2px; flex: none; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px;">{seg("grid","icon")}{seg("list","list")}{seg("columns","columns")}</div>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 4px; width: 52px; height: 34px; flex: none; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; box-sizing: border-box; color: {BLUE};" title="View: icon, list, columns; show hidden files">{ico({"icon": '"grid"', "list": '"list"', "columns": '"columns"'}[view].strip('"'))}{ico("chev-d", size=10, color=CM)}</div>
   <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {HL if split else BGD}; border: 1px solid {BLUE if split else LINE}; border-radius: 2px; color: {BLUE if split else CM}; box-sizing: border-box;" title="Split: local and remote side by side">{ico("split")}</div>
   <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {HL if inspector else BGD}; border: 1px solid {BLUE if inspector else LINE}; border-radius: 2px; color: {BLUE if inspector else CM}; box-sizing: border-box;" title="Toggle inspector panel">{ico("info")}</div>
   {mirror_btn(mirror)}
+  <div style="display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: none; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; color: {CM}; box-sizing: border-box;" title="Settings (Ctrl+,)">{ico("gear")}</div>
 </div>"""
 
 def mirror_btn(state):

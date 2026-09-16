@@ -1,23 +1,18 @@
 import QtQuick
 import ".." as Kiki
 
+// One toolbar button showing the current view's icon; clicking opens the view menu
+// (icon / list / columns, then Show hidden files).
 Rectangle {
     id: sw
     property string view: "list"
-    signal changed(string view)
-    width: row.width + 4; height: 34; radius: 2
-    color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line
+    signal menu()
+    width: 52; height: 34; radius: 2
+    color: hover.containsMouse ? Kiki.Theme.surface : Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line
     Row {
-        id: row; anchors.centerIn: parent; spacing: 2
-        Repeater {
-            model: [{ v: "icon", i: "grid" }, { v: "list", i: "list" }, { v: "columns", i: "columns" }]
-            delegate: Rectangle {
-                required property var modelData
-                width: 34; height: 28; radius: 2
-                color: sw.view === modelData.v ? Kiki.Theme.surface : "transparent"
-                Icon { anchors.centerIn: parent; name: modelData.i; color: sw.view === modelData.v ? Kiki.Theme.accent : Kiki.Theme.muted }
-                MouseArea { anchors.fill: parent; onClicked: sw.changed(modelData.v) }
-            }
-        }
+        anchors.centerIn: parent; spacing: 4
+        Icon { name: sw.view === "icon" ? "grid" : (sw.view === "columns" ? "columns" : "list"); color: Kiki.Theme.accent; anchors.verticalCenter: parent.verticalCenter }
+        Icon { name: "chev-d"; size: 10; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
     }
+    MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; onClicked: sw.menu() }
 }

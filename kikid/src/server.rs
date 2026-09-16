@@ -347,6 +347,7 @@ impl Client {
             },
             "Sort" => self.sort(b, id),
             "Filter" => self.filter(b),
+            "ShowHidden" => self.show_hidden(b),
             "Enrich" => self.enrich(b, id),
             "Close" => self.close(b),
             "Refresh" => self.refresh(b),
@@ -542,6 +543,12 @@ impl Client {
     fn filter(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
         let (_, l) = self.lid(b)?;
         let n = l.filter(b.str_field("text").unwrap_or(""));
+        Ok(Some(Value::obj().u("n", n).done()))
+    }
+
+    fn show_hidden(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let (_, l) = self.lid(b)?;
+        let n = l.set_hidden(b.get("show").and_then(Value::as_bool).unwrap_or(false));
         Ok(Some(Value::obj().u("n", n).done()))
     }
 

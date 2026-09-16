@@ -9,6 +9,8 @@ use std::io::Read;
 
 pub const TEXT_CAP: usize = 64 * 1024;
 pub const TEXT_LINES: usize = 40;
+pub const MARKDOWN_LINES: usize = 400;
+pub const MARKDOWN_CAP: usize = 256 * 1024;
 
 pub fn preview(uri: &Uri) -> Result<Value> {
     if !uri.is_local() {
@@ -33,15 +35,20 @@ pub fn preview(uri: &Uri) -> Result<Value> {
             Ok(Value::obj().s("path", p.to_string_lossy()).u("width", w as u64).u("height", h as u64).done())
         }
         Kind::Archive => crate::archive::members_json(&path),
-        _ => text_head(&path),
+        _ => {
+            // Markdown gets a longer head and a flag so the inspector renders it (plan 23).
+            let lower = String::from_utf8_lossy(&name).to_ascii_lowercase();
+            let markdown = lower.ends_with(".md") || lower.ends_with(".markdown");
+            text_head(&path, if markdown { MARKDOWN_LINES } else { TEXT_LINES }, if markdown { MARKDOWN_CAP } else { TEXT_CAP }, markdown)
+        }
     }
 }
 
-fn text_head(path: &std::path::Path) -> Result<Value> {
+fn text_head(path: &std::path::Path, max_lines: usize, cap: usize, markdown: bool) -> Result<Value> {
     let mut f = std::fs::File::open(path)?;
-    let mut buf = vec![0u8; TEXT_CAP];
+    let mut buf = vec![0u8; cap];
     let mut read = 0;
-    while read < TEXT_CAP {
+    while read < cap {
         let n = f.read(&mut buf[read..])?;
         if n == 0 {
             break;
@@ -54,9 +61,10 @@ fn text_head(path: &std::path::Path) -> Result<Value> {
     }
     let text = String::from_utf8_lossy(&buf);
     let mut lines: Vec<&str> = text.lines().collect();
-    let truncated = lines.len() > TEXT_LINES || read >= TEXT_CAP;
-    lines.truncate(TEXT_LINES);
-    Ok(Value::obj().s("text", lines.join("\n")).u("bytesRead", read as u64).b("truncated", truncated).done())
+    let truncated = lines.len() > max_lines || read >= cap;
+    lines.truncate(max_lines);
+    let o = Value::obj().s("text", lines.join("\n")).u("bytesRead", read as u64).b("truncated", truncated);
+    Ok(if markdown { o.b("markdown", true).done() } else { o.done() })
 }
 
 #[cfg(test)]
@@ -76,5 +84,25 @@ mod tests {
         let v = preview(&Uri::from_path(&dir)).unwrap();
         assert_eq!(v.u64_field("n"), Some(1));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod markdown_tests {
+    #[test]
+    fn markdown_preview_is_flagged_and_longer() {
+        let d = std::env::temp_dir().join(format!("kiki-md-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let body: String = (0..120).map(|i| format!("- item {i}\n")).collect();
+        std::fs::write(d.join("notes.md"), format!("# Title\n\n{body}")).unwrap();
+        std::fs::write(d.join("notes.txt"), format!("# Title\n\n{body}")).unwrap();
+        let md = super::preview(&crate::vfs::uri::Uri::from_path(&d.join("notes.md"))).unwrap();
+        assert_eq!(md.get("markdown"), Some(&crate::json::Value::Bool(true)));
+        assert_eq!(md.str_field("text").unwrap().lines().count(), 122);
+        let txt = super::preview(&crate::vfs::uri::Uri::from_path(&d.join("notes.txt"))).unwrap();
+        assert!(txt.get("markdown").is_none());
+        assert_eq!(txt.str_field("text").unwrap().lines().count(), super::TEXT_LINES);
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

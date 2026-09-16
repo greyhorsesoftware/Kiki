@@ -1,5 +1,6 @@
 pragma Singleton
 import QtQuick
+import "." as Kiki
 
 QtObject {
     function bytes(n) {
@@ -31,6 +32,24 @@ QtObject {
         const t = Math.max(0, 1 - Math.log(hours) / Math.log(24 * 365))   // 1 = now, 0 = a year
         return Qt.rgba(accent.r, accent.g, accent.b, 0.05 + 0.45 * t * t)
     }
+    // Modified column, friendly form: "just now", "12 min ago", "3 h ago", "yesterday 14:02",
+    // "Tuesday 14:02" (this week), "12 Sep 14:02" (this year), "12 Sep 2024" (older).
+    function friendlyDate(ms) {
+        if (!ms) return ""
+        const d = new Date(ms), now = new Date()
+        const s = (now.getTime() - ms) / 1000
+        if (s >= 0 && s < 45) return "just now"
+        if (s >= 0 && s < 3600) return Math.round(s / 60) + " min ago"
+        const sameDay = d.toDateString() === now.toDateString()
+        if (s >= 0 && s < 86400 && sameDay) return Math.round(s / 3600) + " h ago"
+        const y = new Date(now); y.setDate(now.getDate() - 1)
+        const hm = d.toLocaleTimeString(Qt.locale(), "HH:mm")
+        if (d.toDateString() === y.toDateString()) return "yesterday " + hm
+        if (s > 0 && s < 6 * 86400) return d.toLocaleDateString(Qt.locale(), "dddd") + " " + hm
+        if (d.getFullYear() === now.getFullYear()) return d.toLocaleString(Qt.locale(), "d MMM HH:mm")
+        return d.toLocaleString(Qt.locale(), "d MMM yyyy")
+    }
+    function modified(ms) { return Kiki.Settings.view.relativeDates === false ? date(ms) : friendlyDate(ms) }
     function date(ms) {
         if (!ms) return ""
         return new Date(ms).toLocaleString(Qt.locale(), "d MMM yyyy HH:mm")

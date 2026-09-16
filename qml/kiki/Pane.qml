@@ -9,6 +9,9 @@ QtObject {
     property string sortRole: "name"
     property string sortOrder: "asc"
     property string filterText: ""
+    // Dot-files: starts from the setting, toggled per pane with Ctrl+H or the view menu.
+    property bool showHidden: Kiki.Settings.view.showHidden === true
+    function setHidden(show) { showHidden = show; listing.showHidden(show) }
     property var history: []
     property int historyIndex: -1
     property bool focused: false
@@ -36,6 +39,7 @@ QtObject {
         _applying = false
         listing.open(target)
         if (sortRole !== "name" || sortOrder !== "asc") listing.sort(sortRole, sortOrder)
+        if (showHidden !== (Kiki.Settings.view.showHidden === true)) listing.showHidden(showHidden)
         navigated(target)
     }
     property bool _applying: false

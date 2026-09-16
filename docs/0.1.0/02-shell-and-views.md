@@ -18,6 +18,8 @@ The kiki window: sidebar, toolbar, the three views, search, and the Omarchy them
 
 **Sidebar**: two sections plus a transient third. **Favorites** lists Home, Desktop, Documents, Downloads, Pictures, Projects, Trash (`trash:///`, plan 04); folders dropped on the section header are added; stored in `~/.config/kiki/favorites.toml`. **Locations** lists local volumes (mounted ones from `/proc/self/mounts`, unmounted filesystems from `lsblk -J` shown dimmed; a click mounts through `udisksctl` and opens, the context menu has Unmount and Eject) and, from plan 06, remote locations; its `+` button is inert until plan 06. **Devices** (plan 17) appears while a phone or camera is plugged in, with an eject icon on hover. Every favorite, volume and device row is a drop target: files dropped there move within a scheme and copy across it (Ctrl forces copy), dropping on Trash trashes. A free-space bar sits at the bottom.
 
+**View button**: one toolbar button shows the current view's icon and opens a menu: Icon view (`Ctrl+1`), List view (`Ctrl+2`), Columns view (`Ctrl+3`) with the active one checked, then **Show hidden files** (`Ctrl+H`), a per-pane toggle whose starting value is the General setting of the same name. Hidden means a leading dot; the daemon filters them out of the view like a name filter (`ShowHidden { lid, show }`, a `Reset` follows), so the string pool keeps them and toggling is instant.
+
 **View memory per folder**: each folder remembers its own view mode, sort role and order in `~/.config/kiki/views.toml` (the most recent 1,000 folders, keyed by URI, so remote and trash listings work the same way; exact folder only, never inherited by subfolders). `Pane.open` restores the entry or keeps the current view; changing the view or sort writes one entry through `SetViewPref` and other windows pick it up from `ViewPrefsChanged`. Settings → General has the switch (on by default) and Forget all.
 
 **List columns**: Name is fixed; Modified, Size, Kind and **Accessed** are optional (Settings → General → List columns). Accessed shows the last access time as a relative phrase ("5 min ago", "3 weeks ago") over a heat swatch in the accent colour that fades on a log scale from the last hour to a year, and sorts by `atime`. It is only as fresh as the filesystem keeps it: Linux's default `relatime` updates atime at most once a day unless the file changed, so minute accuracy needs `strictatime`; remote plugins that do not report access times show a dash.
@@ -75,10 +77,16 @@ Rules: a component never reaches for a model it was not given; lists take a mode
 
 | Key | Action |
 |---|---|
-| `/` | search |
+| `/`, `Ctrl+F` | search |
 | `Ctrl+L` | edit path |
 | `Ctrl+1` `Ctrl+2` `Ctrl+3` | icon / list / columns |
-| `h j k l`, arrows | move selection; `h`/`l` pop/push in columns |
+| `j` `k`, `Up` `Down` | move selection; in icon view Up/Down move by a row of tiles |
+| `h` `l`, `Left` `Right` | columns: pop/push; icon view: previous/next tile |
+| `Home` `End`, `PgUp` `PgDn` | first, last, page (Shift extends the selection) |
+| `Alt+Up` | parent folder |
+| `Ctrl+H` | show hidden files (per pane) |
+| `Ctrl+A`, `Esc` | select all, clear selection |
+| `Ctrl+Shift+C` | copy path |
 | `Enter` | open |
 | `Backspace`, `Alt+Left` | back |
 | `F5` | refresh (re-list, bypassing the cache) |

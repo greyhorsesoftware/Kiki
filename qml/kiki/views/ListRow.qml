@@ -15,7 +15,7 @@ Rectangle {
     function cell(role) {
         if (!row) return ""
         switch (role) {
-        case "mtime": return row.meta ? Kiki.Format.date(row.meta.mtime) : "…"
+        case "mtime": return row.meta ? Kiki.Format.modified(row.meta.mtime) : "…"
         case "size": return row.meta ? (row.isDir ? "—" : Kiki.Format.bytes(row.meta.size)) : ""
         case "kind": return Kiki.Format.kindLabel(row.kind)
         case "atime": return row.meta ? Kiki.Format.relative(row.meta.atime) : "…"

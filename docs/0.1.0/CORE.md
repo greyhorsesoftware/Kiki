@@ -67,6 +67,7 @@ Each step ships on its own and is verified before the next starts.
 | 20 | `20-settings.md` | every plan with a setting | One Settings window with a page per area; keymap served from one table (ships last before 10) |
 | 21 | `21-view-memory-and-columns.md` | 1, 2, 20 | Each folder remembers its view and sort; optional list columns |
 | 22 | `22-access-heat-map.md` | 1, 20, 21 | Accessed column: relative time over a recency heat swatch, atime sort, the relatime caveat, and an opt-in log of kiki's own opens |
+| 23 | `23-ui-refinement.md` | 2, 20, 21 | One view button with a menu, hidden files per pane, settings gear, relative Modified dates, keyboard coverage audit |
 | 15 | `15-git-status.md` | 1, 2, 3 | Git badges in every view from `git status --porcelain=v2`, branch chip in the breadcrumb, inspector git detail (ships after 3, any time before 10) |
 | 16 | `16-project-mode.md` | 2, 9, 13, 14, 15 | `e` on a folder: kiki becomes a narrow project tree and arranges editor and agent beside it through Hyprland (ships after 15, before 10) |
 | 14 | `13-code-viewer-and-editor.md` | 3, 14 | Highlighted code viewer in the inspector; the editor bridge as the Open in entry marked `role = "editor"` (ships after Open in, before 10) |

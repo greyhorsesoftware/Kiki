@@ -19,6 +19,8 @@ Rectangle {
     signal scopeMenu()
     signal openIn(string id)
     signal openInMenu()
+    signal viewMenu()
+    signal settings()
     signal share()
     property alias breadcrumb: crumb
     height: Kiki.Theme.toolbarHeight
@@ -59,9 +61,11 @@ Rectangle {
         }
         SplitButton { anchors.verticalCenter: parent.verticalCenter; label: bar.openInDefault; icon: "terminal"; enabled: bar.openInDefault !== ""; onClicked: bar.openIn(""); onMenu: bar.openInMenu() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "share"; tip: "Share"; onClicked: bar.share() }
-        ViewSwitcher { anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onChanged: v => bar.pane.view = v }
+        ViewSwitcher { id: viewButton; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
+    property alias viewButton: viewButton
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "split"; active: bar.split; onClicked: bar.toggleSplit() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "info"; active: bar.inspector; onClicked: bar.toggleInspector() }
         ToggleButton { visible: bar.split; anchors.verticalCenter: parent.verticalCenter; icon: "mirror"; active: bar.mirror; tip: "Mirror local and remote"; onClicked: bar.toggleMirror() }
+        ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "gear"; tip: "Settings (Ctrl+,)"; onClicked: bar.settings() }
     }
 }

@@ -1,7 +1,8 @@
 import QtQuick
 import ".." as Kiki
 
-// The right-click menu. Items are [{ label, key, action, danger, sep, enabled }].
+// The right-click menu. Items are [{ label, key, action, danger, sep, enabled, checked }]; `checked`
+// (true/false) draws a check column, undefined draws none.
 Rectangle {
     id: menu
     property var items: []
@@ -32,7 +33,8 @@ Rectangle {
                 Rectangle {
                     y: modelData.sep ? 5 : 0; width: parent.width; height: 26
                     color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
-                    Text { x: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 12; font.bold: true }
+                    Text { x: modelData.checked !== undefined ? 26 : 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                     MouseArea { id: h; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
                 }

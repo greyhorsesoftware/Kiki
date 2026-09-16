@@ -108,6 +108,8 @@ struct Inner {
     sort: (SortRole, bool),
     sorted: bool,
     filter: Option<Vec<u8>>,
+    /// Dot-files are in the view only when set (the setting's default, then per listing).
+    show_hidden: bool,
     generation: u64,
     enrich: Option<Enrich>,
     subscribers: Vec<Subscriber>,
@@ -225,6 +227,7 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             sort: (SortRole::Name, true),
             sorted: false,
             filter: None,
+            show_hidden: crate::config::settings().get("view").and_then(|v| v.get("showHidden")).and_then(Value::as_bool).unwrap_or(false),
             generation: 0,
             enrich: None,
             subscribers: Vec::new(),
@@ -721,6 +724,24 @@ impl Listing {
         n
     }
 
+    /// Show or hide dot-files; a `Reset` follows like a filter change.
+    pub fn set_hidden(&self, show: bool) -> u64 {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.show_hidden == show {
+            return inner.view.len() as u64;
+        }
+        inner.show_hidden = show;
+        inner.rebuild_view();
+        inner.generation += 1;
+        let n = inner.view.len() as u64;
+        let subs = inner.subscribers.clone();
+        drop(inner);
+        for s in subs {
+            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+        }
+        n
+    }
+
     /// Stat every row at low priority; replies to `waiter` when complete.
     pub fn enrich(self: &Arc<Self>, waiter: Option<(Sender<Value>, u64)>) {
         let complete = {
@@ -821,9 +842,12 @@ impl Listing {
 impl Inner {
     fn rebuild_view(&mut self) {
         let n = self.pool.len() as u32;
+        let hidden_ok = self.show_hidden;
+        let pool = &self.pool;
+        let visible = |i: u32| !pool.is_removed(i) && (hidden_ok || pool.name(i).first() != Some(&b'.'));
         let mut view: Vec<u32> = match &self.filter {
-            None => (0..n).filter(|&i| !self.pool.is_removed(i)).collect(),
-            Some(f) => (0..n).filter(|&i| !self.pool.is_removed(i) && self.pool.name_contains(i, f)).collect(),
+            None => (0..n).filter(|&i| visible(i)).collect(),
+            Some(f) => (0..n).filter(|&i| visible(i) && pool.name_contains(i, f)).collect(),
         };
         if self.scan_done {
             let (role, asc) = self.sort;
@@ -1047,6 +1071,32 @@ mod tests {
         assert_eq!(fresh.get("meta").unwrap(), &Value::Null);
         let events = drain(&rx);
         assert!(events.iter().any(|e| e.str_field("event") == Some("Reset")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod hidden_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn dot_files_hidden_until_asked() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kiki-hidden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), b"a").unwrap();
+        std::fs::write(dir.join(".secret"), b"s").unwrap();
+        std::fs::create_dir(dir.join(".git")).unwrap();
+        let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+        assert!(wait_scan(&l, Duration::from_secs(5)));
+        assert_eq!(l.count().0, 1, "dot-files hidden by default");
+        assert_eq!(l.set_hidden(true), 3);
+        let w = l.window(1, 1, 0, 10);
+        let names: Vec<&str> = w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap()).collect();
+        assert_eq!(names, vec![".git", ".secret", "a.txt"]); // folders first, then dot-files sort with the rest
+        assert_eq!(l.set_hidden(false), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

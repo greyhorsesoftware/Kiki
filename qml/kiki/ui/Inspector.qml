@@ -96,12 +96,26 @@ Rectangle {
             spacing: 18
             // Preview box
             Rectangle {
-                width: parent.width; height: 150; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line; clip: true
+                readonly property bool markdown: insp.preview && insp.preview.markdown === true
+                width: parent.width; height: markdown ? 300 : 150; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line; clip: true
                 Text {
-                    visible: insp.preview && insp.preview.text !== undefined
+                    visible: insp.preview && insp.preview.text !== undefined && !parent.markdown
                     anchors.fill: parent; anchors.margins: 10
                     text: insp.preview && insp.preview.text !== undefined ? insp.preview.text : ""
                     color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; lineHeight: 1.4; wrapMode: Text.NoWrap
+                }
+                // Markdown (plan 23): rendered by Qt's own Markdown support, scrollable, in the UI font.
+                Flickable {
+                    visible: parent.markdown
+                    anchors.fill: parent; anchors.margins: 10; contentHeight: md.height; clip: true; boundsBehavior: Flickable.StopAtBounds
+                    Text {
+                        id: md
+                        width: parent.width
+                        textFormat: Text.MarkdownText
+                        text: insp.preview && insp.preview.markdown ? insp.preview.text + (insp.preview.truncated ? "\n\n---\n*preview truncated; open the file for the rest*" : "") : ""
+                        color: Kiki.Theme.fgDim; linkColor: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 12; lineHeight: 1.35; wrapMode: Text.WordWrap
+                        onLinkActivated: link => Qt.openUrlExternally(link)
+                    }
                 }
                 Image {
                     visible: insp.preview && insp.preview.path !== undefined

@@ -12,6 +12,8 @@ Item {
     readonly property int cellH: 110
 
     function ensureVisible(i) { grid.positionViewAtIndex(i, GridView.Contain) }
+    readonly property int perRow: grid.perRow
+    readonly property int pageSize: Math.max(1, Math.floor(grid.height / cellH)) * grid.perRow
 
     GridView {
         id: grid

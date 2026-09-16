@@ -15,6 +15,8 @@ Item {
     readonly property int valueWidth: columns.slice(1).reduce((a, c) => a + c.w + 12, 0)
 
     function ensureVisible(i) { view.positionViewAtIndex(i, ListView.Contain) }
+    readonly property int perRow: 1
+    readonly property int pageSize: Math.max(1, Math.floor(view.height / Kiki.Theme.rowHeight))
 
     Rectangle {
         id: header; width: parent.width; height: root.headerHeight; color: Kiki.Theme.bg

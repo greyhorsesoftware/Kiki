@@ -57,6 +57,7 @@ A listing is opened with a client-chosen `lid` so that `Open` and the first `Win
 | `Window` | `lid`, `first: u32`, `count: u32` (max 512) | `{ first, rows: [Row], n: u32, done: bool }` in the current sort and filter; becomes the connection's live window for this `lid` |
 | `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime" \| "atime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
 | `Filter` | `lid`, `text: string` (substring, case-insensitive; empty clears) | `{ n }` then `Reset` |
+| `ShowHidden` | `lid`, `show: bool` | `{ n }`; dot-files enter or leave the view, `Reset` follows (default from `settings view.showHidden`) |
 | `Enrich` | `lid` | `{}` when every row has `meta`; `Progress` events meanwhile |
 | `Close` | `lid` | `{}` |
 | `Prefetch` | `uri` | `{}`; scans into the cache with no live window |
