@@ -24,7 +24,10 @@ QtObject {
     property int _reqFirst: -1      // range covered by the last request
     property int _reqEnd: -1
     property int _lastDirection: 1
-    property var daemon: Kiki.Daemon
+    // Resolved lazily so a test can inject a fake without the real singleton (and its Quickshell
+    // socket) ever being instantiated.
+    property var daemon: null
+    function d() { return daemon || Kiki.Daemon }
 
     signal reset()
     signal rowsUpdated(int first, int n)
@@ -34,11 +37,11 @@ QtObject {
     function open(newUri) {
         close()
         uri = newUri
-        lid = daemon.allocLid()
-        daemon.bind(lid, cache)
+        lid = d().allocLid()
+        d().bind(lid, cache)
         _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1
         // Open and the first Window leave in one write.
-        daemon.request("Open", { lid: lid, uri: uri }, (ok, err) => {
+        d().request("Open", { lid: lid, uri: uri }, (ok, err) => {
             if (err) { error = err.message; return }
             cached = ok.cached
         })
@@ -46,7 +49,7 @@ QtObject {
     }
 
     function close() {
-        if (lid) { daemon.request("Close", { lid: lid }); daemon.unbind(lid); lid = 0 }
+        if (lid) { d().request("Close", { lid: lid }); d().unbind(lid); lid = 0 }
     }
 
     function setViewport(first, n) {
@@ -55,9 +58,9 @@ QtObject {
         debounce.restart()
     }
 
-    function sort(role, order) { daemon.request("Sort", { lid: lid, role: role, order: order }) }
-    function filter(text) { daemon.request("Filter", { lid: lid, text: text }) }
-    function refresh() { daemon.request("Refresh", { lid: lid }) }
+    function sort(role, order) { d().request("Sort", { lid: lid, role: role, order: order }) }
+    function filter(text) { d().request("Filter", { lid: lid, text: text }) }
+    function refresh() { d().request("Refresh", { lid: lid }) }
 
     function _wanted() {
         const ahead = _lastDirection > 0 ? padAhead : padBehind
@@ -70,7 +73,7 @@ QtObject {
     function _request(first, n) {
         if (!lid || n <= 0) return
         _reqFirst = first; _reqEnd = first + n
-        daemon.request("Window", { lid: lid, first: first, count: n }, (ok, err) => {
+        d().request("Window", { lid: lid, first: first, count: n }, (ok, err) => {
             if (err) { error = err.message; return }
             _apply(ok.first, ok.rows)
             count = ok.n; done = ok.done

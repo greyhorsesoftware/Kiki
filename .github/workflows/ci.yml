@@ -57,7 +57,8 @@ jobs:
       - name: Run qmltestrunner
         run: |
           export QT_QPA_PLATFORM=offscreen
-          qmltestrunner-qt6 -input tests/qml
+          # Arch installs the Qt 6 tools under /usr/lib/qt6/bin without a -qt6 suffix
+          /usr/lib/qt6/bin/qmltestrunner -input tests/qml
 
   package:
     name: Build package (${{ matrix.arch }})
