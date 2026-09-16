@@ -39,6 +39,53 @@ FloatingWindow {
     property bool mirrorOpen: false
     function toggleMirror() { if (!split) return; mirrorOpen = !mirrorOpen }
     property string toast: ""
+    // Search (plan 12). Folder scope filters the listing; other scopes open a results view.
+    property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
+    property bool searching: false
+    property string searchScope: "folder"
+    property string indexInfo: ""
+    function runSearch(text, scope) {
+        searchScope = scope
+        if (scope === "folder") { searching = false; pane.setFilter(text); return }
+        pane.setFilter("")
+        if (!text) { searching = false; return }
+        if (!results.lid) { results.lid = Kiki.Daemon.allocLid(); Kiki.Daemon.bind(results.lid, results) }
+        const req = { lid: results.lid, scope: scope === "everywhere" ? "everywhere" : "location", query: text, mode: "substring" }
+        if (scope !== "everywhere") { const l = locations.find(x => x.name === scope); if (l) req.uri = l.remoteUri }
+        Kiki.Daemon.request("Search", req, (ok, err) => {
+            if (err) { indexInfo = err.message; return }
+            searching = true
+            indexInfo = scope === "everywhere" ? "index " + Math.round(ok.indexAge / 60) + " min old" + (ok.capped ? " · capped" : "") : ""
+        })
+    }
+    function closeSearch() { searching = false; toolbar.search.clear() }
+    function scopeMenu() {
+        const items = [{ label: "This folder", action: () => { toolbar.search.scope = "folder"; runSearch(toolbar.search.text, "folder") } }, { label: "Everywhere", action: () => { toolbar.search.scope = "everywhere"; runSearch(toolbar.search.text, "everywhere") } }]
+        for (const l of locations) items.push({ label: l.name + "  ·  " + l.plugin, sep: items.length === 2, action: () => { toolbar.search.scope = l.name; runSearch(toolbar.search.text, l.name) } })
+        menu.open(items, Qt.point(toolbar.x + toolbar.search.x + 224, 44))
+    }
+    // Open in (plan 14)
+    property var openInTools: []
+    function loadOpenIn() { Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) openInTools = ok.tools.filter(t => t.enabled) }) }
+    function openInDefaultTool() { const t = openInTools.find(x => x.role !== "editor") || openInTools[0]; return t ? t : null }
+    function openIn(id) {
+        const uris = selectedUris(); const target = uris.length ? uris : [pane.uri]
+        const tool = id ? openInTools.find(t => t.id === id) : openInDefaultTool()
+        if (!tool) return
+        Kiki.Daemon.request("OpenIn", { id: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+    }
+    function openInMenu() { menu.open(openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) })), Qt.point(toolbar.width - 300 + 224, 44)) }
+    function editSelected() {
+        const uris = selectedUris(); if (!uris.length) return
+        const r = pane.listing.row(pane.selection.current)
+        if (r && r.isDir) { Kiki.Jobs.showToast({ text: "Project mode is plan 16", undoable: false }); return }
+        Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uris[0]] }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+    }
+    // Git (plan 15): the branch chip for the focused pane
+    property var repo: null
+    function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
+    Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); win.searching = false } }
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn() } }
     // The inspected item follows the selection's current row.
     property string inspectedUri: ""
     property var inspectedRow: null
@@ -92,6 +139,7 @@ FloatingWindow {
             { label: "Extract here", enabled: r && r.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.uri }) },
             { label: "Extract to…", enabled: r && r.kind === "archive", action: () => { const folder = r.name.replace(/\.(tar\.(gz|xz|zst|bz2)|tgz|txz|tzst|zip|7z|tar)$/i, ""); Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(folder) }, ok => { if (ok) Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.childUri(folder) }) }) } },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
+            { label: "Open in…", enabled: win.openInTools.length > 0, action: () => win.openInMenu() },
             { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
         return items
@@ -119,7 +167,7 @@ FloatingWindow {
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(next)
     }
 
-    Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
+    Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged") win.loadSidebar() } }
 
     // Keymap (plan 02). Every action here is also reachable over IPC.
@@ -138,7 +186,7 @@ FloatingWindow {
             case Qt.Key_J: case Qt.Key_Down: win.moveSelection(1, shift); break
             case Qt.Key_K: case Qt.Key_Up: win.moveSelection(-1, shift); break
             case Qt.Key_H: if (pane.view === "columns") pane.up(); else return; break
-            case Qt.Key_Return: case Qt.Key_Enter: if (alt) return; win.openSelected(); break
+            case Qt.Key_Return: case Qt.Key_Enter: if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } win.openSelected(); break
             case Qt.Key_Backspace: pane.back(); break
             case Qt.Key_Left: if (alt) pane.back(); else return; break
             case Qt.Key_Right: if (alt) pane.forward(); else return; break
@@ -159,6 +207,8 @@ FloatingWindow {
             case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
+            case Qt.Key_E: win.editSelected(); break
+            case Qt.Key_Q: if (alt) Kiki.Jobs.showToast({ text: "AI query is plan 19", undoable: false }); else return; break
             default: return
             }
             event.accepted = true
@@ -214,9 +264,24 @@ FloatingWindow {
                 width: parent.width
                 pane: win.pane; home: win.home
                 inspector: win.inspector; split: win.split; mirror: win.mirrorOpen
+                locations: win.locations
+                repo: win.repo
+                openInDefault: win.openInDefaultTool() ? win.openInDefaultTool().name : ""
+                onSearch: (text, scope) => win.runSearch(text, scope)
+                onScopeMenu: win.scopeMenu()
+                onOpenIn: id => win.openIn(id)
+                onOpenInMenu: win.openInMenu()
                 onToggleInspector: win.inspector = !win.inspector
                 onToggleSplit: win.split = !win.split
                 onToggleMirror: win.toggleMirror()
+            }
+            Views.SearchResults {
+                id: resultsView
+                visible: win.searching
+                width: parent.width; height: parent.height - toolbar.height - bar.height
+                results: win.results; query: toolbar.search.text; home: win.home; indexInfo: win.indexInfo
+                scopeLabel: win.searchScope === "everywhere" ? "Everywhere" : win.searchScope
+                onOpen: uri => { win.closeSearch(); const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(uri.endsWith("/") ? uri : r); }
             }
             UI.MirrorWorkspace {
                 id: mirrorWs
@@ -227,7 +292,7 @@ FloatingWindow {
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh() }
             }
             Row {
-                visible: !win.mirrorOpen
+                visible: !win.mirrorOpen && !win.searching
                 width: parent.width; height: parent.height - toolbar.height - bar.height
                 // Left pane (the only pane when not split)
                 Column {
@@ -266,7 +331,7 @@ FloatingWindow {
             UI.ShortcutBar {
                 id: bar
                 width: parent.width
-                keys: win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
+                keys: win.searching ? [{ key: "Enter", label: "open" }, { key: "↑ ↓", label: "move" }, { key: "Tab", label: "cycle scope" }, { key: "⌫", label: "remove scope" }, { key: "Esc", label: "close" }, { key: "?", label: "all keys" }] : win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
                     ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
                     : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
                 MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }

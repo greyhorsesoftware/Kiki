@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import ".." as Kiki
 
 // The pane URI as crumbs; click a crumb to jump; Ctrl+L edits the full URI.
@@ -7,6 +8,7 @@ Rectangle {
     property string uri: ""
     property string home: ""
     property bool editing: false
+    property var repo: null
     signal navigate(string uri)
     height: 30; radius: 2
     color: Kiki.Theme.bgDark; border.width: 1; border.color: editing ? Kiki.Theme.accent : Kiki.Theme.line
@@ -45,6 +47,16 @@ Rectangle {
                 }
             }
         }
+    }
+    // Branch chip (plan 15)
+    Rectangle {
+        visible: !bc.editing && bc.repo && bc.repo.branch
+        anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
+        height: 20; width: chip.width + 14; radius: 2; color: Kiki.Theme.surface
+        Row { id: chip; anchors.centerIn: parent; spacing: 5
+            Icon { name: "mirror"; size: 10; color: bc.repo && bc.repo.dirty ? Kiki.Theme.yellow : Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
+            Text { text: bc.repo ? (bc.repo.detached ? bc.repo.branch : bc.repo.branch) + (bc.repo.ahead ? " ↑" + bc.repo.ahead : "") + (bc.repo.behind ? " ↓" + bc.repo.behind : "") : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+        MouseArea { anchors.fill: parent; onClicked: Quickshell.execDetached(["wl-copy", bc.repo.branch]) }
     }
     TextInput {
         id: input

@@ -13,6 +13,12 @@ Singleton {
         if (!ms) return ""
         return new Date(ms).toLocaleString(Qt.locale(), "d MMM yyyy HH:mm")
     }
+    function gitBadge(g) { if (!g) return ""; return { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!", untracked: "?", ignored: "", clean: "" }[g.state] || "" }
+    function gitColor(g) {
+        const t = Qt.resolvedUrl("") // no-op to keep this a plain function
+        if (!g) return "#565f89"
+        return { modified: "#e0af68", added: "#9ece6a", deleted: "#f7768e", renamed: "#e0af68", conflicted: "#f7768e", untracked: "#7f9e6a", ignored: "#565f89", clean: "#565f89" }[g.state] || "#565f89"
+    }
     function kindLabel(kind) {
         return { folder: "Folder", image: "Image", video: "Video", audio: "Audio", code: "Code", text: "Text", document: "Document", pdf: "PDF document", archive: "Archive", link: "Link", file: "File", other: "Other" }[kind] || "File"
     }

@@ -12,6 +12,13 @@ Rectangle {
     signal toggleInspector()
     signal toggleSplit()
     property alias search: search
+    property var locations: []
+    property var repo: null
+    property string openInDefault: ""
+    signal search(string text, string scope)
+    signal scopeMenu()
+    signal openIn(string id)
+    signal openInMenu()
     property alias breadcrumb: crumb
     height: Kiki.Theme.toolbarHeight
     color: Kiki.Theme.bg
@@ -34,8 +41,10 @@ Rectangle {
         }
         Breadcrumb {
             id: crumb
+            repo: bar.repo
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - (bar.split ? 42 : 0)
+            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - (bar.split ? 42 : 0) - (bar.openInDefault !== "" ? openInWidth : 0)
+            property int openInWidth: 150
             uri: bar.pane.uri; home: bar.home
             onNavigate: uri => bar.pane.open(uri)
         }
@@ -43,8 +52,11 @@ Rectangle {
             id: search
             anchors.verticalCenter: parent.verticalCenter
             placeholder: "Search " + (Kiki.Format.crumbs(bar.pane.uri, bar.home).slice(-1)[0] || "")
-            onChanged: text => bar.pane.setFilter(text)
+            scopes: bar.locations.map(l => ({ id: l.name, label: l.name }))
+            onChanged: text => bar.search(text, search.scope)
+            onScopeMenu: bar.scopeMenu()
         }
+        SplitButton { anchors.verticalCenter: parent.verticalCenter; label: bar.openInDefault; icon: "terminal"; enabled: bar.openInDefault !== ""; onClicked: bar.openIn(""); onMenu: bar.openInMenu() }
         ViewSwitcher { anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onChanged: v => bar.pane.view = v }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "split"; active: bar.split; onClicked: bar.toggleSplit() }
         ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "info"; active: bar.inspector; onClicked: bar.toggleInspector() }
