@@ -159,6 +159,29 @@ impl Client {
                 }
                 Err(e) => Err(e),
             },
+            "Submit" => match b.get("op") {
+                Some(op) => crate::jobs::submit(op.clone(), Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
+                None => Err(("Protocol", "missing op".into())),
+            },
+            "Cancel" => match b.u64_field("job") {
+                Some(j) if crate::jobs::cancel(j) => Ok(Some(Value::obj().done())),
+                Some(_) => Err(("NotFound", "no such job".into())),
+                None => Err(("Protocol", "missing job".into())),
+            },
+            "Jobs" => Ok(Some(Value::obj().v("jobs", crate::jobs::list()).done())),
+            "Undo" => crate::jobs::undo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
+            "Redo" => crate::jobs::redo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
+            "JobEvents" => {
+                crate::jobs::subscribe(self.tx.clone());
+                Ok(Some(Value::obj().done()))
+            }
+            "PromptReply" => match (b.u64_field("job"), b.str_field("choice")) {
+                (Some(j), Some(c)) => {
+                    let all = b.get("applyToAll").and_then(Value::as_bool).unwrap_or(false);
+                    if crate::jobs::prompt_reply(j, c, all) { Ok(Some(Value::obj().done())) } else { Err(("NotFound", "no prompt pending".into())) }
+                }
+                _ => Err(("Protocol", "missing job or choice".into())),
+            },
             "Stat" => match parse_uri(b, "uri") {
                 Ok(u) => Listing::stat_uri(&u).map(Some).map_err(vfs_err),
                 Err(e) => Err(e),
