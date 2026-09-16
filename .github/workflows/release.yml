@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Install build tools
         run: |
-          pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo libmtp libgphoto2 libimobiledevice usbmuxd
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo libmtp libgphoto2 libimobiledevice usbmuxd
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v4
       - name: Set version from tag
