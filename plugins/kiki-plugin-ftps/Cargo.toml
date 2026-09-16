@@ -1,0 +1,17 @@
+[package]
+name = "kiki-plugin-ftps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "kiki location plugin: FTP over TLS"
+
+[[bin]]
+name = "kiki-plugin-ftps"
+path = "src/main.rs"
+
+[dependencies]
+kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
+suppaftp = { version = "6", default-features = false, features = ["rustls", "deprecated"] }
+ring = "0.17"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"

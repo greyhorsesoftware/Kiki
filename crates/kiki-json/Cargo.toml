@@ -1,0 +1,8 @@
+[package]
+name = "kiki-json"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal JSON reader and writer for the kiki protocols"
+
+[dependencies]

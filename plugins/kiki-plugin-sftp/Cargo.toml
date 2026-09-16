@@ -1,0 +1,16 @@
+[package]
+name = "kiki-plugin-sftp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "kiki location plugin: SFTP over SSH, with exec-accelerated listing"
+
+[[bin]]
+name = "kiki-plugin-sftp"
+path = "src/main.rs"
+
+[dependencies]
+kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
+tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros"] }
+russh = "0.52"
+russh-sftp = "2"

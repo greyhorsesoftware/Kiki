@@ -3,7 +3,7 @@
 pub mod archive;
 pub mod config;
 pub mod jobs;
-pub mod json;
+pub use kiki_json as json;
 pub mod kinds;
 pub mod listing;
 pub mod md5;

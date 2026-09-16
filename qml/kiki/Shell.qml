@@ -16,9 +16,26 @@ FloatingWindow {
     readonly property string home: Quickshell.env("HOME")
     property var favorites: []
     property var volumes: []
+    property var locations: []
     property bool inspector: Kiki.Settings.view.inspector
     property bool split: false
-    property Kiki.Pane pane: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
+    property Kiki.Pane left: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
+    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false }
+    property Kiki.Pane pane: left
+    function focusPane(p) { left.focused = p === left; right.focused = p === right; pane = p }
+    // Selecting a location opens it side by side: local_uri on the left, remote_uri on the right.
+    function openLocation(loc) {
+        if (loc.localUri) { left.open(loc.localUri) }
+        right.open(loc.remoteUri)
+        split = true
+        focusPane(right)
+    }
+    function otherPane() { return pane === left ? right : left }
+    function transfer(move) {
+        const u = selectedUris(); if (!u.length || !split) return
+        Kiki.Jobs.submit({ op: move ? "move" : "copy", items: u, dest: otherPane().uri })
+    }
+    onSplitChanged: if (!split) focusPane(left)
     property string toast: ""
     // The inspected item follows the selection's current row.
     property string inspectedUri: ""
@@ -26,6 +43,7 @@ FloatingWindow {
     Connections {
         target: win.pane.selection
         function onChanged() {
+            if (!win.pane) return
             const p = win.pane.selection.current; const r = p >= 0 ? win.pane.listing.row(p) : null
             win.inspectedRow = r; win.inspectedUri = r ? win.pane.childUri(r.name) : ""
         }
@@ -77,10 +95,11 @@ FloatingWindow {
         return items
     }
 
-    function start(uri) { pane.open(uri || ("file://" + home)) }
+    function start(uri) { left.open(uri || ("file://" + home)) }
     function loadSidebar() {
         Kiki.Daemon.request("Favorites", {}, ok => { if (ok) favorites = ok.items })
         Kiki.Daemon.request("Volumes", {}, ok => { if (ok) volumes = ok.items })
+        Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
     }
     function selectedUris() { return pane.selection.positions().map(p => { const r = pane.listing.row(p); return r ? pane.childUri(r.name) : null }).filter(u => u) }
     function openSelected() {
@@ -99,7 +118,7 @@ FloatingWindow {
     }
 
     Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
-    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged") win.loadSidebar() } }
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged") win.loadSidebar() } }
 
     // Keymap (plan 02). Every action here is also reachable over IPC.
     Item {
@@ -134,6 +153,9 @@ FloatingWindow {
             case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
             case Qt.Key_A: if (ctrl) { for (let i = 0; i < pane.listing.count; i++) pane.selection.rows[i] = true; pane.selection.changed() } else return; break
             case Qt.Key_Escape: pane.selection.clear(); break
+            case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
+            case Qt.Key_F5: pane.listing.refresh(); break
+            case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             default: return
             }
             event.accepted = true
@@ -152,6 +174,9 @@ FloatingWindow {
         function uri(pane: string): string { return win.pane.uri }
         function inspector(on: string): void { win.inspector = on === "on" }
         function split(on: string): void { win.split = on === "on" }
+        function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
+        function transfer(kind: string): void { win.transfer(kind === "move") }
+        function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
         function state(): string {
             return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
@@ -159,6 +184,7 @@ FloatingWindow {
         function redo(): void { Kiki.Jobs.redo() }
         function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
         function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false) it.action() }
+        function addLocation(): void { locationDialog.open(null) }
         function windowState(pane: string): string { const l = win.pane.listing; return JSON.stringify({ count: l.count, viewport: [l.viewportFirst, l.viewportCount], held: Object.keys(l._rows).length }) }
         function timestamps(): string { return JSON.stringify({ now: Date.now() }) }
     }
@@ -170,8 +196,11 @@ FloatingWindow {
         UI.Sidebar {
             id: sidebar
             height: parent.height
-            favorites: win.favorites; volumes: win.volumes; currentUri: win.pane.uri
+            favorites: win.favorites; volumes: win.volumes; locations: win.locations; currentUri: win.pane.uri
             onOpen: uri => win.pane.open(uri)
+            onAddLocation: locationDialog.open(null)
+            onOpenLocation: loc => win.openLocation(loc)
+            onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }], Qt.point(40, 200))
         }
         Column {
             width: parent.width - sidebar.width; height: parent.height
@@ -185,10 +214,29 @@ FloatingWindow {
             }
             Row {
                 width: parent.width; height: parent.height - toolbar.height - bar.height
-                Loader {
-                    id: viewLoader
-                    width: parent.width - (inspectorPanel.visible ? inspectorPanel.width : 0); height: parent.height
-                    sourceComponent: win.pane.view === "icon" ? iconView : (win.pane.view === "columns" ? columnsView : listView)
+                // Left pane (the only pane when not split)
+                Column {
+                    width: (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0); height: parent.height
+                    UI.PaneHeader { visible: win.split; width: parent.width; pane: win.left; home: win.home; onClicked: win.focusPane(win.left) }
+                    Loader {
+                        id: viewLoader
+                        width: parent.width; height: parent.height - (win.split ? 34 : 0)
+                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : listView)
+                        onLoaded: item.pane = win.left
+                    }
+                }
+                Rectangle { visible: win.split; width: 1; height: parent.height; color: Kiki.Theme.line }
+                Column {
+                    visible: win.split
+                    width: win.split ? parent.width - Math.floor((parent.width - 1) / 2) - 1 : 0; height: parent.height
+                    UI.PaneHeader { width: parent.width; pane: win.right; home: win.home; onClicked: win.focusPane(win.right) }
+                    Loader {
+                        id: rightLoader
+                        active: win.split
+                        width: parent.width; height: parent.height - 34
+                        sourceComponent: win.right.view === "icon" ? iconView : (win.right.view === "columns" ? columnsView : listView)
+                        onLoaded: item.pane = win.right
+                    }
                 }
                 UI.Inspector {
                     id: inspectorPanel
@@ -203,7 +251,7 @@ FloatingWindow {
             UI.ShortcutBar {
                 id: bar
                 width: parent.width
-                keys: win.pane.view === "columns"
+                keys: win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
                     ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
                     : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
                 MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
@@ -212,13 +260,14 @@ FloatingWindow {
         }
     }
 
-    Component { id: listView; Views.ListPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } }
-    Component { id: iconView; Views.IconPane { pane: win.pane; onActivate: i => { win.pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } }
+    Component { id: listView; Views.ListPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } } }
+    Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } } }
 
     UI.ContextMenu { id: menu; parent: win.contentItem }
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
+    UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar() }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }
     UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
-    Component { id: columnsView; Views.ColumnsPane { pane: win.pane; home: win.home; onActivate: uri => win.openExternal(uri) } }
+    Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri) } }
 }

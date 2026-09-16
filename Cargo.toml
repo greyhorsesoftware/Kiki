@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kikid"]
+members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps"]
 
 [workspace.package]
 version = "0.1.0"

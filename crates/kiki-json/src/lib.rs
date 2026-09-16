@@ -1,4 +1,4 @@
-//! Minimal JSON reader and writer for the kiki protocols.
+//! Minimal JSON reader and writer for the kiki protocols (shared by kikid and plugins).
 //!
 //! The grammar is exactly what the protocol uses: objects, arrays, strings,
 //! integers, floats, booleans and null. The reader never panics on bad input;

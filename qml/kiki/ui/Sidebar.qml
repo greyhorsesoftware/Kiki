@@ -6,6 +6,10 @@ Rectangle {
     id: sidebar
     property var favorites: []
     property var volumes: []
+    property var locations: []
+    signal editLocation(var location)
+    signal openLocation(var location)
+    signal removeLocation(string name)
     property string currentUri: ""
     signal open(string uri)
     signal addLocation()
@@ -40,6 +44,17 @@ Rectangle {
                     label: modelData.name
                     active: sidebar.currentUri === modelData.uri
                     onClicked: sidebar.open(modelData.uri)
+                }
+            }
+            Repeater {
+                model: sidebar.locations
+                delegate: SidebarItem {
+                    required property var modelData
+                    icon: "server"; iconColor: modelData.plugin === "sftp" ? Kiki.Theme.green : Kiki.Theme.cyan
+                    label: modelData.name + " · " + modelData.plugin
+                    active: sidebar.currentUri.startsWith(modelData.plugin + "://" + modelData.name)
+                    onClicked: sidebar.openLocation(modelData)
+                    onRightClicked: sidebar.editLocation(modelData)
                 }
             }
         }

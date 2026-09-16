@@ -1,0 +1,9 @@
+[package]
+name = "kiki-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Write a kiki location plugin: framing, dispatch loop and typed handler trait"
+
+[dependencies]
+kiki-json = { path = "../kiki-json" }
