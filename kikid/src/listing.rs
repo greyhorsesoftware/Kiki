@@ -95,9 +95,11 @@ struct Inner {
     pool: StringPool,
     meta: Vec<Option<Meta>>,
     queued: Vec<bool>,
-    thumb: Vec<Option<String>>,
+    /// Only rows that have one: pool index -> thumbnail path.
+    thumb: HashMap<u32, String>,
     thumb_queued: Vec<bool>,
-    git: Vec<Option<crate::git::Entry>>,
+    /// Only rows with a state other than clean: pool index -> git entry.
+    git: HashMap<u32, crate::git::Entry>,
     git_done: bool,
     scan_done: bool,
     scan_error: Option<String>,
@@ -225,9 +227,9 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             pool: StringPool::with_capacity(256),
             meta: Vec::new(),
             queued: Vec::new(),
-            thumb: Vec::new(),
+            thumb: HashMap::new(),
             thumb_queued: Vec::new(),
-            git: Vec::new(),
+            git: HashMap::new(),
             git_done: false,
             scan_done: false,
             scan_error: None,
@@ -327,9 +329,7 @@ impl Listing {
                 let idx = inner.pool.push(e.name.as_bytes(), e.kind);
                 inner.meta.push(e.meta);
                 inner.queued.push(false);
-                inner.thumb.push(None);
                 inner.thumb_queued.push(false);
-                inner.git.push(None);
                 inner.pos.push(u32::MAX);
                 if inner.filter.is_none() {
                     inner.view.push(idx);
@@ -395,14 +395,22 @@ impl Listing {
                 {
                     let mut inner = me.inner.lock().unwrap();
                     for (i, name, is_dir) in names {
-                        if (i as usize) >= inner.git.len() {
+                        if (i as usize) >= inner.pool.len() {
                             break;
                         }
                         let e = crate::git::state_for(&me.path, &name, is_dir);
-                        if e.as_ref().map(|e| e.state != crate::git::State::Clean).unwrap_or(false) {
+                        let interesting = e.as_ref().map(|e| e.state != crate::git::State::Clean).unwrap_or(false);
+                        if interesting || inner.git.contains_key(&i) {
                             changed.push(i);
                         }
-                        inner.git[i as usize] = e;
+                        match e {
+                            Some(e) if interesting => {
+                                inner.git.insert(i, e);
+                            }
+                            _ => {
+                                inner.git.remove(&i);
+                            }
+                        }
                     }
                     inner.git_done = true;
                 }
@@ -435,9 +443,9 @@ impl Listing {
         let old_total = inner.pool.len();
         let n = pool.len();
         inner.queued = vec![false; n];
-        inner.thumb = vec![None; n];
+        inner.thumb.clear();
         inner.thumb_queued = vec![false; n];
-        inner.git = vec![None; n];
+        inner.git.clear();
         inner.git_done = false;
         inner.pos = vec![u32::MAX; n];
         inner.pool = pool;
@@ -466,9 +474,12 @@ impl Listing {
     pub fn patch(self: &Arc<Self>, added: &[Vec<u8>], removed: &[Vec<u8>], modified: &[Vec<u8>]) {
         let mut inner = self.inner.lock().unwrap();
         let mut changed = false;
+        let mut removed_idx = Vec::new();
+        let mut added_idx = Vec::new();
         for name in removed {
             if let Some(i) = inner.pool.find(name) {
                 inner.pool.remove(i);
+                removed_idx.push(i);
                 changed = true;
             }
         }
@@ -482,11 +493,10 @@ impl Listing {
                 Err(_) => continue, // vanished again
             };
             let idx = inner.pool.push(name, kind);
+            added_idx.push(idx);
             inner.meta.push(None);
             inner.queued.push(false);
-            inner.thumb.push(None);
             inner.thumb_queued.push(false);
-            inner.git.push(None);
             inner.pos.push(u32::MAX);
             to_stat.push(idx);
             changed = true;
@@ -494,7 +504,7 @@ impl Listing {
         for name in modified {
             if let Some(i) = inner.pool.find(name) {
                 inner.meta[i as usize] = None;
-                inner.thumb[i as usize] = None;
+                inner.thumb.remove(&i);
                 inner.thumb_queued[i as usize] = false;
                 if !inner.queued[i as usize] {
                     inner.queued[i as usize] = true;
@@ -503,7 +513,20 @@ impl Listing {
             }
         }
         if changed {
-            inner.rebuild_view();
+            // A handful of changes in a name- or kind-sorted, unfiltered view splice in place:
+            // O(log n) to find the spot plus one memmove of the position table, instead of a
+            // full sort of the pool.
+            let small = removed_idx.len() + added_idx.len() <= 64;
+            if small && inner.filter.is_none() && inner.sorted && inner.scan_done && matches!(inner.sort.0, SortRole::Name | SortRole::Kind) {
+                for &i in &removed_idx {
+                    inner.view_remove(i);
+                }
+                for &i in &added_idx {
+                    inner.view_insert(i);
+                }
+            } else {
+                inner.rebuild_view();
+            }
             inner.generation += 1;
         }
         let n = inner.view.len() as u64;
@@ -626,7 +649,7 @@ impl Listing {
             let kind = inner.pool.kind(idx);
             let p = inner.pos[idx as usize];
             let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers(p));
-            if visible && crate::thumbs::thumbable(kind) && inner.thumb[idx as usize].is_none() && !inner.thumb_queued[idx as usize] {
+            if visible && crate::thumbs::thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
                 inner.thumb_queued[idx as usize] = true;
                 let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
                 let uri = self.uri.join(&String::from_utf8_lossy(&name));
@@ -640,8 +663,8 @@ impl Listing {
                     done: Box::new(move |path| {
                         {
                             let mut inner = me.inner.lock().unwrap();
-                            if (idx as usize) < inner.thumb.len() {
-                                inner.thumb[idx as usize] = Some(path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+                            if (idx as usize) < inner.pool.len() {
+                                inner.thumb.insert(idx, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
                                 inner.thumb_queued[idx as usize] = false;
                             }
                         }
@@ -849,6 +872,43 @@ impl Listing {
 }
 
 impl Inner {
+    /// Order of two pool entries under the current name or kind sort (folders first).
+    fn order(&self, a: u32, b: u32) -> std::cmp::Ordering {
+        let pool = &self.pool;
+        let (role, asc) = self.sort;
+        let dir_rank = |i: u32| u8::from(pool.entry_type(i) != EntryType::Dir);
+        let base = dir_rank(a).cmp(&dir_rank(b));
+        let by_role = match role {
+            SortRole::Kind => (pool.kind(a) as u8).cmp(&(pool.kind(b) as u8)),
+            _ => std::cmp::Ordering::Equal,
+        };
+        let o = by_role.then_with(|| pool.key(a).cmp(pool.key(b)));
+        base.then(if asc { o } else { o.reverse() })
+    }
+
+    fn view_insert(&mut self, i: u32) {
+        let at = self.view.partition_point(|&j| self.order(j, i) == std::cmp::Ordering::Less);
+        self.view.insert(at, i);
+        if (i as usize) >= self.pos.len() {
+            self.pos.resize(i as usize + 1, u32::MAX);
+        }
+        for q in at..self.view.len() {
+            self.pos[self.view[q] as usize] = q as u32;
+        }
+    }
+
+    fn view_remove(&mut self, i: u32) {
+        let Some(&p) = self.pos.get(i as usize) else { return };
+        if p == u32::MAX || (p as usize) >= self.view.len() || self.view[p as usize] != i {
+            return;
+        }
+        self.view.remove(p as usize);
+        self.pos[i as usize] = u32::MAX;
+        for q in (p as usize)..self.view.len() {
+            self.pos[self.view[q] as usize] = q as u32;
+        }
+    }
+
     fn rebuild_view(&mut self) {
         let n = self.pool.len() as u32;
         let hidden_ok = self.show_hidden;
@@ -912,14 +972,14 @@ impl Inner {
             .v("meta", meta)
             .v(
                 "thumb",
-                match &self.thumb[idx as usize] {
+                match self.thumb.get(&idx) {
                     Some(p) => Value::Str(p.clone()),
                     None => Value::Null,
                 },
             )
             .v(
                 "git",
-                match &self.git[idx as usize] {
+                match self.git.get(&idx) {
                     Some(e) => crate::git::entry_json(e),
                     None => Value::Null,
                 },
@@ -929,10 +989,10 @@ impl Inner {
 }
 
 pub fn meta_json(m: &Meta) -> Value {
-    let owner = m.uid.and_then(names::user);
-    let group = m.gid.and_then(names::group);
+    let owner = Meta::opt(m.uid).and_then(names::user);
+    let group = Meta::opt(m.gid).and_then(names::group);
     let o: Obj = Value::obj().u("size", m.size).u("mtime", m.mtime_ms).u("atime", m.atime_ms);
-    let o = match m.mode {
+    let o = match m.mode() {
         Some(mode) => o.u("mode", mode as u64),
         None => o.v("mode", Value::Null),
     };

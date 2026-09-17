@@ -7,7 +7,7 @@ pub mod uri;
 use std::io;
 
 /// One entry's phase-2 metadata.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Meta {
     pub size: u64,
     /// Milliseconds since the epoch; 0 when unknown.
@@ -15,9 +15,30 @@ pub struct Meta {
     /// Last access, milliseconds since the epoch; 0 when unknown. Only as fresh as the
     /// filesystem keeps it (`relatime` updates it at most once a day unless the file changed).
     pub atime_ms: u64,
-    pub mode: Option<u32>,
-    pub uid: Option<u32>,
-    pub gid: Option<u32>,
+    /// `Meta::NONE` when unknown (kept as plain u32s so 200k entries stay small).
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+}
+
+impl Meta {
+    pub const NONE: u32 = u32::MAX;
+    pub fn opt(v: u32) -> Option<u32> {
+        if v == Meta::NONE {
+            None
+        } else {
+            Some(v)
+        }
+    }
+    pub fn mode(&self) -> Option<u32> {
+        Meta::opt(self.mode)
+    }
+}
+
+impl Default for Meta {
+    fn default() -> Self {
+        Meta { size: 0, mtime_ms: 0, atime_ms: 0, mode: Meta::NONE, uid: Meta::NONE, gid: Meta::NONE }
+    }
 }
 
 /// Phase-1 entry type, from the directory entry alone.

@@ -282,9 +282,9 @@ impl Job {
                     size: m.len(),
                     mtime_ms: m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0),
                     atime_ms: 0,
-                    mode: None,
-                    uid: None,
-                    gid: None,
+                    mode: crate::vfs::Meta::NONE,
+                    uid: crate::vfs::Meta::NONE,
+                    gid: crate::vfs::Meta::NONE,
                 })
                 .unwrap_or_default()
         };

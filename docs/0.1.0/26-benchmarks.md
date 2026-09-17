@@ -20,6 +20,10 @@ The speed claims in plans 01 and 11 become numbers that are measured the same wa
 
 Files are one to six bytes so the trees are cheap to create and metadata dominates, which is what kiki's hot paths touch.
 
+## Memory work driven by the first run
+
+The first macOS run showed a 219 MB peak for `flat200k`. Splitting profiles into processes and streaming the test file showed the daemon's real share: the 200k listing is 35 MB fully enriched. Three changes landed with the suite: `Meta` stores mode, uid and gid as plain `u32`s with a sentinel instead of `Option<u32>` (48 bytes to 40, no `Option` niche loss); thumbnails and git state live in maps keyed by row instead of a slot per row; the mirror engine shares one `Arc<str>` per path between the map key, the entry and the plan action instead of three `String`s. And the inotify patch splices small changes into a name- or kind-sorted view (binary search plus one position-table memmove) instead of re-sorting the pool: 28.6 ms to 0.6 ms on 200k entries.
+
 ## Measurements (`kikid bench run <dir> [--json out]`)
 
 Per profile, in one process, cold listing first:
@@ -38,13 +42,13 @@ Per profile, in one process, cold listing first:
 | `mirror_scan_ms`, `mirror_actions` | scan and diff against an empty replica | 5 s for 5k files over SFTP; local is informational |
 | `thumbs_ms`, `thumbs_made` | 50 thumbnails through the cache pipeline | informational |
 | `copy64m_ms`, `copy_mb_s` | a 64 MiB copy through the job copier | disk-bound; informational |
-| `rss_peak_mb` | peak resident set at the end of the profile (`getrusage`) | the plan-01 `mallopt` question: within 5 MB of idle after `flat200k` is released |
+| `rss_start_mb`, `rss_listing_mb`, `rss_peak_mb`, `rss_after_release_mb` | resident set when the process starts, once the listing is fully enriched, the peak (`getrusage`), and after the listing, index and copy buffers are released | the plan-01 `mallopt` question: `rss_after_release_mb` within 5 MB of `rss_start_mb` plus the daemon's idle baseline after `flat200k`; on macOS the allocator keeps freed pages so only Linux answers it |
 
 Output is a table on stdout and, with `--json`, a file `{ arch, os, at, version, results: { profile: { metric: number } } }`.
 
 ## Comparison (`kikid bench compare <baseline> <results> [--tolerance 25]`)
 
-Every `_ms` and `_us` metric in the baseline is compared to the new run; a value more than the tolerance slower, and more than one millisecond slower in absolute terms, is a regression. The command prints each one and exits non-zero, so CI fails.
+Every `_ms` and `_us` metric in the baseline is compared to the new run; a value more than the tolerance slower, and more than an absolute floor slower (3 ms, or 50 µs for the microsecond metrics), is a regression, so sub-millisecond timings never fail a run on noise. Each profile runs in its own child process (`KIKI_BENCH_CHILD`), so peaks and release numbers are independent and the first-chunk timing includes a cold process start. The command prints each one and exits non-zero, so CI fails.
 
 ## Baselines and CI
 

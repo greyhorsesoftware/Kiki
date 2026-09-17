@@ -95,7 +95,8 @@ impl Spec {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
-    pub rel: String,
+    /// Shared with the map key and the plan action: one allocation per path.
+    pub rel: Arc<str>,
     pub is_dir: bool,
     pub size: u64,
     pub mtime_ms: u64,
@@ -129,7 +130,7 @@ pub enum State {
 
 #[derive(Clone, Debug)]
 pub struct Action {
-    pub rel: String,
+    pub rel: Arc<str>,
     pub kind: ActionKind,
     pub reason: Reason,
     pub bytes: u64,
@@ -253,7 +254,7 @@ pub fn is_changed(det: Detector, m: &Entry, r: &Entry, offset_ms: i64) -> bool {
 }
 
 /// Median of (master − replica) mtime deltas over same-size file pairs; 0 below three samples.
-pub fn auto_offset(master: &BTreeMap<String, Entry>, replica: &BTreeMap<String, Entry>) -> i64 {
+pub fn auto_offset(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Entry>) -> i64 {
     let mut deltas: Vec<i64> = master
         .iter()
         .filter_map(|(rel, m)| {
@@ -273,7 +274,7 @@ pub fn auto_offset(master: &BTreeMap<String, Entry>, replica: &BTreeMap<String, 
 
 // ---------------------------------------------------------------- diff (pure)
 
-pub fn diff(master: &BTreeMap<String, Entry>, replica: &BTreeMap<String, Entry>, spec: &Spec, detector: Detector, now_ms: u64) -> Result<Plan, String> {
+pub fn diff(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Entry>, spec: &Spec, detector: Detector, now_ms: u64) -> Result<Plan, String> {
     if spec.delete_extras && master.is_empty() && !replica.is_empty() {
         return Err("master scan returned no entries; refusing to delete the entire replica".into());
     }
@@ -282,7 +283,7 @@ pub fn diff(master: &BTreeMap<String, Entry>, replica: &BTreeMap<String, Entry>,
         Some(w) => m.mtime_ms == 0 || (m.mtime_ms as i64 - spec.clock_offset_ms) >= now_ms as i64 - w as i64,
     };
     let mk = |rel: &str, kind: ActionKind, reason: Reason, bytes: u64, m: Option<&Entry>, r: Option<&Entry>| Action {
-        rel: rel.to_string(),
+        rel: Arc::from(rel),
         kind,
         reason,
         bytes,
@@ -368,7 +369,7 @@ fn join_rel(root: &str, rel: &str) -> String {
 }
 
 /// Enumerates a side into rel → Entry, skipping symlinks and filtered names (with their subtrees).
-pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel: &AtomicBool) -> Result<BTreeMap<String, Entry>, VfsError> {
+pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel: &AtomicBool) -> Result<BTreeMap<Arc<str>, Entry>, VfsError> {
     let mut out = BTreeMap::new();
     match side {
         Side::Local(root) => scan_local(root, "", rules, filtered_count, &mut out, cancel)?,
@@ -390,7 +391,9 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
                                 continue;
                             }
                             let m = e.get("meta").filter(|m| !matches!(m, Value::Null)).map(crate::vfs::remote::meta_from).unwrap_or_default();
-                            out.insert(rel, Entry { rel: name, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
+                            let rel: Arc<str> = Arc::from(rel.as_str());
+                            let _ = name;
+                            out.insert(rel.clone(), Entry { rel, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
                         }
                     }
                 }
@@ -413,7 +416,7 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
     Ok(out)
 }
 
-fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<String, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
+fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<Arc<str>, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
     let dir = if prefix.is_empty() { root.to_path_buf() } else { root.join(prefix) };
     for e in std::fs::read_dir(&dir)? {
         if cancel.load(Ordering::Relaxed) {
@@ -431,7 +434,8 @@ fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut us
         }
         let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         let mtime_ms = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-        out.insert(rel.clone(), Entry { rel: rel.clone(), is_dir: md.is_dir(), size: if md.is_dir() { 0 } else { md.len() }, mtime_ms, digest: None });
+        let key: Arc<str> = Arc::from(rel.as_str());
+        out.insert(key.clone(), Entry { rel: key, is_dir: md.is_dir(), size: if md.is_dir() { 0 } else { md.len() }, mtime_ms, digest: None });
         if md.is_dir() {
             scan_local(root, &rel, rules, filtered_count, out, cancel)?;
         }
@@ -439,7 +443,7 @@ fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut us
     Ok(())
 }
 
-fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<String, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
+fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<Arc<str>, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
     if cancel.load(Ordering::Relaxed) {
         return Err(VfsError::Io("cancelled".into()));
     }
@@ -466,7 +470,8 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
                         missing_meta.push(rel.clone());
                     }
                     let m = meta.unwrap_or_default();
-                    out.insert(rel.clone(), Entry { rel: rel.clone(), is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
+                    let key: Arc<str> = Arc::from(rel.as_str());
+                    out.insert(key.clone(), Entry { rel: key, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
                     if kind == "dir" {
                         dirs.push(rel);
                     }
@@ -477,7 +482,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
     for rel in missing_meta {
         let v = session.plugin.request(Value::obj().s("type", "Stat").s("location", session.location.clone()).s("path", join_rel(root, &rel)).done())?;
         let m = crate::vfs::remote::meta_from(&v);
-        if let Some(e) = out.get_mut(&rel) {
+        if let Some(e) = out.get_mut(rel.as_str()) {
             e.size = m.size;
             e.mtime_ms = m.mtime_ms;
         }
@@ -489,7 +494,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
 }
 
 /// For a local side, compute MD5 for files whose counterpart has a digest and the same size.
-fn fill_local_digests(side: &Side, mine: &mut BTreeMap<String, Entry>, other: &BTreeMap<String, Entry>) {
+fn fill_local_digests(side: &Side, mine: &mut BTreeMap<Arc<str>, Entry>, other: &BTreeMap<Arc<str>, Entry>) {
     let Side::Local(root) = side else { return };
     for (rel, o) in other {
         if o.is_dir || usable_md5(&o.digest).is_none() {
@@ -497,7 +502,7 @@ fn fill_local_digests(side: &Side, mine: &mut BTreeMap<String, Entry>, other: &B
         }
         if let Some(e) = mine.get_mut(rel) {
             if !e.is_dir && e.size == o.size && e.digest.is_none() {
-                if let Ok(bytes) = std::fs::read(root.join(rel)) {
+                if let Ok(bytes) = std::fs::read(root.join(&**rel)) {
                     e.digest = Some(crate::md5::hex(&bytes));
                 }
             }
@@ -683,11 +688,11 @@ fn set_state(plan: &Arc<Mutex<Plan>>, idx: usize, st: State, err: Option<String>
 fn run_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Result<(), VfsError> {
     match a.kind {
         ActionKind::Mkdir => match replica {
-            Side::Local(root) => std::fs::create_dir(root.join(&a.rel)).map_err(VfsError::from),
+            Side::Local(root) => std::fs::create_dir(root.join(&*a.rel)).map_err(VfsError::from),
             Side::Remote(s, root) => s.plugin.request(Value::obj().s("type", "Mkdir").s("location", s.location.clone()).s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Delete | ActionKind::Rmdir => match replica {
-            Side::Local(root) => crate::ops::remove_tree(&root.join(&a.rel)),
+            Side::Local(root) => crate::ops::remove_tree(&root.join(&*a.rel)),
             Side::Remote(s, root) => s.plugin.request(Value::obj().s("type", "Delete").s("location", s.location.clone()).s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Copy => copy_action(a, master, replica, ctx),
@@ -699,14 +704,14 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
     let mtime = a.master.as_ref().map(|m| m.mtime_ms).unwrap_or(0);
     match (master, replica) {
         (Side::Local(mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(&a.rel);
+            let dst = rroot.join(&*a.rel);
             let _ = std::fs::remove_file(&dst);
             let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n) };
-            crate::ops::copy_file(&mroot.join(&a.rel), &dst, &mut p)?;
+            crate::ops::copy_file(&mroot.join(&*a.rel), &dst, &mut p)?;
             Ok(())
         }
         (Side::Local(mroot), Side::Remote(s, rroot)) => {
-            let mut f = std::fs::File::open(mroot.join(&a.rel))?;
+            let mut f = std::fs::File::open(mroot.join(&*a.rel))?;
             let req = Value::obj().s("type", "Write").s("location", s.location.clone()).s("path", join_rel(rroot, &a.rel)).u("size", a.bytes).u("mtime", mtime).done();
             let mut buf = vec![0u8; 512 * 1024];
             let cancel = ctx.cancel;
@@ -728,7 +733,7 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             Ok(())
         }
         (Side::Remote(s, mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(&a.rel);
+            let dst = rroot.join(&*a.rel);
             let tmp = dst.with_extension("kiki-part");
             let mut f = std::fs::File::create(&tmp)?;
             let req = Value::obj().s("type", "Read").s("location", s.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
@@ -856,7 +861,7 @@ pub fn action_json(a: &Action) -> Value {
         None => Value::Null,
     };
     Value::obj()
-        .s("rel", a.rel.clone())
+        .s("rel", a.rel.to_string())
         .s(
             "action",
             match a.kind {
@@ -918,8 +923,9 @@ pub fn stored(job: u64) -> Option<Arc<Stored>> {
 mod tests {
     use super::*;
 
-    fn e(rel: &str, is_dir: bool, size: u64, mtime: u64) -> (String, Entry) {
-        (rel.to_string(), Entry { rel: rel.to_string(), is_dir, size, mtime_ms: mtime, digest: None })
+    fn e(rel: &str, is_dir: bool, size: u64, mtime: u64) -> (Arc<str>, Entry) {
+        let rel: Arc<str> = Arc::from(rel);
+        (rel.clone(), Entry { rel, is_dir, size, mtime_ms: mtime, digest: None })
     }
     fn spec(delete: bool) -> Spec {
         Spec {
@@ -937,7 +943,7 @@ mod tests {
         }
     }
     fn kinds(p: &Plan) -> Vec<(String, ActionKind, Reason)> {
-        p.actions.iter().map(|a| (a.rel.clone(), a.kind, a.reason)).collect()
+        p.actions.iter().map(|a| (a.rel.to_string(), a.kind, a.reason)).collect()
     }
 
     #[test]

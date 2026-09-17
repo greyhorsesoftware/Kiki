@@ -95,6 +95,31 @@ fn rss_peak_mb() -> f64 {
     (bytes / (1024.0 * 1024.0) * 10.0).round() / 10.0
 }
 
+/// Current resident set in MB (Linux: /proc/self/statm; macOS: proc_pidinfo).
+pub fn rss_now_mb() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+        let pages: f64 = statm.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as f64;
+        return (pages * page / (1024.0 * 1024.0) * 10.0).round() / 10.0;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+        let got = unsafe { libc::proc_pidinfo(libc::getpid(), libc::PROC_PIDTASKINFO, 0, &mut info as *mut _ as *mut libc::c_void, size) };
+        if got == size {
+            return (info.pti_resident_size as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0;
+        }
+        0.0
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        0.0
+    }
+}
+
 fn wait_reset(rx: &mpsc::Receiver<Value>, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -115,6 +140,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
         m.insert(k.into(), Value::Float(v));
     };
     let uri = Uri::from_path(dir);
+    put(&mut m, "rss_start_mb", rss_now_mb());
     // fresh listing: phase 1, first chunk, first window
     listing::forget(&uri);
     let t0 = Instant::now();
@@ -161,6 +187,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     l.enrich(Some((etx, 1)));
     let _ = erx.recv_timeout(Duration::from_secs(600));
     put(&mut m, "enrich_ms", ms(t.elapsed()));
+    put(&mut m, "rss_listing_mb", rss_now_mb());
     for (role, key) in [(SortRole::Size, "sort_size_ms"), (SortRole::Mtime, "sort_mtime_ms"), (SortRole::Name, "sort_name_ms")] {
         let _ = rx.try_iter().count();
         let t = Instant::now();
@@ -225,7 +252,17 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let src = std::env::temp_dir().join(format!("kiki-bench-src-{}", std::process::id()));
     let dst = std::env::temp_dir().join(format!("kiki-bench-dst-{}", std::process::id()));
     let _ = std::fs::remove_file(&dst);
-    if std::fs::write(&src, vec![7u8; 64 * 1024 * 1024]).is_ok() {
+    let wrote = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&src)?;
+        let chunk = vec![7u8; 1024 * 1024];
+        for _ in 0..64 {
+            f.write_all(&chunk)?;
+        }
+        Ok(())
+    })()
+    .is_ok();
+    if wrote {
         let cancel = AtomicBool::new(false);
         let mut bytes = 0u64;
         let mut p = crate::ops::Progress { cancel: &cancel, bytes: &mut |n| bytes += n };
@@ -239,7 +276,11 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&dst);
     put(&mut m, "rss_peak_mb", rss_peak_mb());
+    // release everything and see what the process gives back (Linux trims; macOS mostly keeps it)
     listing::forget(&uri);
+    drop(l);
+    drop(ix);
+    put(&mut m, "rss_after_release_mb", rss_now_mb());
     m
 }
 
@@ -253,11 +294,32 @@ pub fn run(dir: &Path) -> Value {
             found
         }
     };
+    // Each profile runs in its own process so peaks and release numbers are independent.
+    let child_ok = std::env::var_os("KIKI_BENCH_CHILD").is_none() && profiles.len() > 1;
     for (name, path) in profiles {
         eprintln!("bench {name} …");
+        if child_ok {
+            if let Some(v) = run_child(&path) {
+                results.insert(name, v);
+                continue;
+            }
+        }
         results.insert(name, Value::Obj(measure(&path)));
     }
     Value::obj().s("arch", std::env::consts::ARCH).s("os", std::env::consts::OS).u("at", crate::ops::unix_now()).s("version", env!("CARGO_PKG_VERSION")).v("results", Value::Obj(results)).done()
+}
+
+fn run_child(path: &Path) -> Option<Value> {
+    let exe = std::env::current_exe().ok()?;
+    let out = std::env::temp_dir().join(format!("kiki-bench-child-{}-{}.json", std::process::id(), path.file_name()?.to_string_lossy()));
+    let st = std::process::Command::new(exe).env("KIKI_BENCH_CHILD", "1").args(["bench", "run"]).arg(path).arg("--json").arg(&out).stdout(std::process::Stdio::null()).status().ok()?;
+    if !st.success() {
+        return None;
+    }
+    let v = crate::json::parse(&std::fs::read(&out).ok()?).ok()?;
+    let _ = std::fs::remove_file(&out);
+    let single = v.get("results").and_then(|r| if let Value::Obj(m) = r { m.values().next().cloned() } else { None })?;
+    Some(single)
 }
 
 pub fn print_table(v: &Value) {
@@ -284,8 +346,10 @@ pub fn compare(baseline: &Value, now: &Value, tolerance_pct: f64) -> Vec<(String
                 continue;
             }
             let (Some(bf), Some(nf)) = (as_f64(bv), nm.get(k).and_then(as_f64)) else { continue };
-            // ignore sub-millisecond noise
-            if nf > bf * (1.0 + tolerance_pct / 100.0) && nf - bf > 1.0 {
+            // ignore noise: a regression must clear the tolerance and an absolute floor
+            // (3 ms for timings, 50 µs for the microsecond metrics)
+            let floor = if k.ends_with("_us") { 50.0 } else { 3.0 };
+            if nf > bf * (1.0 + tolerance_pct / 100.0) && nf - bf > floor {
                 out.push((profile.clone(), k.clone(), bf, nf));
             }
         }

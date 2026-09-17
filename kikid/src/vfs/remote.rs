@@ -15,7 +15,14 @@ pub struct RemoteDir {
 }
 
 pub fn meta_from(v: &Value) -> Meta {
-    Meta { size: v.u64_field("size").unwrap_or(0), mtime_ms: v.u64_field("mtime").unwrap_or(0), atime_ms: v.u64_field("atime").unwrap_or(0), mode: v.u64_field("mode").map(|m| m as u32), uid: None, gid: None }
+    Meta {
+        size: v.u64_field("size").unwrap_or(0),
+        mtime_ms: v.u64_field("mtime").unwrap_or(0),
+        atime_ms: v.u64_field("atime").unwrap_or(0),
+        mode: v.u64_field("mode").map(|m| m as u32).unwrap_or(Meta::NONE),
+        uid: Meta::NONE,
+        gid: Meta::NONE,
+    }
 }
 
 impl Source for RemoteDir {
