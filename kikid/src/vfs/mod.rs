@@ -19,6 +19,8 @@ pub struct Meta {
     pub mode: u32,
     pub uid: u32,
     pub gid: u32,
+    /// Hidden by the backend's own convention (SMB's DOS attribute); dot-files are hidden by name.
+    pub hidden: bool,
 }
 
 impl Meta {
@@ -37,7 +39,7 @@ impl Meta {
 
 impl Default for Meta {
     fn default() -> Self {
-        Meta { size: 0, mtime_ms: 0, atime_ms: 0, mode: Meta::NONE, uid: Meta::NONE, gid: Meta::NONE }
+        Meta { size: 0, mtime_ms: 0, atime_ms: 0, mode: Meta::NONE, uid: Meta::NONE, gid: Meta::NONE, hidden: false }
     }
 }
 

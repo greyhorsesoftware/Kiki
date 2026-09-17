@@ -16,6 +16,7 @@ pub struct RemoteDir {
 
 pub fn meta_from(v: &Value) -> Meta {
     Meta {
+        hidden: v.get("hidden").and_then(Value::as_bool).unwrap_or(false),
         size: v.u64_field("size").unwrap_or(0),
         mtime_ms: v.u64_field("mtime").unwrap_or(0),
         atime_ms: v.u64_field("atime").unwrap_or(0),

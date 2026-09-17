@@ -367,7 +367,7 @@ impl Client {
                 None => Err(("Protocol", "missing items".into())),
             },
             "Volumes" => Ok(Some(Value::obj().v("items", crate::config::volumes()).done())),
-            "Mount" | "Unmount" | "Eject" | "OpenWith" | "Launch" | "Devices" | "RenameDevice" | "AccessLog" | "ClearAccessLog" => self.misc_op(&req.kind, b),
+            "Mount" | "Unmount" | "Eject" | "OpenWith" | "Launch" | "Devices" | "RenameDevice" | "AccessLog" | "ClearAccessLog" | "PluginBrowse" => self.misc_op(&req.kind, b),
             "TrashInfo" => Ok(Some(Value::obj().v("items", Value::Arr(crate::ops::trash_infos().into_iter().map(|(n, p, d)| Value::obj().s("name", n).s("path", p).s("deleted", d).done()).collect())).done())),
             "Settings" => Ok(Some(crate::config::settings())),
             "ViewPrefs" => Ok(Some(Value::obj().v("folders", crate::config::view_prefs()).done())),
@@ -750,6 +750,17 @@ impl Client {
                 let uri = Uri::parse(b.str_field("uri").unwrap_or("")).map_err(|e| ("Protocol", e.0.to_string()))?;
                 let path = crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))?;
                 Ok(Some(crate::desktop::apps_json(&path)))
+            }
+            "PluginBrowse" => {
+                let scheme = b.str_field("plugin").unwrap_or("");
+                let p = crate::plugin::get(scheme).map_err(|e| (e.code(), e.message()))?;
+                let req = Value::obj()
+                    .s("type", "Browse")
+                    .s("field", b.str_field("field").unwrap_or(""))
+                    .v("config", b.get("config").cloned().unwrap_or(Value::Null))
+                    .v("secrets", b.get("secrets").cloned().unwrap_or(Value::Null))
+                    .done();
+                p.request(req).map(Some).map_err(|e| (e.code(), e.message()))
             }
             "AccessLog" => {
                 let uris: Vec<String> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();

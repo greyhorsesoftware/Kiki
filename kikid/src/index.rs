@@ -32,7 +32,116 @@ pub struct Index {
     dir_mtime: HashMap<u32, u64>, // entry index of a directory -> mtime seen at build
 }
 
+/// Where the index lives between runs.
+pub fn index_path() -> PathBuf {
+    let base = std::env::var("KIKI_CACHE_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::var("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|_| crate::config::home().join(".cache")).join("kiki"));
+    base.join("index.bin")
+}
+
+const MAGIC: &[u8; 8] = b"KIKIIDX1";
+
+fn put_u64(out: &mut Vec<u8>, v: u64) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
+    put_u64(out, b.len() as u64);
+    out.extend_from_slice(b);
+}
+struct Cur<'a>(&'a [u8], usize);
+impl Cur<'_> {
+    fn u64(&mut self) -> Option<u64> {
+        let b = self.0.get(self.1..self.1 + 8)?;
+        self.1 += 8;
+        Some(u64::from_le_bytes(b.try_into().ok()?))
+    }
+    fn bytes(&mut self) -> Option<&[u8]> {
+        let n = self.u64()? as usize;
+        let b = self.0.get(self.1..self.1 + n)?;
+        self.1 += n;
+        Some(b)
+    }
+}
+
+fn le_u32(v: &[u32]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+fn le_u16(v: &[u16]) -> Vec<u8> {
+    v.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+fn from_le_u32(b: &[u8]) -> Vec<u32> {
+    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+}
+fn from_le_u16(b: &[u8]) -> Vec<u16> {
+    b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+}
+
 impl Index {
+    /// Plain little-endian dump of every vector; written atomically after a build or a walk.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let mut out = Vec::with_capacity(self.names.len() * 3);
+        out.extend_from_slice(MAGIC);
+        put_u64(&mut out, self.built_at);
+        put_bytes(&mut out, &self.names);
+        put_bytes(&mut out, &le_u32(&self.name_off));
+        put_bytes(&mut out, &le_u16(&self.name_len));
+        put_bytes(&mut out, &self.keys);
+        put_bytes(&mut out, &le_u32(&self.key_off));
+        put_bytes(&mut out, &le_u16(&self.key_len));
+        put_bytes(&mut out, &self.kinds);
+        put_bytes(&mut out, &le_u32(&self.parents));
+        put_bytes(&mut out, &self.is_root.iter().map(|&b| b as u8).collect::<Vec<u8>>());
+        put_bytes(&mut out, &self.removed.iter().map(|&b| b as u8).collect::<Vec<u8>>());
+        put_u64(&mut out, self.roots.len() as u64);
+        for r in &self.roots {
+            put_bytes(&mut out, r.to_string_lossy().as_bytes());
+        }
+        put_u64(&mut out, self.dir_mtime.len() as u64);
+        for (k, v) in &self.dir_mtime {
+            put_u64(&mut out, *k as u64);
+            put_u64(&mut out, *v);
+        }
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        let tmp = path.with_extension("bin.tmp");
+        std::fs::write(&tmp, &out)?;
+        std::fs::rename(&tmp, path)
+    }
+
+    pub fn load(path: &Path) -> Option<Index> {
+        let data = std::fs::read(path).ok()?;
+        if data.get(..8)? != MAGIC {
+            return None;
+        }
+        let mut c = Cur(&data, 8);
+        let built_at = c.u64()?;
+        let names = c.bytes()?.to_vec();
+        let name_off = from_le_u32(c.bytes()?);
+        let name_len = from_le_u16(c.bytes()?);
+        let keys = c.bytes()?.to_vec();
+        let key_off = from_le_u32(c.bytes()?);
+        let key_len = from_le_u16(c.bytes()?);
+        let kinds = c.bytes()?.to_vec();
+        let parents = from_le_u32(c.bytes()?);
+        let is_root: Vec<bool> = c.bytes()?.iter().map(|&b| b != 0).collect();
+        let removed: Vec<bool> = c.bytes()?.iter().map(|&b| b != 0).collect();
+        let nroots = c.u64()? as usize;
+        let mut roots = Vec::with_capacity(nroots);
+        for _ in 0..nroots {
+            roots.push(PathBuf::from(String::from_utf8_lossy(c.bytes()?).into_owned()));
+        }
+        let nd = c.u64()? as usize;
+        let mut dir_mtime = HashMap::with_capacity(nd);
+        for _ in 0..nd {
+            dir_mtime.insert(c.u64()? as u32, c.u64()?);
+        }
+        let n = name_off.len();
+        if name_len.len() != n || key_off.len() != n || key_len.len() != n || kinds.len() != n || parents.len() != n || is_root.len() != n || removed.len() != n {
+            return None;
+        }
+        Some(Index { names, name_off, name_len, keys, key_off, key_len, kinds, parents, is_root, removed, roots, built_at, dir_mtime })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -384,8 +493,22 @@ pub fn refresh_walk() {
             }
         }
     }
+    let _ = s.index.read().unwrap().save(&index_path());
     *s.last_refresh.lock().unwrap() = Instant::now();
     s.building.store(false, Ordering::Release);
+}
+
+/// Startup (plan 12): load the saved index when its roots still match, then bring it up to date
+/// with the directory-mtime walk instead of crawling everything again; otherwise rebuild.
+pub fn start() {
+    let s = service();
+    match Index::load(&index_path()) {
+        Some(ix) if ix.roots == roots() && !ix.is_empty() => {
+            *s.index.write().unwrap() = ix;
+            std::thread::Builder::new().name("index-walk".into()).spawn(refresh_walk).expect("spawn walk");
+        }
+        _ => rebuild_async(),
+    }
 }
 
 pub fn roots() -> Vec<PathBuf> {
@@ -428,6 +551,7 @@ pub fn rebuild_async() {
             }
             let cancel = AtomicBool::new(false);
             let ix = build(&roots(), &excludes(), &cancel);
+            let _ = ix.save(&index_path());
             *service().index.write().unwrap() = ix;
             *service().last_refresh.lock().unwrap() = Instant::now();
             service().building.store(false, Ordering::Release);
@@ -509,6 +633,16 @@ mod tests {
         ix.relist(e, &d.join("Projects/omarchy/src"), &default_excludes());
         assert_eq!(query(&ix, "lib.rs", Mode::Prefix).0.len(), 1);
         assert_eq!(query(&ix, "main.rs", Mode::Prefix).0.len(), 0);
+        // save / load round trip keeps every query and the walk bookkeeping
+        let file = d.join("index.bin");
+        ix.save(&file).unwrap();
+        let back = Index::load(&file).expect("loads");
+        assert_eq!(back.len(), ix.len());
+        assert_eq!(back.roots, ix.roots);
+        assert_eq!(query(&back, "lib.rs", Mode::Prefix).0.len(), 1);
+        assert_eq!(query(&back, "main.rs", Mode::Prefix).0.len(), 0);
+        assert_eq!(back.dir_mtime.len(), ix.dir_mtime.len());
+        assert!(Index::load(&d.join("nope.bin")).is_none());
         std::fs::remove_dir_all(&d).unwrap();
     }
 }

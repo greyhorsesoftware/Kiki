@@ -37,6 +37,18 @@ Rectangle {
     function defaults(p) { const v = {}; for (const f of (p ? p.form : [])) v[f.key] = (p.defaults && p.defaults[f.key]) || f.default || ""; return v }
     function uriPath(u) { if (!u) return "/"; const i = u.indexOf("://"); const rest = u.slice(i + 3); const s = rest.indexOf("/"); return s < 0 ? "/" : decodeURIComponent(rest.slice(s)) }
     function current() { return plugins[tab] }
+    // A `browse` field asks its plugin for choices given what is filled in so far.
+    function browseField(key) {
+        const p = current(); if (!p) return
+        status = "Looking…"
+        Kiki.Daemon.request("PluginBrowse", { plugin: p.scheme, field: key, config: values, secrets: values }, (ok, err) => {
+            status = err ? err.message : ""
+            if (!ok) return
+            const items = (ok.options || []).map(o => ({ label: o.label || o.value, action: () => { const nv = Object.assign({}, dlg.values); nv[key] = o.value; dlg.values = nv } }))
+            if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
+            browseMenu.open(items, Qt.point(80, 200))
+        })
+    }
     function build() {
         const p = current(); const config = {}; const secrets = {}
         for (const f of p.form) {
@@ -106,6 +118,7 @@ Rectangle {
                             value: dlg.values[modelData.key] || ""
                             error: dlg.errors[modelData.key] || ""
                             onEdited: v => { const nv = Object.assign({}, dlg.values); nv[modelData.key] = v; dlg.values = nv }
+                            onBrowse: dlg.browseField(modelData.key)
                         }
                     }
                 }
@@ -119,4 +132,5 @@ Rectangle {
         }
     }
     Keys.onEscapePressed: visible = false
+    ContextMenu { id: browseMenu; parent: dlg }
 }

@@ -269,7 +269,7 @@ impl Handler for Afc {
                 }
                 let full = if dir == "/" { format!("/{name}") } else { format!("{dir}/{name}") };
                 let (kind, size, mtime) = Afc::info(s, &full).unwrap_or((Kind::Other, 0, 0));
-                entries.push(Entry { name, kind, meta: Some(Meta { size, mtime_ms: mtime, mode: None, owner: None, group: None }), rel: String::new() });
+                entries.push(Entry { name, kind, meta: Some(Meta { hidden: false, size, mtime_ms: mtime, mode: None, owner: None, group: None }), rel: String::new() });
             }
             let n = entries.len() as u64;
             let mut it = entries.into_iter().peekable();
@@ -283,7 +283,7 @@ impl Handler for Afc {
     fn stat(&self, _location: &str, path: &str) -> Result<Meta> {
         self.with(|s| {
             let (_, size, mtime) = Afc::info(s, &norm(path))?;
-            Ok(Meta { size, mtime_ms: mtime, mode: None, owner: None, group: None })
+            Ok(Meta { hidden: false, size, mtime_ms: mtime, mode: None, owner: None, group: None })
         })
     }
 

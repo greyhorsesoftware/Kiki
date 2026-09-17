@@ -91,7 +91,7 @@ fn cfg<'a>(config: &'a Value, k: &str) -> &'a str {
 }
 
 fn to_meta(m: &russh_sftp::protocol::FileAttributes) -> Meta {
-    Meta { size: m.size.unwrap_or(0), mtime_ms: m.mtime.map(|t| t as u64 * 1000).unwrap_or(0), mode: m.permissions.map(|p| p & 0o7777), owner: m.user.clone(), group: m.group.clone() }
+    Meta { hidden: false, size: m.size.unwrap_or(0), mtime_ms: m.mtime.map(|t| t as u64 * 1000).unwrap_or(0), mode: m.permissions.map(|p| p & 0o7777), owner: m.user.clone(), group: m.group.clone() }
 }
 
 fn kind_of(ft: FileType) -> Kind {
@@ -299,7 +299,7 @@ fn parse_gnu_record(buf: &mut Vec<u8>, recursive: bool) -> Option<Entry> {
     Some(Entry {
         name,
         kind,
-        meta: Some(Meta { size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }),
+        meta: Some(Meta { hidden: false, size: s(2).parse().unwrap_or(0), mtime_ms, mode: u32::from_str_radix(&s(4), 8).ok(), owner: Some(s(5)), group: Some(s(6)) }),
         rel: if recursive { rel } else { String::new() },
     })
 }
@@ -330,6 +330,7 @@ fn parse_stat_record(buf: &mut Vec<u8>, root: &str, recursive: bool) -> Option<E
         name,
         kind,
         meta: Some(Meta {
+            hidden: false,
             size: get(1).parse().unwrap_or(0),
             mtime_ms: get(2).parse::<u64>().unwrap_or(0) * 1000,
             mode: u32::from_str_radix(get(3), 8).ok(),

@@ -916,7 +916,8 @@ impl Inner {
         let n = self.pool.len() as u32;
         let hidden_ok = self.show_hidden;
         let pool = &self.pool;
-        let visible = |i: u32| !pool.is_removed(i) && (hidden_ok || pool.name(i).first() != Some(&b'.'));
+        let metas = &self.meta;
+        let visible = |i: u32| !pool.is_removed(i) && (hidden_ok || (pool.name(i).first() != Some(&b'.') && !metas.get(i as usize).and_then(|m| m.as_ref()).map(|m| m.hidden).unwrap_or(false)));
         let mut view: Vec<u32> = match &self.filter {
             None => (0..n).filter(|&i| visible(i)).collect(),
             Some(f) => (0..n).filter(|&i| visible(i) && pool.name_contains(i, f)).collect(),

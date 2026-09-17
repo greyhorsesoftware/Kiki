@@ -339,8 +339,11 @@ impl Handler for Mtp {
         self.with(|s| {
             let path = norm(path);
             if path.is_empty() {
-                let entries: Vec<Entry> =
-                    s.storages.iter().map(|(n, _)| Entry { name: n.clone(), kind: Kind::Dir, meta: Some(Meta { size: 0, mtime_ms: 0, mode: None, owner: None, group: None }), rel: String::new() }).collect();
+                let entries: Vec<Entry> = s
+                    .storages
+                    .iter()
+                    .map(|(n, _)| Entry { name: n.clone(), kind: Kind::Dir, meta: Some(Meta { hidden: false, size: 0, mtime_ms: 0, mode: None, owner: None, group: None }), rel: String::new() })
+                    .collect();
                 let n = entries.len() as u64;
                 sink(entries);
                 return Ok(n);
@@ -352,7 +355,7 @@ impl Handler for Mtp {
                     return Err(sdk::cancel_error());
                 }
                 s.ids.insert(format!("{path}/{name}"), (storage, id));
-                entries.push(Entry { name, kind: if is_dir { Kind::Dir } else { Kind::File }, meta: Some(Meta { size, mtime_ms: mtime, mode: None, owner: None, group: None }), rel: String::new() });
+                entries.push(Entry { name, kind: if is_dir { Kind::Dir } else { Kind::File }, meta: Some(Meta { hidden: false, size, mtime_ms: mtime, mode: None, owner: None, group: None }), rel: String::new() });
             }
             let n = entries.len() as u64;
             let mut it = entries.into_iter().peekable();
@@ -368,16 +371,16 @@ impl Handler for Mtp {
             let path = norm(path);
             let (dir, name) = match path.rfind('/') {
                 Some(i) => (path[..i].to_string(), path[i + 1..].to_string()),
-                None => return Ok(Meta { size: 0, mtime_ms: 0, mode: None, owner: None, group: None }),
+                None => return Ok(Meta { hidden: false, size: 0, mtime_ms: 0, mode: None, owner: None, group: None }),
             };
             if dir.is_empty() {
-                return Ok(Meta { size: 0, mtime_ms: 0, mode: None, owner: None, group: None });
+                return Ok(Meta { hidden: false, size: 0, mtime_ms: 0, mode: None, owner: None, group: None });
             }
             let (storage, parent) = Mtp::resolve(s, &dir)?;
             list_children(s.dev, storage, parent)
                 .into_iter()
                 .find(|(n, ..)| *n == name)
-                .map(|(_, _, _, size, mtime)| Meta { size, mtime_ms: mtime, mode: None, owner: None, group: None })
+                .map(|(_, _, _, size, mtime)| Meta { hidden: false, size, mtime_ms: mtime, mode: None, owner: None, group: None })
                 .ok_or_else(PluginError::not_found)
         })
     }

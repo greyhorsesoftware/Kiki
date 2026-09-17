@@ -127,7 +127,7 @@ fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>
         m if m == libc::S_IFLNK => EntryType::Link,
         _ => EntryType::Other,
     };
-    Ok((Meta { size: st.stx_size, mtime_ms, atime_ms, mode: mode & 0o7777, uid: st.stx_uid, gid: st.stx_gid }, kind))
+    Ok((Meta { hidden: false, size: st.stx_size, mtime_ms, atime_ms, mode: mode & 0o7777, uid: st.stx_uid, gid: st.stx_gid }, kind))
 }
 
 // ---------------------------------------------------------------- portable fallback (used for native tests on macOS)
@@ -176,7 +176,7 @@ fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>
     };
     let mtime_ms = if md.mtime() <= 0 { 0 } else { md.mtime() as u64 * 1000 + (md.mtime_nsec() / 1_000_000) as u64 };
     let atime_ms = if md.atime() <= 0 { 0 } else { md.atime() as u64 * 1000 + (md.atime_nsec() / 1_000_000) as u64 };
-    Ok((Meta { size: md.size(), mtime_ms, atime_ms, mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid() }, kind))
+    Ok((Meta { hidden: false, size: md.size(), mtime_ms, atime_ms, mode: md.mode() & 0o7777, uid: md.uid(), gid: md.gid() }, kind))
 }
 
 #[cfg(not(target_os = "linux"))]

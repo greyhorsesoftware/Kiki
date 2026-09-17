@@ -28,7 +28,7 @@ Lives in kikid (`src/index/`), built from the same phase-1 scanning as listings.
 - `dirs`: per directory `{ entry: u32, mtime_ms: u64, first_child: u32, child_count: u32 }` so a directory's children are a contiguous range.
 - `keys`: case-folded, natural-order keys for every name, and `sorted`: a `u32` index array over `keys` for prefix and exact lookup.
 
-A million entries is roughly 20 MB of names plus 12 MB of entries and keys. The daemon maps it read-only for queries and rebuilds into a new file on refresh, then swaps.
+A million entries is roughly 20 MB of names plus 12 MB of entries and keys. The daemon keeps it in memory and saves it to `~/.cache/kiki/index.bin` (a plain little-endian dump of the vectors, written atomically) after every build and every directory walk; at startup the file is loaded when its roots still match the settings and brought up to date by the walk, so a restart costs one read of the file plus a stat per directory instead of a full crawl. Memory-mapping the file for queries is a later step; a read at startup is under a second for a million entries.
 
 **Roots and excludes**: `$HOME` by default; mounted volumes are added from the Locations sidebar's volume context menu. Excludes: `.cache`, `.git`, `node_modules`, `__pycache__`, the mirror filter rules, and any directory containing a `.kiki-noindex` file. Configurable in `settings.toml` under `[index]`.
 

@@ -62,6 +62,8 @@ pub enum Kind {
 
 #[derive(Clone, Debug, Default)]
 pub struct Meta {
+    /// The backend's own hidden flag (DOS Hidden on SMB); the daemon filters it like a dot-file.
+    pub hidden: bool,
     pub size: u64,
     pub mtime_ms: u64,
     pub mode: Option<u32>,
@@ -71,14 +73,17 @@ pub struct Meta {
 
 impl Meta {
     pub fn to_json(&self) -> Value {
-        Value::obj()
+        let mut o = Value::obj()
             .u("size", self.size)
             .u("mtime", self.mtime_ms)
             .v("mode", self.mode.map(|m| Value::Uint(m as u64)).unwrap_or(Value::Null))
             .opt_s("owner", self.owner.as_deref())
             .opt_s("group", self.group.as_deref())
-            .v("digest", Value::Null)
-            .done()
+            .v("digest", Value::Null);
+        if self.hidden {
+            o = o.b("hidden", true);
+        }
+        o.done()
     }
 }
 
@@ -275,6 +280,11 @@ pub trait Handler: Send + Sync {
     fn thumb(&self, location: &str, path: &str, out: &mut Outgoing) -> Result<()> {
         Err(PluginError::unsupported())
     }
+    /// Optional pick-list for a `browse` form field (plan 25): (value, label) pairs, e.g. the
+    /// hosts on the network or the shares on a server, given what the user has typed so far.
+    fn browse(&self, field: &str, config: &Value, secrets: &Value) -> Result<Vec<(String, String)>> {
+        Err(PluginError::unsupported())
+    }
 }
 
 // ---------------------------------------------------------------- framing
@@ -442,6 +452,10 @@ fn dispatch(handler: &dyn Handler, v: &Value, id: u64, t: &str, write_rx: Option
     let path = v.str_field("path").unwrap_or("/").to_string();
     let reply = match t {
         "Validate" => result(id, handler.validate(v.get("config").unwrap_or(&Value::Null))),
+        "Browse" => match handler.browse(v.str_field("field").unwrap_or(""), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
+            Ok(opts) => ok(id, Value::obj().v("options", Value::Arr(opts.into_iter().map(|(value, label)| Value::obj().s("value", value).s("label", label).done()).collect())).done()),
+            Err(e) => err(id, &e),
+        },
         "Connect" => match handler.connect(&loc, v.str_field("role").unwrap_or("browse"), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
             Ok(r) => ok(id, r),
             Err(e) => err(id, &e),
@@ -729,7 +743,7 @@ mod loop_tests {
             Ok(3)
         }
         fn stat(&self, _: &str, _: &str) -> Result<Meta> {
-            Ok(Meta { size: 1, mtime_ms: 0, mode: None, owner: None, group: None })
+            Ok(Meta { hidden: false, size: 1, mtime_ms: 0, mode: None, owner: None, group: None })
         }
         fn read(&self, _: &str, _: &str, _: u64, out: &mut Outgoing) -> Result<()> {
             for _ in 0..20 {

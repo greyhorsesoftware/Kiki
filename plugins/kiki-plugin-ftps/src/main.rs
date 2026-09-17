@@ -127,7 +127,12 @@ fn entry_from(f: &ListFile) -> Entry {
         Kind::File
     };
     let mtime_ms = f.modified().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    Entry { name: f.name().to_string(), kind, meta: Some(Meta { size: f.size() as u64, mtime_ms, mode: None, owner: f.uid().map(|u| u.to_string()), group: f.gid().map(|g| g.to_string()) }), rel: String::new() }
+    Entry {
+        name: f.name().to_string(),
+        kind,
+        meta: Some(Meta { hidden: false, size: f.size() as u64, mtime_ms, mode: None, owner: f.uid().map(|u| u.to_string()), group: f.gid().map(|g| g.to_string()) }),
+        rel: String::new(),
+    }
 }
 
 /// One MLSD line (RFC 3659): `fact=value;...; name`. Parsed here rather than by suppaftp, whose
@@ -305,7 +310,7 @@ impl Handler for Ftps {
         let mut sess = s.lock().unwrap();
         let size = sess.ftp.size(path).map_err(ftp_err)? as u64;
         let mtime_ms = sess.ftp.mdtm(path).ok().map(|t| t.and_utc().timestamp_millis().max(0) as u64).unwrap_or(0);
-        Ok(Meta { size, mtime_ms, mode: None, owner: None, group: None })
+        Ok(Meta { hidden: false, size, mtime_ms, mode: None, owner: None, group: None })
     }
 
     fn read(&self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {

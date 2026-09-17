@@ -27,7 +27,7 @@ Error codes the plugin may return: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `
 - **Path**: string, the path inside the location as the remote sees it, `/`-separated, absolute. The daemon never sends a URI to a plugin; it resolves the location and hands the plugin the path.
 - **Kind**: `"dir" | "file" | "link" | "other"`.
 - **Meta**: `{ "size": u64, "mtime": u64 (ms, 0 unknown), "mode": u32 | null, "owner": string | null, "group": string | null, "digest": { "kind": string, "hex": string } | null }`.
-- **Field**: `{ "key", "label", "kind": "text" | "password" | "path" | "port" | "select" | "file", "required": bool, "default": string | null, "options": [string] | null, "group": string | null, "help": string | null }`.
+- **Field**: `{ "key", "label", "kind": "text" | "password" | "path" | "port" | "select" | "file" | "browse", "required": bool, "default": string | null, "options": [string] | null, "group": string | null, "help": string | null }`.
 - **Config**: `{ key: string }`, the non-secret fields. **Secrets**: `{ key: string }`, the fields named in `secretFields`. Secrets arrive only in `Connect` and must never be written to disk or stderr.
 - **Role**: `"browse" | "job"`. Two sessions per location at most; `job` sessions serve transfers and mirror runs so a cancelled job never disturbs browsing.
 
@@ -39,6 +39,7 @@ Error codes the plugin may return: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `
 |---|---|---|
 | `Describe` | | `{ "scheme", "displayName", "version": string, "form": [Field], "defaults": Config, "secretFields": [string], "detector": { "upload": "sizeMtime" \| "sizeOnly" \| "digest", "download": … }, "features": { "setMtime": bool, "mode": bool, "realDirs": bool, "digestKind": string \| null, "separator": string, "metaInScan": bool, "pipelining": bool } }` |
 | `Validate` | `config` | `{}` or `Invalid` with `field` |
+| `Browse` | `field`, `config`, `secrets` | `{ "options": [{ "value", "label" }] }` choices for a `browse` field given the form so far (optional; `Unsupported` when the plugin has none) |
 
 `detector` tells the mirror engine which change detector to use by direction (`upload` = local master). `metaInScan: true` promises that `Scan` entries carry `meta`.
 

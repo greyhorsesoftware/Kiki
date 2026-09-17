@@ -8,6 +8,7 @@ Column {
     property string value: ""
     property string error: ""
     signal edited(string value)
+    signal browse()
     width: parent ? parent.width : 300
     spacing: 6
     Text { text: field.label ? field.label.toUpperCase() : ""; color: f.error ? Kiki.Theme.red : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.6 }
@@ -20,7 +21,7 @@ Column {
             TextInput {
                 id: input
                 visible: f.field.kind !== "select"
-                width: parent.width - 30; height: parent.height; verticalAlignment: TextInput.AlignVCenter
+                width: parent.width - 30 - (f.field.kind === "browse" ? 80 : 0); height: parent.height; verticalAlignment: TextInput.AlignVCenter
                 text: f.value
                 echoMode: f.field.kind === "password" ? TextInput.Password : TextInput.Normal
                 inputMethodHints: f.field.kind === "port" ? Qt.ImhDigitsOnly : Qt.ImhNone
@@ -33,6 +34,10 @@ Column {
                 text: f.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
             }
             Icon { visible: f.field.kind === "select"; name: "chev-d"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
+            // browse: the plugin lists choices (hosts, shares) for this field
+            Rectangle { visible: f.field.kind === "browse"; anchors.verticalCenter: parent.verticalCenter; width: 76; height: 24; radius: 2; color: bh.containsMouse ? Kiki.Theme.surface : "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
+                Text { anchors.centerIn: parent; text: "Browse…"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                MouseArea { id: bh; anchors.fill: parent; hoverEnabled: true; onClicked: f.browse() } }
         }
         MouseArea {
             visible: f.field.kind === "select"; anchors.fill: parent

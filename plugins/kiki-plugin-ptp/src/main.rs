@@ -193,7 +193,7 @@ impl Ptp {
         }
         let size = if info.file.fields & GP_FILE_INFO_SIZE != 0 { info.file.size } else { 0 };
         let mtime = if info.file.fields & GP_FILE_INFO_MTIME != 0 { (info.file.mtime.max(0) as u64) * 1000 } else { 0 };
-        Ok(Meta { size, mtime_ms: mtime, mode: None, owner: None, group: None })
+        Ok(Meta { hidden: false, size, mtime_ms: mtime, mode: None, owner: None, group: None })
     }
 
     fn fetch(s: &Open, folder: &str, file: &str, ty: c_int, out: &mut dyn Write) -> Result<()> {
@@ -290,7 +290,7 @@ impl Handler for Ptp {
                     return Err(gp_err(r));
                 }
                 for n in names(list) {
-                    entries.push(Entry { name: n, kind: Kind::Dir, meta: Some(Meta { size: 0, mtime_ms: 0, mode: None, owner: None, group: None }), rel: String::new() });
+                    entries.push(Entry { name: n, kind: Kind::Dir, meta: Some(Meta { hidden: false, size: 0, mtime_ms: 0, mode: None, owner: None, group: None }), rel: String::new() });
                 }
                 gp_list_unref(list);
                 let mut list: *mut CameraList = std::ptr::null_mut();
@@ -322,7 +322,7 @@ impl Handler for Ptp {
     fn stat(&self, _location: &str, path: &str) -> Result<Meta> {
         let (folder, name) = split(path);
         if name.is_empty() {
-            return Ok(Meta { size: 0, mtime_ms: 0, mode: None, owner: None, group: None });
+            return Ok(Meta { hidden: false, size: 0, mtime_ms: 0, mode: None, owner: None, group: None });
         }
         self.with(|s| Ptp::info(s, &folder, &name))
     }

@@ -43,7 +43,7 @@ fn serve() {
     kikid::devices::start();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));
-        kikid::index::rebuild_async();
+        kikid::index::start();
     });
     if let Err(e) = server::serve(listener) {
         eprintln!("serve: {e}");

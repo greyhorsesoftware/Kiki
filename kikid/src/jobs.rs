@@ -279,6 +279,7 @@ impl Job {
         let meta = |p: &std::path::Path| {
             std::fs::symlink_metadata(p)
                 .map(|m| crate::vfs::Meta {
+                    hidden: false,
                     size: m.len(),
                     mtime_ms: m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0),
                     atime_ms: 0,
