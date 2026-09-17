@@ -95,6 +95,7 @@ pub fn settings() -> Value {
             .b("relativeDates", true)
             .b("smartView", true)
             .s("heatSource", "filesystem")
+            .b("vimKeys", false)
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
             .done(),
@@ -153,8 +154,13 @@ pub fn keymap() -> Value {
         ("/ or Ctrl+F", "search", "02"),
         ("Ctrl+L", "edit path", "02"),
         ("Ctrl+1 / 2 / 3 / 4", "icon / list / columns / mirror", "02"),
-        ("j k, Up Down", "move selection (a row of tiles in icon view)", "02"),
-        ("h l, Left Right", "columns: pop and push; icon view: previous and next tile", "02"),
+        ("Up Down", "move selection (a row of tiles in icon view)", "02"),
+        ("Left Right", "columns: pop and push; icon view: previous and next tile", "02"),
+        ("letters", "type-ahead: jump to the next name starting with what you type (Vim keys off)", "23"),
+        ("h j k l, e", "with Vim keys on: move, pop/push columns, edit", "23"),
+        ("F4", "edit in the chosen editor; folder: project mode", "13"),
+        ("Shift+Del", "delete permanently (asks first)", "23"),
+        ("Ctrl+B", "focus the sidebar; Up/Down/Enter there, Esc back", "23"),
         ("Home End, PgUp PgDn", "first, last, page up, page down (Shift extends)", "02"),
         ("Alt+Up", "parent folder", "02"),
         ("Ctrl+H", "show hidden files", "02"),

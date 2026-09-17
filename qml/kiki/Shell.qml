@@ -221,6 +221,19 @@ FloatingWindow {
         ]
         menu.open(items, Qt.point(toolbar.x + toolbar.viewButton.x, 44))
     }
+    // Sidebar keyboard focus (plan 23): Ctrl+B, then Up/Down/Enter, Esc back to the pane.
+    property bool sidebarFocus: false
+    function focusSidebar(on) { sidebarFocus = on; if (on && sidebarPanel.keyIndex < 0) sidebarPanel.keyIndex = 0; if (!on) sidebarPanel.keyIndex = -1 }
+    // Type-ahead (plan 23): letters jump to the next name starting with what was typed; the
+    // prefix resets after 800 ms. Off when Vim keys are on, since h j k l e are bound then.
+    readonly property bool vimKeys: Kiki.Settings.view.vimKeys === true
+    property string typed: ""
+    Timer { id: typedTimer; interval: 800; onTriggered: win.typed = "" }
+    function typeAhead(ch) {
+        typed += ch; typedTimer.restart()
+        const after = typed.length > 1 ? null : (pane.selection.current >= 0 ? pane.selection.current : null)
+        Kiki.Daemon.request("SeekName", { lid: pane.listing.lid, prefix: typed, after: after }, ok => { if (ok && ok.index !== null && ok.index !== undefined) win.selectAt(ok.index, false) })
+    }
     // Open with… (plan 02/03): the daemon lists the desktop entries for the file's MIME type.
     function openWithMenu(pos) {
         const u = selectedUris(); if (u.length !== 1) return
@@ -236,8 +249,9 @@ FloatingWindow {
     function loadTrashInfo() { Kiki.Daemon.request("TrashInfo", {}, ok => { if (ok) { const m = {}; for (const it of ok.items) m[it.name] = it; win.trashInfo = m } }) }
     function trashNames() { return pane.selection.positions().map(p => { const r = pane.listing.row(p); return r ? r.name : null }).filter(n => n) }
     function restoreSelection() { const n = trashNames(); if (n.length) Kiki.Jobs.submit({ op: "restore", names: n }) }
-    function deleteForever() { const u = selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "delete", items: u }) }
-    function emptyTrash() { Kiki.Jobs.submit({ op: "emptyTrash" }) }
+    function deleteForever() { const u = selectedUris(); if (!u.length) return; if (pane.isTrash) { Kiki.Jobs.submit({ op: "delete", items: u }); return }
+        confirm.ask({ title: "Delete permanently?", message: u.length === 1 ? decodeURIComponent(u[0].split("/").pop()) + " will be deleted, not moved to the trash. This cannot be undone." : u.length + " items will be deleted, not moved to the trash. This cannot be undone.", label: "Delete" }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: u }) }) }
+    function emptyTrash() { confirm.ask({ title: "Empty the trash?", message: pane.listing.count + " items will be deleted for good.", label: "Empty Trash" }, yes => { if (yes) Kiki.Jobs.submit({ op: "emptyTrash" }) }) }
     Connections { target: win.pane; function onNavigated(uri) { if (uri.startsWith("trash://")) win.loadTrashInfo() } }
     Connections { target: win.pane.listing; function onReset() { if (win.pane.isTrash) win.loadTrashInfo() } }
 
@@ -321,29 +335,31 @@ FloatingWindow {
             switch (event.key) {
             case Qt.Key_Slash: toolbar.search.focus(); break
             case Qt.Key_F: if (ctrl) toolbar.search.focus(); else return; break
-            case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (pane.view === "columns") win.openSelected(); else return; break
+            case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (win.vimKeys && pane.view === "columns") win.openSelected(); else return; break
             case Qt.Key_1: if (ctrl) pane.view = "icon"; else return; break
             case Qt.Key_2: if (ctrl) pane.view = "list"; else return; break
             case Qt.Key_3: if (ctrl) pane.view = "columns"; else return; break
             case Qt.Key_4: if (ctrl) win.enterMirror(); else return; break
-            case Qt.Key_J: win.moveSelection(1, shift); break
-            case Qt.Key_K: win.moveSelection(-1, shift); break
-            case Qt.Key_Down: win.moveSelection(win.rowStep, shift); break
-            case Qt.Key_Up: if (alt) pane.up(); else win.moveSelection(-win.rowStep, shift); break
+            case Qt.Key_J: if (win.vimKeys) win.moveSelection(1, shift); else return; break
+            case Qt.Key_K: if (win.vimKeys) win.moveSelection(-1, shift); else return; break
+            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else win.moveSelection(win.rowStep, shift); break
+            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else win.moveSelection(-win.rowStep, shift); break
+            case Qt.Key_B: if (ctrl) win.focusSidebar(!win.sidebarFocus); else return; break
+            case Qt.Key_F4: win.editSelected(); break
             case Qt.Key_Home: win.selectAt(0, shift); break
             case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift); break
             case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift); break
             case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift); break
-            case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (pane.view === "columns") pane.up(); else return; break
-            case Qt.Key_Return: case Qt.Key_Enter: if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } win.openSelected(); break
+            case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (win.vimKeys && pane.view === "columns") pane.up(); else return; break
+            case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } win.openSelected(); break
             case Qt.Key_Backspace: pane.back(); break
             case Qt.Key_Left: if (alt) pane.back(); else if (pane.view === "icon") win.moveSelection(-1, shift); else if (pane.view === "columns") pane.up(); else return; break
             case Qt.Key_Right: if (alt) pane.forward(); else if (pane.view === "icon") win.moveSelection(1, shift); else if (pane.view === "columns") win.openSelected(); else return; break
             case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
-            case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else win.editSelected(); break
+            case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else if (win.vimKeys) win.editSelected(); else return; break
             case Qt.Key_F2: win.renameSelected(); break
-            case Qt.Key_Delete: if (pane.isTrash) win.deleteForever(); else win.trashSelection(); break
+            case Qt.Key_Delete: if (pane.isTrash || shift) win.deleteForever(); else win.trashSelection(); break
             case Qt.Key_C: if (ctrl && shift) win.copyPath(); else if (ctrl) win.copySelection(false); else return; break
             case Qt.Key_X: if (ctrl) win.copySelection(true); else return; break
             case Qt.Key_V: if (ctrl) win.paste(); else return; break
@@ -351,7 +367,7 @@ FloatingWindow {
             case Qt.Key_N: if (ctrl && shift) win.newFolder(); else return; break
             case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
             case Qt.Key_A: if (ctrl) { for (let i = 0; i < pane.listing.count; i++) pane.selection.rows[i] = true; pane.selection.changed() } else return; break
-            case Qt.Key_Escape: pane.selection.clear(); break
+            case Qt.Key_Escape: if (win.sidebarFocus) win.focusSidebar(false); else pane.selection.clear(); break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
@@ -360,7 +376,10 @@ FloatingWindow {
             case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
             case Qt.Key_Q: if (alt) win.aiQuery(); else return; break
             case Qt.Key_S: if (alt) win.shareMenu(); else return; break
-            default: return
+            default:
+                // type-ahead: printable characters without Ctrl/Alt (Vim keys off)
+                if (!ctrl && !alt && !win.vimKeys && !win.sidebarFocus && event.text && event.text.length === 1 && event.text.charCodeAt(0) > 32) { win.typeAhead(event.text); break }
+                return
             }
             event.accepted = true
         }
@@ -420,6 +439,7 @@ FloatingWindow {
         visible: !win.projectMode
         anchors.fill: parent
         UI.Sidebar {
+            id: sidebarPanel
             id: sidebar
             height: parent.height
             favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
@@ -552,6 +572,7 @@ FloatingWindow {
     UI.PortalDialog { id: portal; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
     UI.SettingsWindow { id: settingsWin }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
+    UI.ConfirmDialog { id: confirm; parent: win.contentItem }
     Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.integration.asked === false) integrationDialog.open() } }
     UI.ShareSheet { id: shareSheet; anchors.fill: parent }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }

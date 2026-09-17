@@ -759,6 +759,25 @@ impl Listing {
         n
     }
 
+    /// Type-ahead (plan 23): the first view position whose name starts with `prefix`
+    /// (case-insensitive), searching from `after` and wrapping; the whole view, not just the
+    /// rows a window holds.
+    pub fn seek(&self, prefix: &str, after: Option<u32>) -> Option<u32> {
+        let inner = self.inner.lock().unwrap();
+        let p = prefix.to_lowercase();
+        if p.is_empty() || inner.view.is_empty() {
+            return None;
+        }
+        let n = inner.view.len();
+        let start = after.map(|a| (a as usize + 1) % n).unwrap_or(0);
+        let matches = |pos: usize| -> bool {
+            let name = inner.pool.name(inner.view[pos]);
+            let lower = String::from_utf8_lossy(name).to_lowercase();
+            lower.starts_with(&p)
+        };
+        (0..n).map(|k| (start + k) % n).find(|&pos| matches(pos)).map(|pos| pos as u32)
+    }
+
     /// Show or hide dot-files; a `Reset` follows like a filter change.
     pub fn set_hidden(&self, show: bool) -> u64 {
         let mut inner = self.inner.lock().unwrap();
@@ -1170,6 +1189,15 @@ mod hidden_tests {
         let names: Vec<&str> = w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap()).collect();
         assert_eq!(names, vec![".git", ".secret", "a.txt"]); // folders first, then dot-files sort with the rest
         assert_eq!(l.set_hidden(false), 1);
+        // type-ahead: prefix search over the view with wrap-around
+        std::fs::write(dir.join("Banana.txt"), b"b").unwrap();
+        std::fs::write(dir.join("apple.txt"), b"a").unwrap();
+        l.rescan();
+        assert_eq!(l.seek("ba", None), Some(2)); // a.txt, apple.txt, Banana.txt sorted naturally
+        assert_eq!(l.seek("a", None), Some(0));
+        assert_eq!(l.seek("a", Some(0)), Some(1));
+        assert_eq!(l.seek("a", Some(1)), Some(0), "wraps");
+        assert_eq!(l.seek("zz", None), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

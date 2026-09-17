@@ -48,9 +48,11 @@ An audit of every action against the keymap. Added in this plan:
 
 Fixed: `e` (edit) had become unreachable after `Ctrl+E` (eject) was added to the same key; both now work. A duplicated `F5` case is gone.
 
+**Decided and built since**: type-ahead is the default (typing jumps to the next name starting with the typed prefix, via `SeekName` over the whole view with wrap-around, prefix reset after 800 ms) and the Vim keys `h j k l e` moved behind a **Vim keys** switch on the General page, off by default; `F4` edits in both modes. `Shift+Del` deletes permanently after a confirmation dialog (`ConfirmDialog`), and Empty Trash asks the same way. `Ctrl+B` focuses the sidebar: Up/Down move a highlight across favorites, volumes, locations and devices, Enter opens (or mounts) the row, Esc returns to the pane.
+
 Every context-menu action and toolbar button now has a key except these, left deliberately: **Open with…** (a menu, reached from the context menu on `Menu`/`Shift+F10`), **Compress…** and **Extract** (dialogs), **Empty Trash** (destructive, menu only), mount and unmount of volumes (sidebar only), and sidebar rows themselves, which have no keyboard focus in 0.1.0.
 
-Not done, and why: **type-ahead selection** (typing `do` jumps to `Downloads`) conflicts with the `h j k l e` bindings; it needs a decision between vim keys and type-ahead, or a modifier. **`Shift+Del` permanent delete** outside the trash is left out until a confirmation dialog exists.
+Both earlier gaps, type-ahead and `Shift+Del`, are closed as described above.
 
 ## Settings
 

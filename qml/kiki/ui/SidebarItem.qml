@@ -7,6 +7,8 @@ Rectangle {
     property color iconColor: Kiki.Theme.accent
     property string label: ""
     property bool active: false
+    /// keyboard highlight (plan 23)
+    property bool keyed: false
     property string detail: ""
     signal clicked()
     signal rightClicked()
@@ -17,7 +19,8 @@ Rectangle {
     height: 30; radius: 2
     anchors.left: parent ? parent.left : undefined; anchors.right: parent ? parent.right : undefined
     anchors.leftMargin: 8; anchors.rightMargin: 8
-    color: active ? Kiki.Theme.surface : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
+    color: active ? Kiki.Theme.surface : (hover.containsMouse || keyed ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
+    border.width: keyed ? 1 : 0; border.color: Kiki.Theme.accent
     Row {
         anchors.verticalCenter: parent.verticalCenter; x: 8; spacing: 10
         Icon { name: item.icon; color: item.iconColor; anchors.verticalCenter: parent.verticalCenter }

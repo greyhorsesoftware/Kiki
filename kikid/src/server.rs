@@ -354,6 +354,7 @@ impl Client {
             "Sort" => self.sort(b, id),
             "Filter" => self.filter(b),
             "ShowHidden" => self.show_hidden(b),
+            "SeekName" => self.seek_name(b),
             "Enrich" => self.enrich(b, id),
             "Close" => self.close(b),
             "Refresh" => self.refresh(b),
@@ -550,6 +551,15 @@ impl Client {
         let (_, l) = self.lid(b)?;
         let n = l.filter(b.str_field("text").unwrap_or(""));
         Ok(Some(Value::obj().u("n", n).done()))
+    }
+
+    fn seek_name(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
+        let (_, l) = self.lid(b)?;
+        let after = b.u64_field("after").map(|a| a as u32);
+        Ok(Some(match l.seek(b.str_field("prefix").unwrap_or(""), after) {
+            Some(i) => Value::obj().u("index", i as u64).done(),
+            None => Value::obj().v("index", Value::Null).done(),
+        }))
     }
 
     fn show_hidden(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
