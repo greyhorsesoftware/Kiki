@@ -30,6 +30,7 @@ FloatingWindow {
         Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
         Kiki.Daemon.request("PluginStatus", {}, ok => { if (ok) plugins = ok.plugins })
         Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sharePlugins = ok.plugins })
+        Kiki.Daemon.request("Volumes", {}, ok => { if (ok) volumes = ok.items })
     }
     function saved() { flash = "Saved"; flashTimer.restart() }
     Timer { id: flashTimer; interval: 1200; onTriggered: sw.flash = "" }
@@ -104,7 +105,9 @@ FloatingWindow {
                 delegate: Row { required property var modelData; spacing: 6
                     Switch { on: (Kiki.Settings.view.columns || []).indexOf(modelData[0]) >= 0; onToggled: { const cols = ["mtime", "size", "kind", "atime"].filter(c => c === modelData[0] ? !on : (Kiki.Settings.view.columns || []).indexOf(c) >= 0); sw.set("view", "columns", cols) } }
                     Text { anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } } } }
-        Row2 { label: ""; Text { width: 520; wrapMode: Text.WordWrap; text: "Accessed shows when a file was last read, with a heat colour fading over a year. On the default relatime mount option Linux updates it at most once a day unless the file changed; mount with strictatime for minute accuracy."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+        Row2 { label: "Heat source"; Choice { options: ["filesystem", "kiki"]; value: Kiki.Settings.view.heatSource || "filesystem"; onPicked: v => sw.set("view", "heatSource", v) }
+            Button { text: "Clear access log"; onClicked: Kiki.Daemon.request("ClearAccessLog", {}, () => sw.saved()) } }
+        Row2 { label: ""; Text { width: 520; wrapMode: Text.WordWrap; text: "Accessed shows when a file was last read, with a heat colour fading over a year. \"filesystem\" uses the atime the mount keeps" + (sw.homeVolume ? " (this volume: " + sw.homeVolume.atimeSupport + (sw.homeVolume.atimeSupport === "relatime" ? ", updated at most once a day unless the file changed; strictatime gives minute accuracy" : (sw.homeVolume.atimeSupport === "noatime" ? ", never updated: choose kiki" : "")) + ")" : "") + ". \"kiki\" uses this app's own opens (Open, Open with, Open in, the viewer, Share) and falls back to atime with a hollow swatch."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         Row2 { label: "Theme"; Choice { options: ["follow Omarchy", "Tokyo Night"]; value: Kiki.Settings.view.theme || "follow Omarchy"; onPicked: v => sw.set("view", "theme", v) } }
         Row2 { label: "Toast duration (ms)"; NumberBox { value: Kiki.Settings.timers.toastMs; onEdited: v => sw.set("timers", "toastMs", v) } }
     } }
@@ -143,6 +146,8 @@ FloatingWindow {
         Text { text: "Edit ~/.config/kiki/open-in.toml to add or override tools; the list reloads on save."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     } }
     property var integration: ({})
+    property var volumes: []
+    readonly property var homeVolume: { const home = "file://" + Quickshell.env("HOME"); let best = null; for (const v of volumes) if (v.uri && home.startsWith(v.uri.replace(/\/$/, "")) && (!best || v.uri.length > best.uri.length)) best = v; return best }
     function loadIntegration() { Kiki.Daemon.request("Integration", {}, ok => { if (ok) sw.integration = ok }) }
     Component { id: omarchyPage; Column { spacing: 12
         Component.onCompleted: sw.loadIntegration()

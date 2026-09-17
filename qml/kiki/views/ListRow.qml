@@ -12,13 +12,17 @@ Rectangle {
     signal contextMenu(point pos)
     property var columns: [{ role: "name" }, { role: "mtime", w: 160 }, { role: "size", w: 80 }, { role: "kind", w: 120 }]
     property int valueWidth: 160 + 80 + 120 + 36
+    // Accessed: kiki's own opens when that source is chosen and known, else the filesystem atime.
+    readonly property bool kikiSource: Kiki.Settings.view.heatSource === "kiki"
+    function heatTime() { if (!row) return 0; if (kikiSource && row.opened) return row.opened; return row.meta ? row.meta.atime : 0 }
+    function heatFallback() { return kikiSource && row && !row.opened && row.meta && row.meta.atime > 0 }
     function cell(role) {
         if (!row) return ""
         switch (role) {
         case "mtime": return row.meta ? Kiki.Format.modified(row.meta.mtime) : "…"
         case "size": return row.meta ? (row.isDir ? "—" : Kiki.Format.bytes(row.meta.size)) : ""
         case "kind": return Kiki.Format.kindLabel(row.kind)
-        case "atime": return row.meta ? Kiki.Format.relative(row.meta.atime) : "…"
+        case "atime": return heatTime() > 0 ? Kiki.Format.relative(heatTime()) : (row.meta ? "—" : "…")
         }
         return ""
     }
@@ -48,7 +52,9 @@ Rectangle {
                 required property var modelData
                 width: modelData.w; height: r.height
                 // Accessed: a heat swatch behind the text, bright for files touched recently.
-                Rectangle { visible: modelData.role === "atime" && !r.selected && r.row && r.row.meta && r.row.meta.atime > 0; anchors.fill: parent; anchors.topMargin: 3; anchors.bottomMargin: 3; anchors.rightMargin: 6; radius: 2; color: r.row && r.row.meta ? Kiki.Format.heat(r.row.meta.atime, Kiki.Theme.accent) : "transparent" }
+                Rectangle { visible: modelData.role === "atime" && !r.selected && r.heatTime() > 0; anchors.fill: parent; anchors.topMargin: 3; anchors.bottomMargin: 3; anchors.rightMargin: 6; radius: 2
+                    // hollow when the value is the filesystem fallback under the "kiki opens" source
+                    color: r.heatFallback() ? "transparent" : Kiki.Format.heat(r.heatTime(), Kiki.Theme.accent); border.width: r.heatFallback() ? 1 : 0; border.color: Kiki.Format.heat(r.heatTime(), Kiki.Theme.accent) }
                 Text { anchors.fill: parent; anchors.leftMargin: modelData.role === "atime" ? 6 : 0; verticalAlignment: Text.AlignVCenter; horizontalAlignment: modelData.role === "size" ? Text.AlignRight : Text.AlignLeft; text: r.cell(modelData.role); color: r.dim; font.family: Kiki.Theme.mono; font.pixelSize: 12; elide: Text.ElideRight }
             }
         }

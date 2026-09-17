@@ -178,10 +178,12 @@ Events:
 | `Integration` | | `{ mime, dbus, hypr, portal: bool, hyprlandAvailable, hyprConfigErrors: [string], mimeapps, bindings, portals, services: path }` (plan 09) |
 | `Integrate` | `parts?: ["mime" \| "dbus" \| "hypr" \| "portal"]` | `{ results: [{ part, ok, message }], status }`; all parts when omitted |
 | `Unintegrate` | `parts?` | same shape; removes exactly kiki's entries |
-| `Volumes` | | `{ items: [{ name, uri, device, fsType, free: u64, total: u64, removable: bool, mounted: bool, size? }] }` — unmounted filesystems (from `lsblk`) have `mounted: false`, an empty `uri` and their `size` string |
+| `Volumes` | | `{ items: [{ name, uri, device, fsType, free: u64, total: u64, removable: bool, mounted: bool, atimeSupport: "noatime" \| "relatime" \| "strictatime" \| "unknown", size? }] }` — unmounted filesystems (from `lsblk`) have `mounted: false`, an empty `uri` and their `size` string |
 | `Mount` | `device` | `{ uri, mountPoint }` via `udisksctl mount`; emits `VolumesChanged` |
 | `Unmount` | `device` | `{}` |
 | `Eject` | `device` or `uri` | `{}` — a block device is unmounted and powered off; a device URI (plan 17) closes the plugin session and hides the device until re-plug |
+| `AccessLog` | `uris` | `{ opened: { <uri>: ms }, entries, path }` kiki's own open times (plan 22); rows also carry `opened` when known |
+| `ClearAccessLog` | | `{}` |
 | `TrashInfo` | | `{ items: [{ name, path, deleted }] }` from `info/*.trashinfo` (plan 04 Trash view) |
 | `OpenWith` | `uri` | `{ mime, apps: [{ id, name, icon, default: bool }] }` desktop entries for the file's MIME type |
 | `Launch` | `app`, `uris` | `{}` runs the desktop entry with its `Exec` expanded |

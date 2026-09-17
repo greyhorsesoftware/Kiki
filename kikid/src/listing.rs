@@ -112,6 +112,8 @@ struct Inner {
     filter: Option<Vec<u8>>,
     /// Dot-files are in the view only when set (the setting's default, then per listing).
     show_hidden: bool,
+    /// The listing URI, for the access-log lookup per row.
+    uri_string: String,
     generation: u64,
     enrich: Option<Enrich>,
     subscribers: Vec<Subscriber>,
@@ -239,6 +241,7 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             sorted: false,
             filter: None,
             show_hidden: crate::config::settings().get("view").and_then(|v| v.get("showHidden")).and_then(Value::as_bool).unwrap_or(false),
+            uri_string: uri.to_string(),
             generation: 0,
             enrich: None,
             subscribers: Vec::new(),
@@ -964,27 +967,27 @@ impl Inner {
             Some(m) => meta_json(m),
             None => Value::Null,
         };
-        Value::obj()
-            .s("name", name)
-            .s("kind", self.pool.kind(idx).as_str())
-            .b("isDir", t == EntryType::Dir)
-            .b("isLink", t == EntryType::Link)
-            .v("meta", meta)
-            .v(
-                "thumb",
-                match self.thumb.get(&idx) {
-                    Some(p) => Value::Str(p.clone()),
-                    None => Value::Null,
-                },
-            )
-            .v(
-                "git",
-                match self.git.get(&idx) {
-                    Some(e) => crate::git::entry_json(e),
-                    None => Value::Null,
-                },
-            )
-            .done()
+        let opened = crate::access::opened_child(&self.uri_string, &name);
+        let o = Value::obj().s("name", name).s("kind", self.pool.kind(idx).as_str()).b("isDir", t == EntryType::Dir).b("isLink", t == EntryType::Link).v("meta", meta);
+        let o = match opened {
+            Some(ms) => o.u("opened", ms),
+            None => o,
+        };
+        o.v(
+            "thumb",
+            match self.thumb.get(&idx) {
+                Some(p) => Value::Str(p.clone()),
+                None => Value::Null,
+            },
+        )
+        .v(
+            "git",
+            match self.git.get(&idx) {
+                Some(e) => crate::git::entry_json(e),
+                None => Value::Null,
+            },
+        )
+        .done()
     }
 }
 

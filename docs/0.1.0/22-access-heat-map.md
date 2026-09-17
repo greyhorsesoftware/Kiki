@@ -6,6 +6,8 @@ Builds on: `01-daemon-and-listing.md` (`Meta`, sort roles), `21-view-memory-and-
 
 A glance at a folder shows what was touched recently. The **Accessed** column renders each file's last access time as a relative phrase over a heat swatch, so the files you were working on stand out from the ones you have not opened in months, and the column sorts so "most recently used" is one click away.
 
+**Status**: built. `Meta.atime`, the `atime` sort, `atimeSupport` per volume, the access log (`kikid/src/access.rs`), the Heat source setting and the hollow fallback swatch are in; rows carry `opened` from the log.
+
 ## Rendering
 
 - **Text**: a relative phrase, not a date: "just now" (under 45 s), "5 min ago", "3 h ago", "2 days ago" (up to two weeks), "3 weeks ago", "5 months ago", "2 years ago". A dash when the time is unknown.

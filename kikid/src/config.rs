@@ -94,6 +94,7 @@ pub fn settings() -> Value {
             .b("showHidden", false)
             .b("relativeDates", true)
             .b("smartView", true)
+            .s("heatSource", "filesystem")
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
             .done(),
@@ -198,6 +199,14 @@ pub fn volumes() -> Value {
                     continue;
                 }
                 let (dev, mnt, fstype) = (f[0], f[1], f[2]);
+                let opts = f.get(3).copied().unwrap_or("");
+                let atime = if opts.split(',').any(|o| o == "noatime") {
+                    "noatime"
+                } else if opts.split(',').any(|o| o == "strictatime") {
+                    "strictatime"
+                } else {
+                    "relatime"
+                };
                 let real = dev.starts_with("/dev/") && !matches!(fstype, "squashfs" | "devtmpfs");
                 if !real {
                     continue;
@@ -219,6 +228,7 @@ pub fn volumes() -> Value {
                         .u("total", total)
                         .b("removable", removable)
                         .b("mounted", true)
+                        .s("atimeSupport", atime)
                         .done(),
                 );
             }
@@ -239,7 +249,7 @@ pub fn volumes() -> Value {
     #[cfg(not(target_os = "linux"))]
     {
         let (free, total) = fs_space("/");
-        out.push(Value::obj().s("name", "System").s("uri", "file:///").s("fsType", "apfs").u("free", free).u("total", total).b("removable", false).done());
+        out.push(Value::obj().s("name", "System").s("uri", "file:///").s("fsType", "apfs").u("free", free).u("total", total).b("removable", false).s("atimeSupport", "unknown").done());
     }
     Value::Arr(out)
 }
