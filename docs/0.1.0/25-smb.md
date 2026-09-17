@@ -8,6 +8,8 @@ Mockup: the Add-location dialog gains an **SMB** tab; same layout as `AddLocatio
 
 Windows shares, NAS boxes and Samba servers (`smb://nas/media`) browse, transfer and mirror like SFTP and FTPS, through a location plugin built on GIO and the GVfs that Omarchy already runs, with nothing SMB-specific in the daemon or the shell. Shares on the LAN are discovered so adding one is mostly clicking, and the same plugin covers WebDAV and AFP with a smaller form each.
 
+**Status**: generated (`plugins/kiki-plugin-gio`, unverified until Omarchy: it links GLib and needs `gvfsd`); the `browse` field kind, the `Browse` request, the `hidden` flag and `available` in `Describe` are built and tested.
+
 ## Client: GIO and GVfs, not libsmbclient
 
 Omarchy ships GVfs (Nautilus depends on it), so the session already runs `gvfsd` and its `gvfsd-smb` backend, itself built on libsmbclient. kiki uses that stack through **GIO** rather than linking Samba into its own process:

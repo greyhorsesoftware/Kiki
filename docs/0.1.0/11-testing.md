@@ -44,7 +44,7 @@ Already specified per plan; collected here so the harness is shared.
 
 ## Leaf component tests
 
-`tests/qml/tst_*.qml` with QtTest. One file per component. Each test:
+`tests/qml/tst_*.qml` with QtTest, run with `qmltestrunner -import tests/qml/stubs -input tests/qml`. Present: `Format` (sizes, dates, relative times, heat), `Selection`, `WindowCache`, `ContextMenu`, `ViewSwitcher`, `SidebarItem`, `ConfirmDialog`, `Pane` (history, parent and child URIs, trash and hidden flags). One file per component. Each test:
 
 - instantiates the component with a fixed model,
 - drives it with `mouseClick`, `keyClick` and property writes,

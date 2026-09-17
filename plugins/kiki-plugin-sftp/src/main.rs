@@ -363,6 +363,7 @@ impl Handler for Sftp {
             detector_upload: "sizeMtime",
             detector_download: "sizeMtime",
             features: Features { set_mtime: true, mode: true, real_dirs: true, meta_in_scan: true, pipelining: true, partial_read: true },
+            available: None,
         }
     }
 

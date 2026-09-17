@@ -222,6 +222,7 @@ impl Handler for Afc {
             detector_upload: "sizeMtime",
             detector_download: "sizeMtime",
             features: Features { set_mtime: false, mode: false, real_dirs: true, meta_in_scan: true, pipelining: false, partial_read: true },
+            available: None,
         }
     }
 

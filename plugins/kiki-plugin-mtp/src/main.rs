@@ -245,6 +245,7 @@ impl Handler for Mtp {
             detector_upload: "sizeOnly",
             detector_download: "sizeOnly",
             features: Features { set_mtime: false, mode: false, real_dirs: true, meta_in_scan: true, pipelining: false, partial_read: false },
+            available: None,
         }
     }
 

@@ -5,7 +5,7 @@ use crate::locations::{self, Session};
 use crate::plugin::Msg;
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -95,8 +95,9 @@ impl Spec {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
-    /// Shared with the map key and the plan action: one allocation per path.
-    pub rel: Arc<str>,
+    /// Index of this entry's relative path in its `SideMap` arena (meaningless once copied into
+    /// an `Action`, which carries the path itself).
+    pub path: u32,
     pub is_dir: bool,
     pub size: u64,
     pub mtime_ms: u64,
@@ -253,8 +254,122 @@ pub fn is_changed(det: Detector, m: &Entry, r: &Entry, offset_ms: i64) -> bool {
     }
 }
 
+/// One side of a mirror: every relative path in one contiguous byte arena with `u32` offsets,
+/// and one `Entry` per path, sorted by path bytes once `finish` has run. Parents sort before
+/// their children (a prefix is shorter), which the diff relies on. Lookups are binary searches;
+/// there is no per-path allocation and no tree-map node.
+#[derive(Default, Clone)]
+pub struct SideMap {
+    buf: Vec<u8>,
+    off: Vec<u32>,
+    entries: Vec<Entry>,
+    sorted: bool,
+}
+
+impl SideMap {
+    pub fn new() -> SideMap {
+        SideMap { buf: Vec::new(), off: vec![0], entries: Vec::new(), sorted: true }
+    }
+
+    fn path_at(&self, id: u32) -> &str {
+        let (a, b) = (self.off[id as usize] as usize, self.off[id as usize + 1] as usize);
+        std::str::from_utf8(&self.buf[a..b]).unwrap_or("")
+    }
+
+    pub fn path_of(&self, e: &Entry) -> &str {
+        self.path_at(e.path)
+    }
+
+    pub fn insert(&mut self, rel: &str, mut e: Entry) {
+        self.buf.extend_from_slice(rel.as_bytes());
+        self.off.push(self.buf.len() as u32);
+        e.path = (self.off.len() - 2) as u32;
+        self.entries.push(e);
+        self.sorted = self.entries.len() <= 1;
+    }
+
+    /// Sort by path bytes; a path inserted twice keeps its last entry.
+    pub fn finish(&mut self) {
+        if self.sorted {
+            return;
+        }
+        let buf = &self.buf;
+        let off = &self.off;
+        let key = |e: &Entry| &buf[off[e.path as usize] as usize..off[e.path as usize + 1] as usize];
+        self.entries.sort_by(|a, b| key(a).cmp(key(b)));
+        self.entries.dedup_by(|later, earlier| {
+            if key(later) == key(earlier) {
+                std::mem::swap(later, earlier);
+                true
+            } else {
+                false
+            }
+        });
+        self.sorted = true;
+    }
+
+    fn position(&self, rel: &str) -> Option<usize> {
+        if self.sorted {
+            self.entries.binary_search_by(|e| self.path_of(e).as_bytes().cmp(rel.as_bytes())).ok()
+        } else {
+            self.entries.iter().rposition(|e| self.path_of(e) == rel)
+        }
+    }
+
+    pub fn get(&self, rel: &str) -> Option<&Entry> {
+        self.position(rel).map(|i| &self.entries[i])
+    }
+
+    pub fn get_mut(&mut self, rel: &str) -> Option<&mut Entry> {
+        let i = self.position(rel)?;
+        Some(&mut self.entries[i])
+    }
+
+    pub fn contains(&self, rel: &str) -> bool {
+        self.position(rel).is_some()
+    }
+
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&str, &Entry)> + '_ {
+        self.entries.iter().map(move |e| (self.path_of(e), e))
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.off.clear();
+        self.off.push(0);
+        self.entries.clear();
+        self.sorted = true;
+    }
+}
+
+impl<K: AsRef<str>> FromIterator<(K, Entry)> for SideMap {
+    fn from_iter<I: IntoIterator<Item = (K, Entry)>>(iter: I) -> Self {
+        let mut m = SideMap::new();
+        for (k, e) in iter {
+            m.insert(k.as_ref(), e);
+        }
+        m.finish();
+        m
+    }
+}
+
+impl std::ops::Index<&str> for SideMap {
+    type Output = Entry;
+    fn index(&self, rel: &str) -> &Entry {
+        self.get(rel).expect("path in side map")
+    }
+}
+
 /// Median of (master − replica) mtime deltas over same-size file pairs; 0 below three samples.
-pub fn auto_offset(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Entry>) -> i64 {
+pub fn auto_offset(master: &SideMap, replica: &SideMap) -> i64 {
     let mut deltas: Vec<i64> = master
         .iter()
         .filter_map(|(rel, m)| {
@@ -274,7 +389,7 @@ pub fn auto_offset(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<st
 
 // ---------------------------------------------------------------- diff (pure)
 
-pub fn diff(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Entry>, spec: &Spec, detector: Detector, now_ms: u64) -> Result<Plan, String> {
+pub fn diff(master: &SideMap, replica: &SideMap, spec: &Spec, detector: Detector, now_ms: u64) -> Result<Plan, String> {
     if spec.delete_extras && master.is_empty() && !replica.is_empty() {
         return Err("master scan returned no entries; refusing to delete the entire replica".into());
     }
@@ -298,7 +413,7 @@ pub fn diff(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Ent
     let mut deletes = Vec::new();
     let mut equals = Vec::new();
     for (rel, m) in master.iter() {
-        // BTreeMap iterates ascending: parents before children.
+        // Ascending path order: parents before children.
         match replica.get(rel) {
             None => {
                 if m.is_dir {
@@ -332,7 +447,7 @@ pub fn diff(master: &BTreeMap<Arc<str>, Entry>, replica: &BTreeMap<Arc<str>, Ent
     if spec.delete_extras {
         for (rel, r) in replica.iter().rev() {
             // descending: children before parents
-            if master.contains_key(rel) {
+            if master.contains(rel) {
                 continue;
             }
             deletes.push(mk(rel, if r.is_dir { ActionKind::Rmdir } else { ActionKind::Delete }, Reason::Extra, 0, None, Some(r)));
@@ -369,8 +484,8 @@ fn join_rel(root: &str, rel: &str) -> String {
 }
 
 /// Enumerates a side into rel → Entry, skipping symlinks and filtered names (with their subtrees).
-pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel: &AtomicBool) -> Result<BTreeMap<Arc<str>, Entry>, VfsError> {
-    let mut out = BTreeMap::new();
+pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel: &AtomicBool) -> Result<SideMap, VfsError> {
+    let mut out = SideMap::new();
     match side {
         Side::Local(root) => scan_local(root, "", rules, filtered_count, &mut out, cancel)?,
         Side::Remote(session, root) => {
@@ -391,9 +506,8 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
                                 continue;
                             }
                             let m = e.get("meta").filter(|m| !matches!(m, Value::Null)).map(crate::vfs::remote::meta_from).unwrap_or_default();
-                            let rel: Arc<str> = Arc::from(rel.as_str());
                             let _ = name;
-                            out.insert(rel.clone(), Entry { rel, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
+                            out.insert(&rel, Entry { path: 0, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
                         }
                     }
                 }
@@ -407,16 +521,13 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
                 out.clear();
                 scan_remote(session, root, "", rules, filtered_count, &mut out, cancel)?;
             }
-            // `rel` was used as the map key; store the full rel in the entry too.
-            for (k, v) in out.iter_mut() {
-                v.rel = k.clone();
-            }
         }
     }
+    out.finish();
     Ok(out)
 }
 
-fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<Arc<str>, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
+fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut SideMap, cancel: &AtomicBool) -> Result<(), VfsError> {
     let dir = if prefix.is_empty() { root.to_path_buf() } else { root.join(prefix) };
     for e in std::fs::read_dir(&dir)? {
         if cancel.load(Ordering::Relaxed) {
@@ -434,8 +545,7 @@ fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut us
         }
         let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
         let mtime_ms = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-        let key: Arc<str> = Arc::from(rel.as_str());
-        out.insert(key.clone(), Entry { rel: key, is_dir: md.is_dir(), size: if md.is_dir() { 0 } else { md.len() }, mtime_ms, digest: None });
+        out.insert(&rel, Entry { path: 0, is_dir: md.is_dir(), size: if md.is_dir() { 0 } else { md.len() }, mtime_ms, digest: None });
         if md.is_dir() {
             scan_local(root, &rel, rules, filtered_count, out, cancel)?;
         }
@@ -443,7 +553,7 @@ fn scan_local(root: &Path, prefix: &str, rules: &[Rule], filtered_count: &mut us
     Ok(())
 }
 
-fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut BTreeMap<Arc<str>, Entry>, cancel: &AtomicBool) -> Result<(), VfsError> {
+fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule], filtered_count: &mut usize, out: &mut SideMap, cancel: &AtomicBool) -> Result<(), VfsError> {
     if cancel.load(Ordering::Relaxed) {
         return Err(VfsError::Io("cancelled".into()));
     }
@@ -470,8 +580,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
                         missing_meta.push(rel.clone());
                     }
                     let m = meta.unwrap_or_default();
-                    let key: Arc<str> = Arc::from(rel.as_str());
-                    out.insert(key.clone(), Entry { rel: key, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
+                    out.insert(&rel, Entry { path: 0, is_dir: kind == "dir", size: m.size, mtime_ms: m.mtime_ms, digest: None });
                     if kind == "dir" {
                         dirs.push(rel);
                     }
@@ -494,15 +603,15 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
 }
 
 /// For a local side, compute MD5 for files whose counterpart has a digest and the same size.
-fn fill_local_digests(side: &Side, mine: &mut BTreeMap<Arc<str>, Entry>, other: &BTreeMap<Arc<str>, Entry>) {
+fn fill_local_digests(side: &Side, mine: &mut SideMap, other: &SideMap) {
     let Side::Local(root) = side else { return };
-    for (rel, o) in other {
+    for (rel, o) in other.iter() {
         if o.is_dir || usable_md5(&o.digest).is_none() {
             continue;
         }
         if let Some(e) = mine.get_mut(rel) {
             if !e.is_dir && e.size == o.size && e.digest.is_none() {
-                if let Ok(bytes) = std::fs::read(root.join(&**rel)) {
+                if let Ok(bytes) = std::fs::read(root.join(rel)) {
                     e.digest = Some(crate::md5::hex(&bytes));
                 }
             }
@@ -923,9 +1032,8 @@ pub fn stored(job: u64) -> Option<Arc<Stored>> {
 mod tests {
     use super::*;
 
-    fn e(rel: &str, is_dir: bool, size: u64, mtime: u64) -> (Arc<str>, Entry) {
-        let rel: Arc<str> = Arc::from(rel);
-        (rel.clone(), Entry { rel, is_dir, size, mtime_ms: mtime, digest: None })
+    fn e(rel: &str, is_dir: bool, size: u64, mtime: u64) -> (String, Entry) {
+        (rel.to_string(), Entry { path: 0, is_dir, size, mtime_ms: mtime, digest: None })
     }
     fn spec(delete: bool) -> Spec {
         Spec {
@@ -948,9 +1056,9 @@ mod tests {
 
     #[test]
     fn diff_matrix() {
-        let m: BTreeMap<_, _> =
+        let m: SideMap =
             [e("a", true, 0, 0), e("a/new.txt", false, 5, 1000), e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 9000), e("tol.txt", false, 3, 7000), e("unknown.txt", false, 3, 0)].into_iter().collect();
-        let r: BTreeMap<_, _> = [e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 1000), e("tol.txt", false, 3, 5000), e("unknown.txt", false, 3, 123), e("extra", true, 0, 0), e("extra/old.txt", false, 1, 1)]
+        let r: SideMap = [e("same.txt", false, 3, 5000), e("changed.txt", false, 3, 1000), e("tol.txt", false, 3, 5000), e("unknown.txt", false, 3, 123), e("extra", true, 0, 0), e("extra/old.txt", false, 1, 1)]
             .into_iter()
             .collect();
         let p = diff(&m, &r, &spec(false), Detector::SizeMtime, 100_000).unwrap();
@@ -970,14 +1078,14 @@ mod tests {
         assert!((p.blast_radius_fraction() - 2.0 / 6.0).abs() < 1e-9);
         assert_eq!(p.copy_bytes(), 8);
         // empty master with deletes on is refused
-        assert!(diff(&BTreeMap::new(), &r, &spec(true), Detector::SizeMtime, 0).is_err());
-        assert!(diff(&BTreeMap::new(), &r, &spec(false), Detector::SizeMtime, 0).is_ok());
+        assert!(diff(&SideMap::new(), &r, &spec(true), Detector::SizeMtime, 0).is_err());
+        assert!(diff(&SideMap::new(), &r, &spec(false), Detector::SizeMtime, 0).is_ok());
     }
 
     #[test]
     fn window_and_offset() {
-        let m: BTreeMap<_, _> = [e("old.txt", false, 1, 1_000), e("new.txt", false, 1, 90_000), e("ch.txt", false, 2, 95_000)].into_iter().collect();
-        let r: BTreeMap<_, _> = [e("ch.txt", false, 3, 1), e("gone.txt", false, 1, 1)].into_iter().collect();
+        let m: SideMap = [e("old.txt", false, 1, 1_000), e("new.txt", false, 1, 90_000), e("ch.txt", false, 2, 95_000)].into_iter().collect();
+        let r: SideMap = [e("ch.txt", false, 3, 1), e("gone.txt", false, 1, 1)].into_iter().collect();
         let mut s = spec(true);
         s.modified_within_ms = Some(20_000);
         let p = diff(&m, &r, &s, Detector::SizeMtime, 100_000).unwrap();
@@ -987,10 +1095,10 @@ mod tests {
         assert!(k.iter().any(|x| x.0 == "ch.txt" && x.1 == ActionKind::Copy));
         assert!(k.iter().any(|x| x.0 == "gone.txt" && x.1 == ActionKind::Delete)); // the window never prevents deletes
                                                                                    // offset: median of same-size pairs, needs three
-        let m: BTreeMap<_, _> = [e("a", false, 1, 10_000), e("b", false, 1, 20_000), e("c", false, 1, 30_000), e("d", false, 9, 99_000)].into_iter().collect();
-        let r: BTreeMap<_, _> = [e("a", false, 1, 6_400), e("b", false, 1, 16_400), e("c", false, 1, 26_500), e("d", false, 9, 1)].into_iter().collect();
+        let m: SideMap = [e("a", false, 1, 10_000), e("b", false, 1, 20_000), e("c", false, 1, 30_000), e("d", false, 9, 99_000)].into_iter().collect();
+        let r: SideMap = [e("a", false, 1, 6_400), e("b", false, 1, 16_400), e("c", false, 1, 26_500), e("d", false, 9, 1)].into_iter().collect();
         assert_eq!(auto_offset(&m, &r), 3_600);
-        let two: BTreeMap<_, _> = m.iter().take(2).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let two: SideMap = m.iter().take(2).map(|(k, v)| (k.to_string(), v.clone())).collect();
         assert_eq!(auto_offset(&two, &r), 0);
         assert!(!is_changed(Detector::SizeMtime, &m["a"], &r["a"], 3_600));
         assert!(is_changed(Detector::SizeMtime, &m["a"], &r["a"], 0));

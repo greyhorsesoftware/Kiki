@@ -132,6 +132,9 @@ pub struct Describe {
     pub detector_upload: &'static str,
     pub detector_download: &'static str,
     pub features: Features,
+    /// `Some((false, reason))` when the plugin cannot work on this machine (a missing daemon or
+    /// library); the dialog shows the reason instead of the form. `None` means available.
+    pub available: Option<(bool, String)>,
 }
 
 impl Describe {
@@ -145,6 +148,8 @@ impl Describe {
             .v("defaults", self.defaults.clone())
             .v("secretFields", Value::Arr(self.secret_fields.iter().map(|s| Value::Str(s.to_string())).collect()))
             .v("detector", Value::obj().s("upload", self.detector_upload).s("download", self.detector_download).done())
+            .b("available", self.available.as_ref().map(|(a, _)| *a).unwrap_or(true))
+            .s("unavailableReason", self.available.as_ref().map(|(_, r)| r.clone()).unwrap_or_default())
             .v(
                 "features",
                 Value::obj()
@@ -715,6 +720,7 @@ mod loop_tests {
                 detector_upload: "sizeMtime",
                 detector_download: "sizeMtime",
                 features: Features { set_mtime: false, mode: false, real_dirs: true, meta_in_scan: true, pipelining: false, partial_read: true },
+                available: None,
             }
         }
         fn validate(&self, _: &Value) -> Result<()> {

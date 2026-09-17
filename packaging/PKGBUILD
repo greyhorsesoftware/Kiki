@@ -9,7 +9,8 @@ url="https://github.com/davidjclark/kiki"
 license=('MIT')
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative' 'libmtp' 'libgphoto2' 'libimobiledevice' 'usbmuxd')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf')
-optdepends=('openssh: SFTP host key tools'
+optdepends=('gvfs-smb: SMB locations' 'gvfs: WebDAV and AFP locations'
+            'openssh: SFTP host key tools'
             'tailscale: share files over Taildrop'
             'kdeconnect: share to a paired phone'
             'signal-cli: share via Signal'
@@ -39,8 +40,12 @@ package() {
   for p in dbus highlight share-mail share-messages share-tailscale share-localsend share-airdrop; do
     install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
   done
-  for p in ptp mtp afc; do
+  for p in ptp mtp afc gio; do
     [ -x "${t}/kiki-plugin-$p" ] && install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
+  done
+  # one GIO plugin serves three schemes (plan 25)
+  for s in smb dav afp; do
+    [ -x "${t}/kiki-plugin-gio" ] && ln -sf kiki-plugin-gio "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$s"
   done
   true
   install -Dm755 "${_srcdir}/packaging/bin/kiki" "${pkgdir}/usr/bin/kiki"

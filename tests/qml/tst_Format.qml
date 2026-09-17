@@ -21,6 +21,22 @@ TestCase {
         compare(Kiki.Format.friendlyDate(0), "")
         compare(Kiki.Format.date(old), "12 Sep 2024 09:30")
     }
+    function test_relative_and_heat() {
+        const now = Date.now(), h = 3600000
+        compare(Kiki.Format.relative(now - 10 * 1000), "just now")
+        compare(Kiki.Format.relative(now - 5 * 60 * 1000), "5 min ago")
+        compare(Kiki.Format.relative(now - 3 * h), "3 h ago")
+        compare(Kiki.Format.relative(now - 2 * 24 * h), "2 days ago")
+        compare(Kiki.Format.relative(now - 21 * 24 * h), "3 weeks ago")
+        compare(Kiki.Format.relative(now - 150 * 24 * h), "5 months ago")
+        compare(Kiki.Format.relative(now - 800 * 24 * h), "2 years ago")
+        compare(Kiki.Format.relative(0), "—")
+        const accent = Qt.rgba(0.48, 0.64, 0.97, 1)
+        fuzzyCompare(Kiki.Format.heat(now - h, accent).a, 0.5, 0.01)
+        fuzzyCompare(Kiki.Format.heat(now - 24 * h, accent).a, 0.28, 0.03)
+        fuzzyCompare(Kiki.Format.heat(now - 365 * 24 * h, accent).a, 0.05, 0.01)
+        compare(Kiki.Format.heat(0, accent).a, 0)
+    }
     function test_display_and_crumbs() {
         compare(Kiki.Format.display("file:///home/david/Projects/kiki", "/home/david"), "~/Projects/kiki")
         compare(Kiki.Format.display("file:///home/david", "/home/david"), "~")
