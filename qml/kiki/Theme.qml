@@ -32,7 +32,7 @@ Singleton {
     property int sidebarWidth: 224
     property int toolbarHeight: 48
     property int barHeight: 28
-    property int inspectorWidth: 300
+    property int inspectorWidth: 360
 
     function kindColor(kind) {
         switch (kind) {

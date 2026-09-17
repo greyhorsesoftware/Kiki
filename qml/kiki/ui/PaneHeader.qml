@@ -18,7 +18,7 @@ Rectangle {
             Row {
                 id: badge; anchors.centerIn: parent; spacing: 6
                 Icon { name: h.pane.uri.startsWith("file://") ? "hdd" : "server"; size: 12; color: h.pane.uri.startsWith("file://") ? Kiki.Theme.fgDim : Kiki.Theme.green; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: h.pane.uri.startsWith("file://") ? "local" : h.pane.uri.split("://")[1].split("/")[0]; color: h.pane.uri.startsWith("file://") ? Kiki.Theme.fgDim : Kiki.Theme.green; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                Text { text: h.pane.uri.startsWith("file://") ? "local" : Kiki.Format.authority(h.pane.uri); color: h.pane.uri.startsWith("file://") ? Kiki.Theme.fgDim : Kiki.Theme.green; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             }
         }
         Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 120; elide: Text.ElideMiddle; text: Kiki.Format.display(h.pane.uri, h.home); color: h.pane.focused ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

@@ -56,7 +56,7 @@ Rectangle {
                     }
                 }
             }
-            Text { visible: dlg.status.hyprConfigErrors && dlg.status.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland reports config errors already; the keybinding step will refuse until they are fixed:\n" + (dlg.status.hyprConfigErrors || []).join("\n"); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { visible: !!dlg.status.hyprConfigErrors && dlg.status.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland reports config errors already; the keybinding step will refuse until they are fixed:\n" + (dlg.status.hyprConfigErrors || []).join("\n"); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Row {
                 spacing: 8; anchors.right: parent.right
                 Button { text: "Not now"; onClicked: dlg.decide(false) }

@@ -85,6 +85,18 @@ fn percent(s: &str) -> String {
     o
 }
 
+/// The bindings only expose the bulk read asynchronously, so batch `next_file` by hand.
+fn next_batch(en: &gio::FileEnumerator, max: usize) -> std::result::Result<Vec<gio::FileInfo>, glib::Error> {
+    let mut out = Vec::with_capacity(max);
+    while out.len() < max {
+        match en.next_file(gio::Cancellable::NONE)? {
+            Some(info) => out.push(info),
+            None => break,
+        }
+    }
+    Ok(out)
+}
+
 fn gerr(e: glib::Error) -> PluginError {
     use gio::IOErrorEnum as E;
     match e.kind::<E>() {
@@ -268,7 +280,7 @@ impl Handler for Gio {
                 let _ = en.close(gio::Cancellable::NONE);
                 return Err(sdk::cancel_error());
             }
-            let infos = en.next_files(512, gio::Cancellable::NONE).map_err(gerr)?;
+            let infos = next_batch(&en, 512).map_err(gerr)?;
             if infos.is_empty() {
                 break;
             }
@@ -355,7 +367,7 @@ impl Handler for Gio {
         let list = |uri: &str| -> Result<Vec<(String, String)>> {
             let en = gio::File::for_uri(uri).enumerate_children("standard::name,standard::display-name,standard::target-uri", gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE).map_err(gerr)?;
             let mut out = Vec::new();
-            while let Ok(infos) = en.next_files(64, gio::Cancellable::NONE) {
+            while let Ok(infos) = next_batch(&en, 64) {
                 if infos.is_empty() {
                     break;
                 }

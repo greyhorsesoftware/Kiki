@@ -107,6 +107,7 @@ Rectangle {
                 }
             }
             Flickable {
+                NaturalScroll { }
                 width: parent.width; height: parent.height - 34 - 20 - 20 - 30 - 20 - 20; clip: true; contentHeight: fields.height
                 Column {
                     id: fields; width: parent.width; spacing: 14

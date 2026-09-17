@@ -75,6 +75,11 @@ QtObject {
         const i = uri.indexOf("://")
         return decodeURIComponent(uri.slice(i + 3))
     }
+    // Host part of a remote uri ("sftp://homelab/srv" -> "homelab"); empty for local or bare paths.
+    function authority(uri) {
+        const m = (uri || "").match(/^[a-z0-9+.-]+:\/\/([^/]*)/i)
+        return m ? m[1] : ""
+    }
     function crumbs(uri, home) {
         const d = display(uri, home)
         const parts = d.split("/").filter(s => s.length)

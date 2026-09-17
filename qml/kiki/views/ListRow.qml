@@ -12,6 +12,8 @@ Rectangle {
     signal contextMenu(point pos)
     property var columns: [{ role: "name" }, { role: "mtime", w: 160 }, { role: "size", w: 80 }, { role: "kind", w: 120 }]
     property int valueWidth: 160 + 80 + 120 + 36
+    // Matches ListPane: whatever the value columns leave, never less than a sliver.
+    readonly property int nameWidth: Math.max(48, r.width - 24 - r.valueWidth)
     // Accessed: kiki's own opens when that source is chosen and known, else the filesystem atime.
     readonly property bool kikiSource: Kiki.Settings.view.heatSource === "kiki"
     function heatTime() { if (!row) return 0; if (kikiSource && row.opened) return row.opened; return row.meta ? row.meta.atime : 0 }
@@ -27,6 +29,7 @@ Rectangle {
         return ""
     }
     height: Kiki.Theme.rowHeight
+    clip: true
     color: selected ? Kiki.Theme.accent : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
     Connections { target: r.pane ? r.pane.listing : null; function onRowsUpdated(first, n) { if (r.rowIndex >= first && r.rowIndex < first + n) r.row = r.pane.listing.row(r.rowIndex) } function onReset() { r.row = r.pane.listing.row(r.rowIndex) } }
     Connections { target: r.pane ? r.pane.selection : null; function onChanged() { r.selected = r.pane.selection.has(r.rowIndex) } }
@@ -37,13 +40,13 @@ Rectangle {
     Row {
         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
         Row {
-            width: r.width - 24 - r.valueWidth; height: parent.height; spacing: 8
+            width: r.nameWidth; height: parent.height; spacing: 8
             Item {
                 width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
                 UI.Icon { visible: !(r.row && r.row.thumb); name: r.row ? r.row.kind : "file"; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
-            Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (r.row && r.row.git && r.row.git.state !== "clean" ? 20 : 0); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (r.row.git && r.row.git.state === "ignored" && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (r.row && r.row.git && r.row.git.state !== "clean" ? 20 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (r.row.git && r.row.git.state === "ignored" && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { visible: r.row && r.row.git && r.row.git.state !== "clean" && r.row.git.state !== "ignored"; anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(r.row ? r.row.git : null); color: r.selected ? Kiki.Theme.bg : Kiki.Format.gitColor(r.row ? r.row.git : null); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
         }
         Repeater {
@@ -62,7 +65,7 @@ Rectangle {
     // Inline rename (F2): a text input over the name column.
     Rectangle {
         visible: r.pane && r.pane.renamingIndex === r.rowIndex
-        x: 40; y: 2; width: r.width - 24 - r.valueWidth - 24; height: parent.height - 4; radius: 2
+        x: 40; y: 2; width: Math.max(40, r.nameWidth - 24); height: parent.height - 4; radius: 2
         color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent; z: 2
         onVisibleChanged: if (visible) { edit.text = r.row ? r.row.name : ""; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
         TextInput {
@@ -94,7 +97,7 @@ Rectangle {
         drag.target: dragProxy; drag.threshold: 8
         drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
         onClicked: mouse => {
-            if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(Qt.point(mouse.x, mouse.y)); return }
+            if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(r.mapToItem(null, mouse.x, mouse.y)); return }
             if (mouse.modifiers & Qt.ShiftModifier) r.pane.selection.range(r.rowIndex)
             else if (mouse.modifiers & Qt.ControlModifier) r.pane.selection.toggle(r.rowIndex)
             else r.pane.selection.set(r.rowIndex)

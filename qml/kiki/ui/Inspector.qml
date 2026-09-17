@@ -7,9 +7,8 @@ Rectangle {
     id: insp
     property string uri: ""
     property var row: null           // the listing row when known (name, kind, meta)
-    property string tab: "general"   // code | general | permissions
+    property string tab: "general"   // general | permissions
     signal edit(string uri, int line)
-    function isText() { const k = kind(); return k === "code" || k === "text" || (k === "document" && /\.(md|txt|rst|log|csv)$/i.test(name())) }
     property string home: ""
     property var preview: null
     property var meta: row ? row.meta : null
@@ -21,7 +20,7 @@ Rectangle {
     color: Kiki.Theme.bg
     Rectangle { visible: !standalone; width: 1; height: parent.height; color: Kiki.Theme.line }
 
-    onUriChanged: { preview = null; if (uri) { reload(); if (isText() && tab === "general") tab = "code"; if (!isText() && tab === "code") tab = "general" } }
+    onUriChanged: { preview = null; if (uri) reload() }
     function reload() {
         const u = uri
         Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) preview = ok || null })
@@ -64,7 +63,7 @@ Rectangle {
             Row {
                 spacing: 20; height: parent.height
                 Repeater {
-                    model: insp.isText() ? [{ id: "code", label: "Code" }, { id: "general", label: "General" }, { id: "permissions", label: "Permissions" }] : [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
+                    model: [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
                     delegate: Item {
                         required property var modelData
                         width: t.implicitWidth + 4; height: 32
@@ -75,9 +74,8 @@ Rectangle {
                 }
             }
         }
-        Loader { width: parent.width; height: parent.height - 120; sourceComponent: insp.tab === "code" ? codeTab : (insp.tab === "general" ? general : permissions) }
+        Loader { width: parent.width; height: parent.height - 120; sourceComponent: insp.tab === "general" ? general : permissions }
     }
-    Component { id: codeTab; CodeTab { uri: insp.uri; home: insp.home; onEdit: (u, line) => insp.edit(u, line) } }
     Item {
     }
 
@@ -97,7 +95,17 @@ Rectangle {
             // Preview box
             Rectangle {
                 readonly property bool markdown: insp.preview && insp.preview.markdown === true
-                width: parent.width; height: markdown ? 300 : 150; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line; clip: true
+                readonly property bool isImage: insp.preview && insp.preview.path !== undefined
+                // An image preview takes the width of the panel and keeps its own ratio, rather
+                // than sitting letterboxed in a short box.
+                readonly property int imageHeight: img.implicitWidth > 0
+                    ? Math.min(400, Math.round((width - 12) * img.implicitHeight / img.implicitWidth) + 12)
+                    : 240
+                // A folder (or anything with no preview) is just its icon: no box around it.
+                readonly property bool iconOnly: !insp.preview || insp.preview.children !== undefined
+                width: parent.width; height: markdown ? 300 : (isImage ? imageHeight : 150); radius: 2
+                color: iconOnly ? "transparent" : Kiki.Theme.bgDark
+                border.width: iconOnly ? 0 : 1; border.color: Kiki.Theme.line; clip: true
                 Text {
                     visible: insp.preview && insp.preview.text !== undefined && !parent.markdown
                     anchors.fill: parent; anchors.margins: 10
@@ -106,6 +114,7 @@ Rectangle {
                 }
                 // Markdown (plan 23): rendered by Qt's own Markdown support, scrollable, in the UI font.
                 Flickable {
+                    NaturalScroll { }
                     visible: parent.markdown
                     anchors.fill: parent; anchors.margins: 10; contentHeight: md.height; clip: true; boundsBehavior: Flickable.StopAtBounds
                     Text {
@@ -118,6 +127,7 @@ Rectangle {
                     }
                 }
                 Image {
+                    id: img
                     visible: insp.preview && insp.preview.path !== undefined
                     anchors.fill: parent; anchors.margins: 6; fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true
                     source: insp.preview && insp.preview.path ? "file://" + insp.preview.path : ""
@@ -128,17 +138,13 @@ Rectangle {
                     anchors.fill: parent; anchors.margins: 10
                     Repeater { model: insp.preview && insp.preview.members ? insp.preview.members.slice(0, 9) : []; delegate: Text { required property var modelData; text: (modelData.isDir ? "" : "  ") + modelData.name; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; elide: Text.ElideMiddle; width: 250 } }
                 }
-                Column {
-                    visible: insp.preview && insp.preview.children !== undefined
-                    anchors.fill: parent; anchors.margins: 10
-                    Repeater { model: insp.preview && insp.preview.children ? insp.preview.children.slice(0, 9) : []; delegate: Text { required property string modelData; text: modelData; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-                }
-                Icon { visible: !insp.preview; anchors.centerIn: parent; name: insp.kind(); size: 48; strokeWidth: 1; color: Kiki.Theme.gutter }
+                // A folder shows its icon rather than a list of what is inside it.
+                Icon { visible: !insp.preview || insp.preview.children !== undefined; anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
             }
             Column {
                 spacing: 8; width: parent.width
                 Field { label: "Type"; value: Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
-                Field { label: "Host"; value: insp.uri.startsWith("file://") ? "local" : insp.uri.split("://")[1].split("/")[0] }
+                Field { label: "Host"; value: insp.uri.startsWith("file://") ? "local" : Kiki.Format.authority(insp.uri) }
                 Field { label: "Location"; value: Kiki.Format.display(insp.uri.slice(0, insp.uri.lastIndexOf("/")) || insp.uri, insp.home) }
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }

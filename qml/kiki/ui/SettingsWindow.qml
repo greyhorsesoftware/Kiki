@@ -1,79 +1,127 @@
 import QtQuick
+import QtQuick.Controls as QC
 import Quickshell
 import ".." as Kiki
 
-// Settings (plan 20): one window, a page per area, every control writes through immediately.
-FloatingWindow {
+// Settings (plan 20): a panel over the window, a page per area, every control writes through
+// immediately. It is an overlay rather than a second window so it always sits above kiki itself.
+Rectangle {
     id: sw
-    title: "kiki settings"
-    implicitWidth: 900
-    implicitHeight: 640
-    color: Kiki.Theme.bg
     visible: false
+    anchors.fill: parent
+    color: Qt.rgba(0, 0, 0, 0.5)
+    z: 93
     property string page: "general"
-    property var keymap: []
     property var about: ({})
     property var tools: []
     property var index: ({})
-    property var locations: []
     property var plugins: []
     property var sharePlugins: []
     property var pingResult: ({})
     property string flash: ""
-    function open(p) { if (p) page = p; visible = true; reload() }
+    function open(p) { if (p) page = p; visible = true; reload(); panel.forceActiveFocus() }
+    function close() { visible = false }
     function reload() {
         Kiki.Settings.load()
-        Kiki.Daemon.request("Keymap", {}, ok => { if (ok) keymap = ok.keys })
-        Kiki.Daemon.request("About", {}, ok => { if (ok) about = ok })
-        Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) tools = ok.tools })
-        Kiki.Daemon.request("IndexStatus", {}, ok => { if (ok) index = ok })
-        Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
-        Kiki.Daemon.request("PluginStatus", {}, ok => { if (ok) plugins = ok.plugins })
-        Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sharePlugins = ok.plugins })
-        Kiki.Daemon.request("Volumes", {}, ok => { if (ok) volumes = ok.items })
+        Kiki.Daemon.request("About", {}, ok => { if (ok) sw.about = ok })
+        Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) sw.tools = ok.tools })
+        Kiki.Daemon.request("IndexStatus", {}, ok => { if (ok) sw.index = ok })
+        Kiki.Daemon.request("PluginStatus", {}, ok => { if (ok) sw.plugins = ok.plugins })
+        Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sw.sharePlugins = ok.plugins })
+        Kiki.Daemon.request("Volumes", {}, ok => { if (ok) sw.volumes = ok.items })
     }
     function saved() { flash = "Saved"; flashTimer.restart() }
     Timer { id: flashTimer; interval: 1200; onTriggered: sw.flash = "" }
     function set(section, key, value) { Kiki.Settings.set(section, key, value); saved() }
 
     readonly property var pages: [
-        { id: "general", label: "General" }, { id: "keys", label: "Keys" }, { id: "locations", label: "Locations" }, { id: "search", label: "Search" },
-        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "plugins", label: "Plugins" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
+        { id: "general", label: "General" }, { id: "search", label: "Search" },
+        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
     ]
 
+    MouseArea { anchors.fill: parent; onClicked: sw.close() }
+
+    Rectangle {
+        id: panel
+        anchors.centerIn: parent
+        width: Math.min(900, parent.width - 40)
+        height: Math.min(640, parent.height - 40)
+        color: Kiki.Theme.bg; border.width: 1; border.color: Kiki.Theme.line
+        clip: true
+        focus: true
+        Keys.onEscapePressed: sw.close()
+        MouseArea { anchors.fill: parent }          // clicks in the panel never reach the scrim
+
+        Item {
+            id: titleBar
+            width: parent.width; height: 36
+            Text { x: 16; anchors.verticalCenter: parent.verticalCenter; text: "Settings"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 14; font.bold: true }
+            Rectangle {
+                width: 24; height: 24; radius: 2; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter
+                color: closeHover.containsMouse ? Kiki.Theme.surface : "transparent"
+                Icon { anchors.centerIn: parent; name: "x"; size: 12; color: Kiki.Theme.fgDim }
+                MouseArea { id: closeHover; anchors.fill: parent; hoverEnabled: true; onClicked: sw.close() }
+            }
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
+        }
+
     Row {
-        anchors.fill: parent
+        anchors.fill: parent; anchors.topMargin: titleBar.height
         Rectangle {
-            width: 200; height: parent.height; color: Kiki.Theme.bgDark
+            width: Math.min(200, Math.floor(parent.width * 0.32)); height: parent.height; color: Kiki.Theme.bgDark
+            clip: true
             Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
-            Column {
-                anchors.fill: parent; anchors.topMargin: 12; spacing: 1
-                Repeater {
-                    model: sw.pages
-                    delegate: Rectangle {
-                        required property var modelData
-                        width: parent.width - 16; x: 8; height: 30; radius: 2; color: sw.page === modelData.id ? Kiki.Theme.surface : "transparent"
-                        Text { x: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: sw.page === modelData.id ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                        MouseArea { anchors.fill: parent; onClicked: sw.page = modelData.id }
+            Flickable {
+                NaturalScroll { }
+                anchors.fill: parent; anchors.topMargin: 12; anchors.bottomMargin: 28
+                contentHeight: navCol.height; clip: true; boundsBehavior: Flickable.StopAtBounds
+                Column {
+                    id: navCol
+                    width: parent.width; spacing: 1
+                    Repeater {
+                        model: sw.pages
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: parent.width - 16; x: 8; height: 30; radius: 2; color: sw.page === modelData.id ? Kiki.Theme.surface : "transparent"
+                            Text { x: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: sw.page === modelData.id ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                            MouseArea { anchors.fill: parent; onClicked: sw.page = modelData.id }
+                        }
                     }
                 }
             }
             Text { anchors.bottom: parent.bottom; anchors.bottomMargin: 12; x: 20; text: sw.flash; color: Kiki.Theme.green; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         }
         Flickable {
-            width: parent.width - 200; height: parent.height; contentHeight: body.height + 48; clip: true
+            NaturalScroll { }
+            width: Math.max(0, parent.width - Math.min(200, Math.floor(parent.width * 0.32))); height: parent.height
+            contentHeight: body.height + 48; contentWidth: width; clip: true; boundsBehavior: Flickable.StopAtBounds
             Column {
                 id: body; x: 28; y: 24; width: parent.width - 56; spacing: 18
                 Text { text: sw.pages.find(p => p.id === sw.page).label; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-                Loader { width: parent.width; sourceComponent: { general: general, keys: keys, locations: locs, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, plugins: pluginsPage, omarchy: omarchyPage, about: about }[sw.page] }
+                Loader { width: parent.width; sourceComponent: ({ general: general, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, omarchy: omarchyPage, about: aboutPage })[sw.page] }
             }
         }
     }
 
-    component Row2: Row { property string label: ""; spacing: 14; height: 32; Text { width: 220; anchors.verticalCenter: parent.verticalCenter; text: label; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
+    }
+
+    // The label takes a share of the page width and the controls get the rest, so a narrow panel
+    // still shows the controls instead of pushing them past its edge.
+    component Row2: Row {
+        property string label: ""
+        property string hint: ""            // shown on hover rather than crowding the row
+        readonly property real avail: parent ? parent.width : 400
+        readonly property real labelWidth: Math.max(90, Math.min(220, avail * 0.42))
+        width: avail; clip: true
+        spacing: 14; height: 32
+        Text { width: labelWidth; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: label; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+        HoverHandler { id: rowHover }
+        QC.ToolTip { visible: hint !== "" && rowHover.hovered; text: hint; delay: 350 }
+    }
     component Choice: Rectangle {
         property var options: []; property string value: ""; signal picked(string v)
-        width: 260; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        width: parent && parent.avail !== undefined ? Math.max(110, Math.min(260, parent.avail - parent.labelWidth - 28)) : 260
+        height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
         Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
         MouseArea { anchors.fill: parent; onClicked: { const i = options.indexOf(value); picked(options[(i + 1) % options.length]) } }
@@ -94,11 +142,11 @@ FloatingWindow {
     Component { id: general; Column { spacing: 12
         Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns", "mirror"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
-        Row2 { label: "Pick the view by contents"; Switch { on: Kiki.Settings.view.smartView !== false; onToggled: sw.set("view", "smartView", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "picture folders open in icon view, remote locations in Mirror view (memory wins)"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-        Row2 { label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-        Row2 { label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-        Row2 { label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } Text { anchors.verticalCenter: parent.verticalCenter; text: "default for new panes; Ctrl+H or the view menu toggles a pane"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-        Row2 { label: "Inspector on by default"; Switch { on: Kiki.Settings.view.inspector === true; onToggled: sw.set("view", "inspector", !on) } }
+        Row2 { hint: "picture folders open in icon view, remote locations in Mirror view (memory wins)"; label: "Pick the view by contents"; Switch { on: Kiki.Settings.view.smartView !== false; onToggled: sw.set("view", "smartView", !on) } }
+        Row2 { hint: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }
+        Row2 { hint: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } }
+        Row2 { hint: "off hides it until Ctrl+Shift+B"; label: "Show favorites panel"; Switch { on: Kiki.Settings.view.sidebar === true; onToggled: sw.set("view", "sidebar", !on) } }
+        Row2 { hint: "default for new panes; Ctrl+H or the view menu toggles a pane"; label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } }
         Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
             Button { text: "Forget all"; onClicked: { Kiki.Daemon.request("ClearViewPrefs", {}); sw.saved() } } }
         Row2 { label: "List columns"; Row { spacing: 12; anchors.verticalCenter: parent.verticalCenter
@@ -106,26 +154,10 @@ FloatingWindow {
                 delegate: Row { required property var modelData; spacing: 6
                     Switch { on: (Kiki.Settings.view.columns || []).indexOf(modelData[0]) >= 0; onToggled: { const cols = ["mtime", "size", "kind", "atime"].filter(c => c === modelData[0] ? !on : (Kiki.Settings.view.columns || []).indexOf(c) >= 0); sw.set("view", "columns", cols) } }
                     Text { anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } } } }
-        Row2 { label: "Heat source"; Choice { options: ["filesystem", "kiki"]; value: Kiki.Settings.view.heatSource || "filesystem"; onPicked: v => sw.set("view", "heatSource", v) }
+        Row2 { hint: "Accessed shows when a file was last read, with a heat colour fading over a year. \"filesystem\" uses the atime the mount keeps" + (sw.homeVolume ? " (this volume: " + sw.homeVolume.atimeSupport + (sw.homeVolume.atimeSupport === "relatime" ? ", updated at most once a day unless the file changed; strictatime gives minute accuracy" : (sw.homeVolume.atimeSupport === "noatime" ? ", never updated: choose kiki" : "")) + ")" : "") + ". \"kiki\" uses this app's own opens (Open, Open with, Open in, the viewer, Share) and falls back to atime with a hollow swatch."; label: "Heat source"; Choice { options: ["filesystem", "kiki"]; value: Kiki.Settings.view.heatSource || "filesystem"; onPicked: v => sw.set("view", "heatSource", v) }
             Button { text: "Clear access log"; onClicked: Kiki.Daemon.request("ClearAccessLog", {}, () => sw.saved()) } }
-        Row2 { label: ""; Text { width: 520; wrapMode: Text.WordWrap; text: "Accessed shows when a file was last read, with a heat colour fading over a year. \"filesystem\" uses the atime the mount keeps" + (sw.homeVolume ? " (this volume: " + sw.homeVolume.atimeSupport + (sw.homeVolume.atimeSupport === "relatime" ? ", updated at most once a day unless the file changed; strictatime gives minute accuracy" : (sw.homeVolume.atimeSupport === "noatime" ? ", never updated: choose kiki" : "")) + ")" : "") + ". \"kiki\" uses this app's own opens (Open, Open with, Open in, the viewer, Share) and falls back to atime with a hollow swatch."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         Row2 { label: "Theme"; Choice { options: ["follow Omarchy", "Tokyo Night"]; value: Kiki.Settings.view.theme || "follow Omarchy"; onPicked: v => sw.set("view", "theme", v) } }
         Row2 { label: "Toast duration (ms)"; NumberBox { value: Kiki.Settings.timers.toastMs; onEdited: v => sw.set("timers", "toastMs", v) } }
-    } }
-    Component { id: keys; Column { spacing: 4
-        Repeater { model: sw.keymap; delegate: Row { required property var modelData; spacing: 14; height: 24
-            Text { width: 220; text: modelData.key; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-            Text { width: 380; text: modelData.action; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-            Text { text: "plan " + modelData.plan; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter } } }
-        Text { text: "Rebinding is a later version."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-    } }
-    Component { id: locs; Column { spacing: 8
-        Repeater { model: sw.locations; delegate: Row { required property var modelData; spacing: 14; height: 30
-            Text { width: 200; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-            Text { width: 80; anchors.verticalCenter: parent.verticalCenter; text: modelData.plugin; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-            Text { width: 260; anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideMiddle; text: modelData.remoteUri; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-            Button { text: "Remove"; onClicked: Kiki.Daemon.request("RemoveLocation", { name: modelData.name }, () => sw.reload()) } } }
-        Text { visible: sw.locations.length === 0; text: "No locations yet. Add one from the sidebar's + button."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
     } }
     Component { id: search; Column { spacing: 12
         Text { text: (sw.index.entries || 0).toLocaleString() + " names indexed · " + Kiki.Format.bytes(sw.index.bytes || 0) + (sw.index.refreshing ? " · refreshing" : ""); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
@@ -204,7 +236,13 @@ FloatingWindow {
         } }
         Text { visible: sw.sharePlugins.length === 0; text: "No share plugins found in the plugin directory."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
     } }
-    Component { id: pluginsPage; Column { spacing: 6
+    Component { id: aboutPage; Column { spacing: 8
+        Repeater { model: [["Version", sw.about.version], ["Socket", sw.about.socket], ["Plugins", sw.about.pluginDir], ["Config", sw.about.configDir]]; delegate: Row { required property var modelData; spacing: 14
+            Text { width: 120; text: modelData[0]; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+            Text { width: Math.max(120, (parent.parent ? parent.parent.width : 520) - 134); wrapMode: Text.WrapAnywhere; text: modelData[1] || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } }
+        Item { width: 1; height: 10 }
+        Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
+        Item { width: 1; height: 2 }
         Text { text: "Every kiki-plugin-* binary found, with its kind and whether it is running now."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         Repeater { model: sw.plugins; delegate: Row { required property var modelData; spacing: 12; height: 30
             Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.gutter }
@@ -215,12 +253,7 @@ FloatingWindow {
             Button { height: 24; text: "Ping"; onClicked: Kiki.Daemon.request("PluginPing", { name: modelData.name }, (ok, err) => { const r = Object.assign({}, sw.pingResult); r[modelData.name] = ok ? ok.ms + " ms" : (err ? err.message : "?"); sw.pingResult = r }) }
             Text { anchors.verticalCenter: parent.verticalCenter; text: sw.pingResult[modelData.name] || ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
         Text { visible: sw.plugins.length === 0; text: "No plugins found. Directories: " + (sw.about.pluginDir || ""); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; width: 560 }
-    } }
-    Component { id: about; Column { spacing: 8
-        Repeater { model: [["Version", sw.about.version], ["Socket", sw.about.socket], ["Plugins", sw.about.pluginDir], ["Config", sw.about.configDir]]; delegate: Row { required property var modelData; spacing: 14
-            Text { width: 120; text: modelData[0]; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-            Text { width: 520; wrapMode: Text.WrapAnywhere; text: modelData[1] || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } }
-        Item { width: 1; height: 8 }
+        Item { width: 1; height: 10 }
         Button { text: "Reset all settings"; onClicked: Kiki.Daemon.request("ResetSettings", {}, () => sw.reload()) }
     } }
 }

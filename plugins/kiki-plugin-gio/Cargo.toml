@@ -11,5 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
-gio = "0.20"
+gio = { version = "0.20", features = ["v2_62"] }
 glib = "0.20"

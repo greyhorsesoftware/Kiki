@@ -18,8 +18,8 @@ TestCase {
     }
     function test_clamps_to_parent() {
         menu.open([{ label: "A", action: () => {} }], Qt.point(590, 390))
-        verify(menu.x + menu.width <= 600)
-        verify(menu.y + menu.height <= 400)
+        verify(menu.box.x + menu.box.width <= 600)
+        verify(menu.box.y + menu.box.height <= 400)
         menu.close()
     }
     function test_escape_closes() {

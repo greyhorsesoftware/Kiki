@@ -715,6 +715,16 @@ impl Listing {
 
     pub fn sort(self: &Arc<Self>, role: SortRole, asc: bool, waiter: Option<(Sender<Value>, u64)>) -> u64 {
         let mut inner = self.inner.lock().unwrap();
+        // Clients state the order they want on every open, because a cached listing carries the
+        // order an earlier client asked for. Restating the order already in force costs nothing.
+        if inner.sort == (role, asc) && inner.sorted {
+            let n = inner.view.len() as u64;
+            drop(inner);
+            if let Some(w) = waiter {
+                let _ = w.0.send(proto::ok(w.1, Value::obj().u("n", n).done()));
+            }
+            return n;
+        }
         inner.sort = (role, asc);
         inner.sorted = false;
         if role.needs_meta() && inner.meta.iter().any(Option::is_none) {

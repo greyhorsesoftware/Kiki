@@ -2,7 +2,8 @@ import QtQuick
 import Quickshell
 import ".." as Kiki
 
-// The pane URI as crumbs; click a crumb to jump; Ctrl+L edits the full URI.
+// The pane URI as crumbs. Click a crumb to jump to it, click the path itself (or Ctrl+L) to
+// type one, and right-click for the folders above this one.
 Rectangle {
     id: bc
     property string uri: ""
@@ -10,10 +11,21 @@ Rectangle {
     property bool editing: false
     property var repo: null
     signal navigate(string uri)
+    signal pathMenu()
     height: 30; radius: 2
-    color: Kiki.Theme.bgDark; border.width: 1; border.color: editing ? Kiki.Theme.accent : Kiki.Theme.line
+    color: editing ? Kiki.Theme.bgDark : "transparent"
+    clip: true
+    // What the crumbs may use: the field less the branch chip.
+    readonly property int crumbSpace: width - 20 - (branchChip.visible ? branchChip.width + 10 : 0)
 
     function edit() { editing = true; input.text = bc.uri; input.forceActiveFocus(); input.selectAll() }
+    /// The folders above this one, nearest first: what the path dropdown offers.
+    function ancestors() {
+        const parts = Kiki.Format.crumbs(uri, home)
+        const out = []
+        for (let i = parts.length - 2; i >= 0; i--) out.push({ label: parts[i], uri: crumbUri(i) })
+        return out
+    }
     function crumbUri(index) {
         const parts = Kiki.Format.crumbs(uri, home)
         if (uri.startsWith("file://")) {
@@ -29,8 +41,11 @@ Rectangle {
     }
 
     Row {
+        id: crumbRow
         visible: !bc.editing
-        anchors.verticalCenter: parent.verticalCenter; x: 10; spacing: 6
+        anchors.verticalCenter: parent.verticalCenter; spacing: 6
+        // A path too long for the field slides left so the folder you are in stays visible.
+        x: Math.min(10, bc.crumbSpace - width)
         Repeater {
             model: Kiki.Format.crumbs(bc.uri, bc.home)
             delegate: Row {
@@ -50,6 +65,7 @@ Rectangle {
     }
     // Branch chip (plan 15)
     Rectangle {
+        id: branchChip
         visible: !bc.editing && bc.repo && bc.repo.branch
         anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter
         height: 20; width: chip.width + 14; radius: 2; color: Kiki.Theme.surface
@@ -67,5 +83,11 @@ Rectangle {
         Keys.onEscapePressed: bc.editing = false
         onActiveFocusChanged: if (!activeFocus) bc.editing = false
     }
-    MouseArea { anchors.fill: parent; visible: !bc.editing; onDoubleClicked: bc.edit(); z: -1 }
+    // Sits behind the crumbs, so clicking a crumb still jumps to it. Clicking the rest of the
+    // path turns it into a field you type in; the folders above are on the right button.
+    MouseArea {
+        anchors.fill: parent; visible: !bc.editing; z: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: mouse => mouse.button === Qt.RightButton ? bc.pathMenu() : bc.edit()
+    }
 }

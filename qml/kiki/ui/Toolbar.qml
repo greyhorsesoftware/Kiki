@@ -9,61 +9,78 @@ Rectangle {
     property bool split: false
     property bool mirror: false
     signal toggleMirror()
-    signal toggleInspector()
     signal toggleSplit()
-    property alias search: search
-    property var locations: []
-    property var repo: null
-    property string openInDefault: ""
+    // Search lives in the header: the glass expands into a field over the path.
+    property bool searchOpen: false
+    signal toggleSearch()
     signal search(string text, string scope)
     signal scopeMenu()
-    signal openIn(string id)
-    signal openInMenu()
+    property var locations: []
+    property var repo: null
     signal viewMenu()
+    signal pathMenu()
     signal settings()
-    signal share()
     property alias breadcrumb: crumb
+    property alias searchBox: searchField
+    property alias viewButton: viewButton
+    property alias searchButton: searchBtn
+    // Favorites panel toggle (far left).
+    property bool sidebarShown: true
+    signal toggleSidebar()
     height: Kiki.Theme.toolbarHeight
     color: Kiki.Theme.bg
+    clip: true
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
 
     Row {
-        anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
-        Row {
-            spacing: 2; anchors.verticalCenter: parent.verticalCenter
-            Repeater {
-                model: [{ i: "arr-l", f: "back" }, { i: "arr-r", f: "forward" }]
-                delegate: Rectangle {
-                    required property var modelData
-                    property bool enabled: modelData.f === "back" ? bar.pane.canBack() : bar.pane.canForward()
-                    width: 28; height: 28; radius: 2; color: "transparent"
-                    Icon { anchors.centerIn: parent; name: modelData.i; color: parent.enabled ? Kiki.Theme.fgDim : Kiki.Theme.gutter }
-                    MouseArea { anchors.fill: parent; onClicked: modelData.f === "back" ? bar.pane.back() : bar.pane.forward() }
-                }
-            }
+        id: row
+        anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 4
+        // The buttons keep their natural size and the path takes the rest, so the toolbar fits
+        // the window instead of spilling over the sidebar. The view button is the first to go
+        // when the window is too narrow for it.
+        readonly property int fixedCount: 3 + (viewButton.visible ? 1 : 0) + (bar.searchOpen ? 1 : 0)
+        readonly property int fixedWidth: sidebarBtn.width + (viewButton.visible ? viewButton.width : 0)
+            + searchBtn.width + gearBtn.width
+        readonly property int freeWidth: Math.max(0, width - fixedWidth - spacing * fixedCount)
+        // Open, the field grows out of the glass and the path gives up the room; it never takes
+        // the path's place entirely.
+        readonly property int searchWidth: bar.searchOpen ? Math.min(260, Math.max(0, freeWidth - 90)) : 0
+        readonly property int crumbWidth: Math.max(0, freeWidth - searchWidth)
+        ToggleButton {
+            id: sidebarBtn
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "sidebar"; tip: bar.sidebarShown ? "Hide favorites (Ctrl+Shift+B)" : "Show favorites (Ctrl+Shift+B)"
+            onClicked: bar.toggleSidebar()
         }
         Breadcrumb {
             id: crumb
             repo: bar.repo
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - 58 - 8 - 260 - 8 - 112 - 8 - 34 - 8 - 34 - 16 - 42 - (bar.openInDefault !== "" ? openInWidth : 0)
-            property int openInWidth: 150
+            visible: row.crumbWidth >= 80
+            width: row.crumbWidth
             uri: bar.pane.uri; home: bar.home
             onNavigate: uri => bar.pane.open(uri)
+            onPathMenu: bar.pathMenu()
         }
+        // Grows out of the glass beside it, squeezing the path rather than replacing it.
         SearchBox {
-            id: search
+            id: searchField
+            visible: bar.searchOpen
+            width: row.searchWidth
+            Behavior on width { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             anchors.verticalCenter: parent.verticalCenter
             placeholder: "Search " + (Kiki.Format.crumbs(bar.pane.uri, bar.home).slice(-1)[0] || "")
             scopes: bar.locations.map(l => ({ id: l.name, label: l.name }))
-            onChanged: text => bar.search(text, search.scope)
+            onChanged: text => bar.search(text, searchField.scope)
             onScopeMenu: bar.scopeMenu()
         }
-        SplitButton { anchors.verticalCenter: parent.verticalCenter; label: bar.openInDefault; icon: "terminal"; enabled: bar.openInDefault !== ""; onClicked: bar.openIn(""); onMenu: bar.openInMenu() }
-        ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "share"; tip: "Share"; onClicked: bar.share() }
-        ViewSwitcher { id: viewButton; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
-    property alias viewButton: viewButton
-        ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "info"; active: bar.inspector; onClicked: bar.toggleInspector() }
-        ToggleButton { anchors.verticalCenter: parent.verticalCenter; icon: "gear"; tip: "Settings (Ctrl+,)"; onClicked: bar.settings() }
+        ToggleButton {
+            id: searchBtn
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "search"; tip: "Search (/)"
+            onClicked: bar.toggleSearch()
+        }
+        ViewSwitcher { id: viewButton; visible: bar.width >= 360; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
+        ToggleButton { id: gearBtn; anchors.verticalCenter: parent.verticalCenter; icon: "gear"; tip: "Settings (Ctrl+,)"; onClicked: bar.settings() }
     }
 }

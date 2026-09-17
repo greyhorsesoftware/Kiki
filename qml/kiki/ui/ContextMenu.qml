@@ -2,41 +2,56 @@ import QtQuick
 import ".." as Kiki
 
 // The right-click menu. Items are [{ label, key, action, danger, sep, enabled, checked }]; `checked`
-// (true/false) draws a check column, undefined draws none.
-Rectangle {
+// (true/false) draws a check column, undefined draws none; `sep` draws a divider above the item.
+// While it is open the menu covers its parent, so a click anywhere outside the box closes it.
+Item {
     id: menu
     property var items: []
     property point at: Qt.point(0, 0)
     signal closed()
+    // The menu box itself: the scrim fills the parent, so its geometry is the box's.
+    readonly property alias box: box
     visible: false
-    width: 232; height: col.height + 8; radius: 2; z: 100
-    color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+    anchors.fill: parent
+    z: 100
 
     function open(itemList, pos) {
         items = itemList; at = pos; visible = true
-        x = Math.min(pos.x, (parent ? parent.width : 9999) - width - 4)
-        y = Math.min(pos.y, (parent ? parent.height : 9999) - height - 4)
-        forceActiveFocus()
+        box.x = Math.max(0, Math.min(pos.x, menu.width - box.width - 4))
+        box.y = Math.max(0, Math.min(pos.y, menu.height - box.height - 4))
+        box.forceActiveFocus()
     }
     function close() { visible = false; closed() }
-    Keys.onEscapePressed: close()
-    onActiveFocusChanged: if (!activeFocus) close()
 
-    Column {
-        id: col; y: 4; width: parent.width
-        Repeater {
-            model: menu.items
-            delegate: Item {
-                required property var modelData
-                width: col.width; height: (modelData.sep ? 5 : 0) + 26
-                Rectangle { visible: modelData.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
-                Rectangle {
-                    y: modelData.sep ? 5 : 0; width: parent.width; height: 26
-                    color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
-                    Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 12; font.bold: true }
-                    Text { x: modelData.checked !== undefined ? 26 : 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                    Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-                    MouseArea { id: h; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: menu.close() }
+
+    Rectangle {
+        id: box
+        width: 232; height: col.height + 8; radius: 2
+        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        focus: true
+        Keys.onEscapePressed: menu.close()
+        MouseArea { anchors.fill: parent }          // clicks in the box never reach the scrim
+
+        Column {
+            id: col; y: 4; width: parent.width
+            Repeater {
+                model: menu.items
+                delegate: Item {
+                    required property var modelData
+                    // `sep` is absent on most items, and an absent value is not false: it has to be
+                    // compared, or every row draws a divider.
+                    readonly property bool sep: modelData.sep === true
+                    width: col.width; height: (sep ? 5 : 0) + 26
+                    Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
+                    Rectangle {
+                        y: parent.sep ? 5 : 0; width: parent.width; height: 26
+                        color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
+                        Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { x: modelData.checked !== undefined ? 26 : 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                        MouseArea { id: h; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
+                    }
                 }
             }
         }

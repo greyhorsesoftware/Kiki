@@ -8,7 +8,7 @@ Rectangle {
     property string view: "list"
     signal menu()
     width: 52; height: 34; radius: 2
-    color: hover.containsMouse ? Kiki.Theme.surface : Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line
+    color: hover.containsMouse ? Kiki.Theme.surface : "transparent"
     Row {
         anchors.centerIn: parent; spacing: 4
         Icon { name: sw.view === "icon" ? "grid" : (sw.view === "columns" ? "columns" : "list"); color: Kiki.Theme.accent; anchors.verticalCenter: parent.verticalCenter }

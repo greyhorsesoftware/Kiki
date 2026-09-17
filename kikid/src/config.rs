@@ -67,8 +67,8 @@ fn default_favorites() -> Value {
             items.push((name, p));
         }
     }
-    let mut v: Vec<Value> = items.into_iter().map(|(n, p)| Value::obj().s("name", n).s("uri", crate::vfs::uri::Uri::from_path(&p).to_string()).done()).collect();
-    v.push(Value::obj().s("name", "Trash").s("uri", "trash:///").done());
+    // Trash is not a favourite: the sidebar shows it under Locations.
+    let v: Vec<Value> = items.into_iter().map(|(n, p)| Value::obj().s("name", n).s("uri", crate::vfs::uri::Uri::from_path(&p).to_string()).done()).collect();
     Value::Arr(v)
 }
 
@@ -92,6 +92,7 @@ pub fn settings() -> Value {
             .s("order", "asc")
             .b("inspector", false)
             .b("showHidden", false)
+            .b("sidebar", false)
             .b("relativeDates", true)
             .b("smartView", true)
             .s("heatSource", "filesystem")

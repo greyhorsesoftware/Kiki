@@ -56,6 +56,7 @@ Item {
         }
         Item { width: 1; height: 6 }
         ListView {
+            UI.NaturalScroll { }
             id: list
             width: parent.width; height: parent.height - 44 - 30 - 6
             clip: true; reuseItems: true; model: root.tree.count

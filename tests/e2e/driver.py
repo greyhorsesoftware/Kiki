@@ -76,7 +76,7 @@ if not daemon_only:
     ipc("setView", "icon"); time.sleep(0.3); check("icon view", json.loads(ipc("state")).get("view") == "icon")
     ipc("setView", "columns"); time.sleep(0.3); check("columns view", json.loads(ipc("state")).get("view") == "columns")
     ipc("search", "big"); time.sleep(0.5); check("folder filter", json.loads(ipc("state")).get("count") == 1)
-    ipc("search", ""); ipc("inspector", "on"); time.sleep(0.3); check("inspector on", json.loads(ipc("state")).get("inspector") is True)
+    ipc("search", ""); ipc("select", "big"); time.sleep(0.3); check("inspector follows the selection", json.loads(ipc("state")).get("inspector") is True)
     ws = json.loads(ipc("windowState", "left") or "{}"); check("window cache holds a bounded set", 0 < ws.get("held", 0) <= 1200, ws)
 
 print(f"{fails} failure(s)")

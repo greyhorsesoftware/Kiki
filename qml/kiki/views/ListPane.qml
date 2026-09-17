@@ -11,15 +11,24 @@ Item {
     property int headerHeight: 30
     // Optional columns come from Settings (General → Columns); Name is always first.
     readonly property var allColumns: ({ mtime: { role: "mtime", label: "Modified", w: 160 }, size: { role: "size", label: "Size", w: 80 }, kind: { role: "kind", label: "Kind", w: 120 }, atime: { role: "atime", label: "Accessed", w: 150 } })
-    readonly property var columns: [{ role: "name", label: "Name" }].concat((Kiki.Settings.view.columns || ["mtime", "size", "kind"]).map(c => allColumns[c]).filter(c => c))
+    readonly property var wantedColumns: (Kiki.Settings.view.columns || ["mtime", "size", "kind"]).map(c => allColumns[c]).filter(c => c)
+    // The name column never shrinks below this; optional columns drop off the right until it fits,
+    // so a narrow pane drops columns instead of drawing them on top of one another.
+    readonly property int minNameWidth: 160
+    readonly property var columns: {
+        let keep = wantedColumns.length
+        while (keep > 0 && root.width - 24 - wantedColumns.slice(0, keep).reduce((a, c) => a + c.w + 12, 0) < minNameWidth) keep--
+        return [{ role: "name", label: "Name" }].concat(wantedColumns.slice(0, keep))
+    }
     readonly property int valueWidth: columns.slice(1).reduce((a, c) => a + c.w + 12, 0)
+    readonly property int nameWidth: Math.max(48, root.width - 24 - valueWidth)
 
     function ensureVisible(i) { view.positionViewAtIndex(i, ListView.Contain) }
     readonly property int perRow: 1
     readonly property int pageSize: Math.max(1, Math.floor(view.height / Kiki.Theme.rowHeight))
 
     Rectangle {
-        id: header; width: parent.width; height: root.headerHeight; color: Kiki.Theme.bg
+        id: header; width: parent.width; height: root.headerHeight; color: Kiki.Theme.bg; clip: true
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
         Row {
             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
@@ -28,7 +37,7 @@ Item {
                 delegate: Item {
                     required property var modelData
                     required property int index
-                    width: modelData.w || (root.width - 24 - root.valueWidth)
+                    width: modelData.w || root.nameWidth
                     height: root.headerHeight
                     Row {
                         anchors.verticalCenter: parent.verticalCenter; spacing: 6
@@ -44,6 +53,7 @@ Item {
     }
 
     ListView {
+        UI.NaturalScroll { }
         id: view
         anchors.top: header.bottom; width: parent.width; height: parent.height - header.height
         clip: true; reuseItems: true; cacheBuffer: Kiki.Theme.rowHeight * 40

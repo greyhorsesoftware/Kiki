@@ -15,7 +15,7 @@ Rectangle {
     signal accepted()
     signal escaped()
     signal moveResult(int delta)
-    width: 260; height: 30; radius: 2
+    width: 260; height: 30; radius: 2; clip: true
     color: Kiki.Theme.bgDark; border.width: 1; border.color: active ? Kiki.Theme.accent : Kiki.Theme.line
     function focus() { input.forceActiveFocus() }
     function clear() { input.text = ""; scope = "folder"; box.changed("") }
@@ -45,7 +45,7 @@ Rectangle {
             MouseArea { anchors.fill: parent; anchors.margins: -4; onClicked: box.scopeMenu() } }
         TextInput {
             id: input
-            width: parent.width - 60; height: parent.height; verticalAlignment: TextInput.AlignVCenter
+            width: Math.max(0, parent.width - 60); height: parent.height; verticalAlignment: TextInput.AlignVCenter
             color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; clip: true
             onTextChanged: { box.absorbPrefix(); debounce.restart() }
             onAccepted: box.accepted()

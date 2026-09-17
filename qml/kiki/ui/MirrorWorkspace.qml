@@ -149,7 +149,7 @@ Rectangle {
                 Row { spacing: 12; height: 30
                     Text { width: 150; anchors.verticalCenter: parent.verticalCenter; text: "Detect changes by"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     Rectangle { width: 260; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
-                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: { auto: "Automatic (size + date)", sizeMtime: "Size + modification date", sizeOnly: "Size only" }[ws.detector]; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: ({ auto: "Automatic (size + date)", sizeMtime: "Size + modification date", sizeOnly: "Size only" })[ws.detector]; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
                         MouseArea { anchors.fill: parent; onClicked: { const o = ["auto", "sizeMtime", "sizeOnly"]; ws.detector = o[(o.indexOf(ws.detector) + 1) % o.length] } } }
                 }
@@ -229,6 +229,7 @@ Rectangle {
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             ListView { width: parent.width; height: parent.height - 37; clip: true; reuseItems: true; model: ws.plan.count
+                NaturalScroll { }
                 onContentYChanged: ws.plan.setViewport(Math.max(0, Math.floor(contentY / 28)), Math.ceil(height / 28) + 1)
                 Connections { target: ws.plan; function onReset() { parent.forceLayout() } }
                 delegate: PlanRow {} }
@@ -253,6 +254,7 @@ Rectangle {
                 Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             }
             ListView { width: parent.width; height: parent.height - 80; clip: true; reuseItems: true; model: ws.plan.count
+                NaturalScroll { }
                 onContentYChanged: ws.plan.setViewport(Math.max(0, Math.floor(contentY / 28)), Math.ceil(height / 28) + 1)
                 Connections { target: ws.plan; function onReset() { parent.forceLayout() } }
                 delegate: PlanRow {} }

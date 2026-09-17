@@ -18,7 +18,16 @@ FloatingWindow {
     property var volumes: []
     property var locations: []
     property var devices: []
-    property bool inspector: Kiki.Settings.view.inspector
+    // Plan 03: the inspector follows the selection instead of a toolbar toggle — select
+    // something and it appears.
+    readonly property bool inspector: win.inspectedUri !== ""
+    // Favorites panel: hidden by default (Settings → General), shown from the far-left toolbar
+    // button or Ctrl+Shift+B.
+    property bool sidebarShown: Kiki.Settings.view.sidebar === true
+    property bool sidebarPeek: false
+    // What the panel takes from the panes, pinned or peeked: the two must agree or the panes
+    // shrink without moving over.
+    readonly property int sidebarSpace: sidebarPanel.visible ? sidebarPanel.width : 0
     // Mirror view (plan 24): "mirror" is the left pane's view; the right pane appears with it.
     readonly property bool split: left.view === "mirror"
     property Kiki.Pane left: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
@@ -73,6 +82,10 @@ FloatingWindow {
     // Search (plan 12). Folder scope filters the listing; other scopes open a results view.
     property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
     property bool searching: false
+    // The field above the listing, opened by the toolbar's glass, "/" or Ctrl+F.
+    property bool searchOpen: false
+    function openSearch() { searchOpen = true; toolbar.searchBox.focus() }
+    function toggleSearch() { if (searchOpen) closeSearch(); else openSearch() }
     property string searchScope: "folder"
     property string indexInfo: ""
     function runSearch(text, scope) {
@@ -89,11 +102,11 @@ FloatingWindow {
             indexInfo = scope === "everywhere" ? "index " + Math.round(ok.indexAge / 60) + " min old" + (ok.capped ? " · capped" : "") : ""
         })
     }
-    function closeSearch() { searching = false; toolbar.search.clear() }
+    function closeSearch() { searching = false; searchOpen = false; toolbar.searchBox.clear(); keys.forceActiveFocus() }
     function scopeMenu() {
-        const items = [{ label: "This folder", action: () => { toolbar.search.scope = "folder"; runSearch(toolbar.search.text, "folder") } }, { label: "Everywhere", action: () => { toolbar.search.scope = "everywhere"; runSearch(toolbar.search.text, "everywhere") } }]
-        for (const l of locations) items.push({ label: l.name + "  ·  " + l.plugin, sep: items.length === 2, action: () => { toolbar.search.scope = l.name; runSearch(toolbar.search.text, l.name) } })
-        menu.open(items, Qt.point(toolbar.x + toolbar.search.x + 224, 44))
+        const items = [{ label: "This folder", action: () => { toolbar.searchBox.scope = "folder"; runSearch(toolbar.searchBox.text, "folder") } }, { label: "Everywhere", action: () => { toolbar.searchBox.scope = "everywhere"; runSearch(toolbar.searchBox.text, "everywhere") } }]
+        for (const l of locations) items.push({ label: l.name + "  ·  " + l.plugin, sep: items.length === 2, action: () => { toolbar.searchBox.scope = l.name; runSearch(toolbar.searchBox.text, l.name) } })
+        menuUnder(toolbar.searchBox, items)
     }
     // Open in (plan 14)
     property var openInTools: []
@@ -105,7 +118,7 @@ FloatingWindow {
         if (!tool) return
         Kiki.Daemon.request("OpenIn", { id: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
-    function openInMenu() { menu.open(openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) })), Qt.point(toolbar.width - 300 + 224, 44)) }
+    function openInMenu() { menuUnder(toolbar.viewButton, openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) }))) }
     function editSelected() {
         const uris = selectedUris(); if (!uris.length) return
         const r = pane.listing.row(pane.selection.current)
@@ -141,14 +154,14 @@ FloatingWindow {
         const uris = selectedUris(); if (!uris.length) return
         const items = sharePlugins.map(p => ({ label: p.name, action: () => { if (p.targets === "none") shareSheet.open(p, null, uris); else shareTargets(p, uris) } }))
         if (!items.length) items.push({ label: "No share plugins installed", enabled: false, action: () => {} })
-        menu.open(items, Qt.point(toolbar.width - 200 + 224, 44))
+        menuUnder(toolbar.viewButton, items)
     }
     function shareTargets(p, uris) {
         Kiki.Daemon.request("ShareTargets", { plugin: p.id }, (ok, err) => {
             if (err) { Kiki.Jobs.showToast({ text: err.message, undoable: false }); return }
             const items = ok.targets.map(t => ({ label: t.name + (t.online ? "" : "  (offline)") + (t.detail ? "  ·  " + t.detail : ""), enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
             if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
-            menu.open(items, Qt.point(toolbar.width - 200 + 224, 44))
+            menuUnder(toolbar.viewButton, items)
         })
     }
     // AI (plan 19)
@@ -170,7 +183,6 @@ FloatingWindow {
         win.pane.open(parent)
         const name = decodeURIComponent(first.split("/").pop())
         Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } })
-        if (msg.properties) win.inspector = true
     }
     // The inspected item follows the selection's current row.
     property string inspectedUri: ""
@@ -211,6 +223,17 @@ FloatingWindow {
         Quickshell.execDetached(["wl-copy", text])
     }
     // View menu (plan 02): one toolbar button, the three views, then hidden files.
+    // A menu hung under the toolbar item that opened it, in window coordinates.
+    function menuUnder(item, items) {
+        const p = item.mapToItem(menu.parent, 0, item.height + 4)
+        menu.open(items, Qt.point(p.x, p.y))
+    }
+    // Clicking the path offers the folders above this one, and the way into typing one.
+    function pathMenu() {
+        const items = toolbar.breadcrumb.ancestors().map(a => ({ label: a.label, action: () => win.pane.open(a.uri) }))
+        items.push({ label: "Type a path…", key: "Ctrl+L", sep: items.length > 0, action: () => toolbar.breadcrumb.edit() })
+        menuUnder(toolbar.breadcrumb, items)
+    }
     function viewMenu() {
         const items = [
             { label: "Icon view", key: "Ctrl+1", checked: pane.view === "icon", action: () => pane.view = "icon" },
@@ -219,7 +242,7 @@ FloatingWindow {
             { label: "Mirror view", key: "Ctrl+4", checked: win.split, action: () => win.enterMirror() },
             { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
         ]
-        menu.open(items, Qt.point(toolbar.x + toolbar.viewButton.x, 44))
+        menuUnder(toolbar.viewButton, items)
     }
     // Sidebar keyboard focus (plan 23): Ctrl+B, then Up/Down/Enter, Esc back to the pane.
     property bool sidebarFocus: false
@@ -241,7 +264,7 @@ FloatingWindow {
             if (!ok) return
             const items = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: u }) }))
             if (!items.length) items.push({ label: "No application for " + ok.mime, enabled: false, action: () => {} })
-            menu.open(items, pos || Qt.point(toolbar.width - 300 + 224, 44))
+            if (pos) menu.open(items, pos); else menuUnder(toolbar.viewButton, items)
         })
     }
     // Trash view (plan 04): restore to the original path, delete for good, or empty everything.
@@ -318,6 +341,11 @@ FloatingWindow {
         if (extend) pane.selection.range(i); else pane.selection.set(i)
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
     }
+    /// The focused pane's view item when it is the columns view, else null.
+    function columnsPane() {
+        const v = (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
+        return v && v.focusLeft ? v : null
+    }
     // Up/Down step one row: in the icon grid that is one row of tiles, elsewhere one entry.
     readonly property int rowStep: viewLoader.item && viewLoader.item.perRow ? viewLoader.item.perRow : 1
     readonly property int pageStep: viewLoader.item && viewLoader.item.pageSize ? viewLoader.item.pageSize : 20
@@ -329,33 +357,36 @@ FloatingWindow {
     Item {
         id: keys
         anchors.fill: parent
-        focus: !toolbar.search.active && !toolbar.breadcrumb.editing
+        focus: !toolbar.searchBox.active && !toolbar.breadcrumb.editing && !menu.visible && !settingsWin.visible
+            && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
+            && !shareSheet.visible && !compressDialog.visible
         Keys.onPressed: event => {
             const ctrl = event.modifiers & Qt.ControlModifier, shift = event.modifiers & Qt.ShiftModifier, alt = event.modifiers & Qt.AltModifier
             switch (event.key) {
-            case Qt.Key_Slash: toolbar.search.focus(); break
-            case Qt.Key_F: if (ctrl) toolbar.search.focus(); else return; break
-            case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (win.vimKeys && pane.view === "columns") win.openSelected(); else return; break
+            case Qt.Key_Slash: win.openSearch(); break
+            case Qt.Key_F: if (ctrl) win.openSearch(); else return; break
+            case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (win.vimKeys && win.columnsPane()) win.columnsPane().focusRight(); else return; break
             case Qt.Key_1: if (ctrl) pane.view = "icon"; else return; break
             case Qt.Key_2: if (ctrl) pane.view = "list"; else return; break
             case Qt.Key_3: if (ctrl) pane.view = "columns"; else return; break
             case Qt.Key_4: if (ctrl) win.enterMirror(); else return; break
-            case Qt.Key_J: if (win.vimKeys) win.moveSelection(1, shift); else return; break
-            case Qt.Key_K: if (win.vimKeys) win.moveSelection(-1, shift); else return; break
-            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else win.moveSelection(win.rowStep, shift); break
-            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else win.moveSelection(-win.rowStep, shift); break
-            case Qt.Key_B: if (ctrl) win.focusSidebar(!win.sidebarFocus); else return; break
+            case Qt.Key_J: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(1); else if (win.vimKeys) win.moveSelection(1, shift); else return; break
+            case Qt.Key_K: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(-1); else if (win.vimKeys) win.moveSelection(-1, shift); else return; break
+            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else if (win.columnsPane()) win.columnsPane().moveKey(1); else win.moveSelection(win.rowStep, shift); break
+            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else if (win.columnsPane()) win.columnsPane().moveKey(-1); else win.moveSelection(-win.rowStep, shift); break
+            case Qt.Key_B: if (ctrl && shift) win.sidebarShown = !win.sidebarShown; else if (ctrl) win.focusSidebar(!win.sidebarFocus); else return; break
             case Qt.Key_F4: win.editSelected(); break
             case Qt.Key_Home: win.selectAt(0, shift); break
             case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift); break
             case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift); break
             case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift); break
-            case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (win.vimKeys && pane.view === "columns") pane.up(); else return; break
-            case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } win.openSelected(); break
+            case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (win.vimKeys && win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else return; break
+            case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } if (win.columnsPane()) { win.columnsPane().activateKey(); break } win.openSelected(); break
             case Qt.Key_Backspace: pane.back(); break
-            case Qt.Key_Left: if (alt) pane.back(); else if (pane.view === "icon") win.moveSelection(-1, shift); else if (pane.view === "columns") pane.up(); else return; break
-            case Qt.Key_Right: if (alt) pane.forward(); else if (pane.view === "icon") win.moveSelection(1, shift); else if (pane.view === "columns") win.openSelected(); else return; break
-            case Qt.Key_I: if (ctrl) win.inspector = !win.inspector; else return; break
+            // In columns, Left walks back through the columns the inspector pushed off screen and
+            // only leaves the folder once it runs out of them.
+            case Qt.Key_Left: if (alt) pane.back(); else if (pane.view === "icon") win.moveSelection(-1, shift); else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else return; break
+            case Qt.Key_Right: if (alt) pane.forward(); else if (pane.view === "icon") win.moveSelection(1, shift); else if (win.columnsPane()) win.columnsPane().focusRight(); else return; break
             case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else if (win.vimKeys) win.editSelected(); else return; break
             case Qt.Key_F2: win.renameSelected(); break
@@ -372,7 +403,6 @@ FloatingWindow {
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
             case Qt.Key_Comma: if (ctrl) settingsWin.open("general"); else return; break
-            case Qt.Key_Question: settingsWin.open("keys"); break
             case Qt.Key_P: if (ctrl && shift) { if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } } else return; break
             case Qt.Key_Q: if (alt) win.aiQuery(); else return; break
             case Qt.Key_S: if (alt) win.shareMenu(); else return; break
@@ -391,11 +421,10 @@ FloatingWindow {
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }
-        function search(text: string): void { win.toolbar.search.text = text; win.pane.setFilter(text) }
+        function search(text: string): void { win.searchOpen = text !== ""; toolbar.searchBox.text = text; win.pane.setFilter(text) }
         function select(name: string): void { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); return } } }
         function selection(): string { return JSON.stringify(win.selectedUris()) }
         function uri(pane: string): string { return win.pane.uri }
-        function inspector(on: string): void { win.inspector = on === "on" }
         function split(on: string): void { if (on === "on") win.enterMirror(); else win.leaveMirror() }
         function project(action: string, uri: string): void { if (action === "enter") win.enterProject(uri || win.pane.uri); else win.leaveProject() }
         function projectState(): string { return JSON.stringify({ root: win.projectRoot, active: win.projectMode, width: win.width }) }
@@ -405,15 +434,26 @@ FloatingWindow {
         function share(plugin: string, target: string): void { win.shareMenu() }
         function aiQuery(uri: string, question: string): void { win.pane.selection.clear(); win.aiOpen = true; aiPanel.openFor([uri]); if (question) aiPanel.ask(question) }
         function aiClose(): void { win.aiOpen = false }
-        function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else settingsWin.visible = false }
+        function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else { settingsWin.close(); keys.forceActiveFocus() } }
         function mirror(on: string): void { if (on === "open") win.startMirror(true); else win.mirrorOpen = false }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
         function transfer(kind: string): void { win.transfer(kind === "move") }
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
         function state(): string {
-            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
+            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, searchOpen: win.searchOpen, settingsVisible: settingsWin.visible, menuVisible: menu.visible, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
+        function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
+        function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
+        function toggleSearch(): void { win.toggleSearch() }
+        function columns(action: string): string {
+            const c = win.columnsPane(); if (!c) return ""
+            if (action === "down") c.moveKey(1); else if (action === "up") c.moveKey(-1)
+            else if (action === "left") c.focusLeft(); else if (action === "right") c.focusRight()
+            else if (action === "open") c.activateKey()
+            return JSON.stringify({ focusCol: c.focusCol, count: c.columns.length, selected: c.columns.map(x => x.selected), inspected: c.inspectedUri, scrollX: Math.round(c.scrollX), width: Math.round(c.stripWidth) })
+        }
+        function sidebar(on: string): void { win.sidebarShown = on === "" ? !win.sidebarShown : on === "on" }
         function undo(): void { Kiki.Jobs.undo() }
         function redo(): void { Kiki.Jobs.redo() }
         function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
@@ -435,67 +475,46 @@ FloatingWindow {
         onSendToAgent: uri => Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] })
         onLeave: win.leaveProject()
     }
-    Row {
+    // The toolbar spans the window above everything, so the path has the full width to use, and
+    // the favorites panel sits under it and can be hidden.
+    Column {
         visible: !win.projectMode
         anchors.fill: parent
-        UI.Sidebar {
-            id: sidebarPanel
-            id: sidebar
-            height: parent.height
-            favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
-            onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) })
-            onDeviceMenu: dev => menu.open([
-                { label: "Open", enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
-                { label: "Eject", key: "Ctrl+E", action: () => Kiki.Daemon.request("Eject", { uri: dev.uri }) },
-                { label: dev.busy ? "In use by " + dev.busy : dev.kind.toUpperCase() + " · " + dev.vendor + " " + dev.model, enabled: false, sep: true, action: () => {} },
-            ], Qt.point(40, 300))
-            onOpen: uri => win.pane.open(uri)
-            onAddLocation: locationDialog.open(null)
-            onOpenLocation: loc => win.openLocation(loc)
-            onDropOn: (uri, drop) => win.pane.dropInto(uri, drop)
-            onAddFavorites: uris => {
-                const add = uris.filter(u => u.startsWith("file://") && !win.favorites.some(f => f.uri === u)).map(u => ({ name: decodeURIComponent(u.replace(/\/+$/, "").split("/").pop()) || "/", uri: u }))
-                if (add.length) Kiki.Daemon.request("SetFavorites", { items: win.favorites.concat(add) }, () => win.loadSidebar())
-            }
-            onMountVolume: vol => Kiki.Daemon.request("Mount", { device: vol.device }, (ok, err) => { if (ok) win.pane.open(ok.uri); else Kiki.Jobs.showToast({ text: "Mount failed: " + (err ? err.message : ""), undoable: false }) })
-            onVolumeMenu: vol => menu.open([
-                { label: vol.mounted === false ? "Mount" : "Open", action: () => vol.mounted === false ? Kiki.Daemon.request("Mount", { device: vol.device }, ok => { if (ok) win.pane.open(ok.uri) }) : win.pane.open(vol.uri) },
-                { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
-                { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
-            ], Qt.point(40, 200))
-            onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }], Qt.point(40, 200))
+        UI.Toolbar {
+            id: toolbar
+            width: parent.width
+            pane: win.pane; home: win.home
+            split: win.split; mirror: win.mirrorOpen
+            locations: win.locations
+            repo: win.repo
+            onViewMenu: win.viewMenu()
+            onPathMenu: win.pathMenu()
+            onSearch: (text, scope) => win.runSearch(text, scope)
+            onScopeMenu: win.scopeMenu()
+            onSettings: settingsWin.open("general")
+            searchOpen: win.searchOpen
+            onToggleSearch: win.toggleSearch()
+            sidebarShown: win.sidebarShown
+            onToggleSidebar: win.sidebarShown = !win.sidebarShown
         }
+        Row {
+            width: parent.width; height: parent.height - toolbar.height - bar.height
+            // Space the pinned panel occupies; while peeking it floats over the panes instead.
+            Item { width: win.sidebarSpace; height: parent.height }
         Column {
-            width: parent.width - sidebar.width; height: parent.height
-            UI.Toolbar {
-                id: toolbar
-                width: parent.width
-                pane: win.pane; home: win.home
-                inspector: win.inspector; split: win.split; mirror: win.mirrorOpen
-                locations: win.locations
-                repo: win.repo
-                openInDefault: win.openInDefaultTool() ? win.openInDefaultTool().name : ""
-                onSearch: (text, scope) => win.runSearch(text, scope)
-                onScopeMenu: win.scopeMenu()
-                onOpenIn: id => win.openIn(id)
-                onOpenInMenu: win.openInMenu()
-                onViewMenu: win.viewMenu()
-                onSettings: settingsWin.open("general")
-                onShare: win.shareMenu()
-                onToggleInspector: win.inspector = !win.inspector
-            }
+            width: parent.width - win.sidebarSpace; height: parent.height
             Views.SearchResults {
                 id: resultsView
                 visible: win.searching
-                width: parent.width; height: parent.height - toolbar.height - bar.height
-                results: win.results; query: toolbar.search.text; home: win.home; indexInfo: win.indexInfo
+                width: parent.width; height: parent.height
+                results: win.results; query: toolbar.searchBox.text; home: win.home; indexInfo: win.indexInfo
                 scopeLabel: win.searchScope === "everywhere" ? "Everywhere" : win.searchScope
                 onOpen: uri => { win.closeSearch(); const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(uri.endsWith("/") ? uri : r); }
             }
             UI.MirrorWorkspace {
                 id: mirrorWs
                 visible: win.mirrorOpen
-                width: parent.width; height: parent.height - toolbar.height - bar.height
+                width: parent.width; height: parent.height
                 localUri: win.localUri(); remoteUri: win.remoteUri(); home: win.home
                 onClosed: win.mirrorOpen = false
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
@@ -504,18 +523,18 @@ FloatingWindow {
                 id: mirrorBar
                 visible: win.split && !win.mirrorOpen && !win.searching
                 width: parent.width
-                left: win.left; right: win.right; home: win.home
+                leftPane: win.left; rightPane: win.right; home: win.home
                 lastMirrored: win.lastMirror[win.remoteUri()] || null
                 onSwap: win.swapPanes()
                 onMirror: upload => win.startMirror(upload)
-                onOptions: pos => win.mirrorOptions(Qt.point(pos.x + 224, pos.y + 48))
+                onOptions: pos => { const p = mirrorBar.mapToItem(menu.parent, pos.x, pos.y); win.mirrorOptions(Qt.point(p.x, p.y)) }
             }
             Row {
                 visible: !win.mirrorOpen && !win.searching
-                width: parent.width; height: parent.height - toolbar.height - bar.height - (mirrorBar.visible ? mirrorBar.height : 0)
+                width: parent.width; height: parent.height - (mirrorBar.visible ? mirrorBar.height : 0)
                 // Left pane (the only pane when not split)
                 Column {
-                    width: (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0); height: parent.height
+                    width: Math.max(0, (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0)); height: parent.height
                     UI.PaneHeader { visible: win.split; width: parent.width; pane: win.left; home: win.home; onClicked: win.focusPane(win.left) }
                     Loader {
                         id: viewLoader
@@ -537,12 +556,12 @@ FloatingWindow {
                         onLoaded: item.pane = win.right
                     }
                 }
-                UI.AiPanel { id: aiPanel; visible: win.aiOpen; width: 420; height: parent.height; home: win.home; onClose: win.aiOpen = false }
+                UI.AiPanel { id: aiPanel; visible: win.aiOpen; width: Math.min(420, Math.floor(parent.width * 0.6)); height: parent.height; home: win.home; onClose: win.aiOpen = false }
                 UI.Inspector {
                     id: inspectorPanel
-                    // Columns view supplies its own inspector column; icon and list use the toggle.
-                    visible: !win.aiOpen && win.pane.view !== "columns" && win.inspector && win.inspectedUri !== ""
-                    width: Kiki.Theme.inspectorWidth; height: parent.height
+                    // Columns view supplies its own inspector column; icon and list show it with the selection.
+                    visible: !win.aiOpen && win.pane.view !== "columns" && win.inspector
+                    width: Math.min(Kiki.Theme.inspectorWidth, Math.floor(parent.width * 0.45)); height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onOpen: win.openSelected()
                     onOpenWith: win.openWithMenu()
@@ -550,29 +569,81 @@ FloatingWindow {
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
                 }
             }
-            UI.ShortcutBar {
-                id: bar
-                width: parent.width
-                keys: win.searching ? [{ key: "Enter", label: "open" }, { key: "↑ ↓", label: "move" }, { key: "Tab", label: "cycle scope" }, { key: "⌫", label: "remove scope" }, { key: "Esc", label: "close" }, { key: "?", label: "all keys" }] : win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
-                    ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
-                    : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
-                MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
-                status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
-            }
         }
+        }
+        UI.ShortcutBar {
+            id: bar
+            width: parent.width
+            keys: win.searching ? [{ key: "Enter", label: "open" }, { key: "↑ ↓", label: "move" }, { key: "Tab", label: "cycle scope" }, { key: "⌫", label: "remove scope" }, { key: "Esc", label: "close" }, { key: "?", label: "all keys" }] : win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
+                ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
+                : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
+            MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
+            status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
+        }
+
     }
 
-    Component { id: listView; Views.ListPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } } }
-    Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), Qt.point(pos.x + 224, pos.y + 48)) } } }
+    UI.Sidebar {
+        id: sidebarPanel
+        x: 0; y: toolbar.height; z: 60
+        // Peeking ends when the pointer leaves the panel.
+        HoverHandler { onHoveredChanged: if (!hovered) win.sidebarPeek = false }
+        visible: win.sidebarShown || win.sidebarPeek
+        width: Math.min(Kiki.Theme.sidebarWidth, Math.floor(win.width * 0.32))
+        height: win.height - toolbar.height - bar.height
+        favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
+        onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) })
+        onDeviceMenu: dev => menu.open([
+            { label: "Open", enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
+            { label: "Eject", key: "Ctrl+E", action: () => Kiki.Daemon.request("Eject", { uri: dev.uri }) },
+            { label: dev.busy ? "In use by " + dev.busy : dev.kind.toUpperCase() + " · " + dev.vendor + " " + dev.model, enabled: false, sep: true, action: () => {} },
+        ], Qt.point(40, 300))
+        onOpen: uri => win.pane.open(uri)
+        onAddLocation: locationDialog.open(null)
+        onOpenLocation: loc => win.openLocation(loc)
+        onDropOn: (uri, drop) => win.pane.dropInto(uri, drop)
+        onFavoriteMenu: (index, pos) => menu.open([
+            { label: "Remove from Sidebar", action: () => {
+                const list = win.favorites.slice()
+                list.splice(index, 1)
+                Kiki.Daemon.request("SetFavorites", { items: list }, () => win.loadSidebar())
+            } },
+        ], pos)
+        onAddFavorites: (uris, index) => {
+            const add = uris.filter(u => u.startsWith("file://") && !win.favorites.some(f => f.uri === u)).map(u => ({ name: decodeURIComponent(u.replace(/\/+$/, "").split("/").pop()) || "/", uri: u }))
+            if (!add.length) return
+            const list = win.favorites.slice()
+            list.splice(Math.max(0, Math.min(list.length, index)), 0, ...add)
+            Kiki.Daemon.request("SetFavorites", { items: list }, () => win.loadSidebar())
+        }
+        onMountVolume: vol => Kiki.Daemon.request("Mount", { device: vol.device }, (ok, err) => { if (ok) win.pane.open(ok.uri); else Kiki.Jobs.showToast({ text: "Mount failed: " + (err ? err.message : ""), undoable: false }) })
+        onVolumeMenu: vol => menu.open([
+            { label: vol.mounted === false ? "Mount" : "Open", action: () => vol.mounted === false ? Kiki.Daemon.request("Mount", { device: vol.device }, ok => { if (ok) win.pane.open(ok.uri) }) : win.pane.open(vol.uri) },
+            { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
+            { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
+        ], Qt.point(40, 200))
+        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }], Qt.point(40, 200))
+    }
 
-    UI.ContextMenu { id: menu; parent: win.contentItem }
+    // Mousing into the left edge brings the hidden favorites panel back.
+    MouseArea {
+        x: 0; y: toolbar.height; width: 6; height: win.height - toolbar.height - bar.height
+        z: 61; hoverEnabled: true; acceptedButtons: Qt.NoButton
+        enabled: !win.sidebarShown && !win.sidebarPeek && !win.projectMode
+        onEntered: win.sidebarPeek = true
+    }
+
+    Component { id: listView; Views.ListPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
+    Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
+
+    UI.ContextMenu { id: menu; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
-    UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar() }
+    UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar(); onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.PortalDialog { id: portal; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
-    UI.SettingsWindow { id: settingsWin }
+    UI.SettingsWindow { id: settingsWin; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
-    UI.ConfirmDialog { id: confirm; parent: win.contentItem }
+    UI.ConfirmDialog { id: confirm; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.integration.asked === false) integrationDialog.open() } }
     UI.ShareSheet { id: shareSheet; anchors.fill: parent }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }

@@ -25,6 +25,7 @@ var paths = {
   "grid": "<rect x=\"2.5\" y=\"2.5\" width=\"4.5\" height=\"4.5\"></rect><rect x=\"9\" y=\"2.5\" width=\"4.5\" height=\"4.5\"></rect><rect x=\"2.5\" y=\"9\" width=\"4.5\" height=\"4.5\"></rect><rect x=\"9\" y=\"9\" width=\"4.5\" height=\"4.5\"></rect>",
   "list": "<path d=\"M3 4h10\"></path><path d=\"M3 8h10\"></path><path d=\"M3 12h10\"></path>",
   "columns": "<rect x=\"2\" y=\"2.5\" width=\"12\" height=\"11\" rx=\"1\"></rect><path d=\"M6 2.5v11\"></path><path d=\"M10 2.5v11\"></path>",
+  "sidebar": "<rect x=\"2\" y=\"2.5\" width=\"12\" height=\"11\" rx=\"1\"></rect><path d=\"M6 2.5v11\"></path>",
   "plus": "<path d=\"M8 3v10\"></path><path d=\"M3 8h10\"></path>",
   "x": "<path d=\"m4 4 8 8\"></path><path d=\"m12 4-8 8\"></path>",
   "key": "<circle cx=\"5.5\" cy=\"8\" r=\"3\"></circle><path d=\"M8.5 8H14\"></path><path d=\"M12 8v2.5\"></path>",

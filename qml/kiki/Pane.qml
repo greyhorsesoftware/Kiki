@@ -40,7 +40,9 @@ QtObject {
         else showHidden = Kiki.Settings.view.showHidden === true
         _applying = false
         listing.open(target)
-        if (sortRole !== "name" || sortOrder !== "asc") listing.sort(sortRole, sortOrder)
+        // Always state the order: the daemon caches listings, so this folder may still carry the
+        // order some earlier pane asked for. The daemon ignores a sort that is already in force.
+        listing.sort(sortRole, sortOrder)
         if (showHidden !== (Kiki.Settings.view.showHidden === true)) listing.showHidden(showHidden)
         navigated(target)
     }
@@ -61,7 +63,7 @@ QtObject {
         }
         if (pick && pick !== view) { _applying = true; view = pick; _applying = false }
     }
-    Connections { target: listing; function onDoneChanged() { if (listing.done) _smart() } }
+    property Connections doneWatch: Connections { target: listing; function onDoneChanged() { if (listing.done) _smart() } }
     function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }

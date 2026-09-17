@@ -17,20 +17,20 @@ Rectangle {
     signal open(string uri)
     signal addLocation()
     signal dropOn(string uri, var drop)          // files dropped on a favorite or volume
-    signal addFavorites(var uris)                // folders dropped on the Favorites header
+    signal addFavorites(var uris, int index)     // dropped into the Favorites list at `index`
+    signal favoriteMenu(int index, point pos)
     signal volumeMenu(var volume)
     signal mountVolume(var volume)
     // Keyboard focus (plan 23): a highlighted row across every section; Enter opens it.
     property int keyIndex: -1
-    readonly property var entries: favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })).concat(volumes.map(v => ({ kind: "volume", uri: v.uri, item: v })), locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
+    readonly property var entries: favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })).concat([{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }], locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
     function moveKey(delta) { if (!entries.length) return; keyIndex = keyIndex < 0 ? (delta > 0 ? 0 : entries.length - 1) : Math.max(0, Math.min(entries.length - 1, keyIndex + delta)) }
     function activateKey() {
         const e = entries[keyIndex]; if (!e) return
         if (e.kind === "location") sidebar.openLocation(e.item)
-        else if (e.kind === "volume" && e.item.mounted === false) sidebar.mountVolume(e.item)
         else if (!(e.kind === "device" && e.item.busy)) sidebar.open(e.uri)
     }
-    function keyOffset(kind, i) { let o = 0; if (kind !== "favorite") o += favorites.length; if (kind === "location" || kind === "device") o += volumes.length; if (kind === "device") o += locations.length; return o + i }
+    function keyOffset(kind, i) { let o = 0; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += 1; if (kind === "device") o += locations.length; return o + i }
     width: Kiki.Theme.sidebarWidth
     color: Kiki.Theme.bgDark
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
@@ -38,15 +38,25 @@ Rectangle {
     Column {
         id: sections
         width: parent.width; y: 12; spacing: 12
+        // Folders dropped anywhere in Favorites are added to the list. The drop area sits under
+        // the rows, so dropping onto a favourite still copies into that folder.
+        Item {
+            width: parent.width; height: favSection.height
+            // A drop anywhere in Favorites adds to the list at the line shown between the rows.
+            // It never copies into the folder under the pointer: that is what the pane is for.
+            DropArea {
+                id: favDrop
+                anchors.fill: parent; keys: ["text/uri-list"]
+                readonly property int pitch: 31          // SidebarItem's 30px plus the Column's 1px spacing
+                property int insertAt: 0
+                function indexAt(y) { return Math.max(0, Math.min(sidebar.favorites.length, Math.round((y - favSection.headerHeight) / pitch))) }
+                onEntered: drag => insertAt = indexAt(drag.y)
+                onPositionChanged: drag => insertAt = indexAt(drag.y)
+                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.LinkAction); sidebar.addFavorites(urls, insertAt) } }
+            }
         SidebarSection {
             id: favSection
             title: "Favorites"
-            // Dropping folders on the header adds them as favorites.
-            DropArea {
-                anchors.fill: parent; z: -1; keys: ["text/uri-list"]
-                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.LinkAction); sidebar.addFavorites(urls) } }
-                Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
-            }
             Repeater {
                 model: sidebar.favorites
                 delegate: SidebarItem {
@@ -57,29 +67,41 @@ Rectangle {
                     label: modelData.name
                     keyed: sidebar.keyIndex === sidebar.keyOffset("favorite", index)
                     active: sidebar.currentUri === modelData.uri
-                    droppable: true
-                    onDropped: drop => { if (modelData.uri.startsWith("trash://")) { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); Kiki.Jobs.submit({ op: "trash", items: urls }) } } else sidebar.dropOn(modelData.uri, drop) }
+                    droppable: false
                     onClicked: sidebar.open(modelData.uri)
+                    onRightClicked: sidebar.favoriteMenu(index, mapToItem(null, width / 2, height))
+                }
+            }
+        }
+            // The insertion mark: a dot on the left end of a line, centred on the gap the item
+            // would drop into.
+            Item {
+                visible: favDrop.containsDrag
+                x: 10; width: parent.width - 20; height: 8
+                y: favSection.headerHeight + favDrop.insertAt * favDrop.pitch - 4
+                Rectangle {
+                    id: insertDot
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                    width: 8; height: 8; radius: 4
+                    color: "transparent"; border.width: 2; border.color: Kiki.Theme.accent
+                }
+                Rectangle {
+                    anchors.left: insertDot.right; anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: 2; color: Kiki.Theme.accent
                 }
             }
         }
         SidebarSection {
             title: "Locations"; plus: true
             onPlusClicked: sidebar.addLocation()
-            Repeater {
-                model: sidebar.volumes
-                delegate: SidebarItem {
-                    required property var modelData
-                    required property int index
-                    keyed: sidebar.keyIndex === sidebar.keyOffset("volume", index)
-                    icon: modelData.removable ? "usb" : "hdd"; iconColor: modelData.mounted === false ? Kiki.Theme.gutter : Kiki.Theme.fgDim
-                    label: modelData.name + (modelData.mounted === false ? "  ·  not mounted" : "")
-                    active: modelData.uri && sidebar.currentUri === modelData.uri
-                    droppable: modelData.mounted !== false
-                    onDropped: drop => sidebar.dropOn(modelData.uri, drop)
-                    onClicked: modelData.mounted === false ? sidebar.mountVolume(modelData) : sidebar.open(modelData.uri)
-                    onRightClicked: sidebar.volumeMenu(modelData)
-                }
+            SidebarItem {
+                icon: "trash"; iconColor: Kiki.Theme.fgDim; label: "Trash"
+                keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
+                active: sidebar.currentUri.startsWith("trash://")
+                droppable: true
+                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); Kiki.Jobs.submit({ op: "trash", items: urls }) } }
+                onClicked: sidebar.open("trash:///")
             }
             Repeater {
                 model: sidebar.locations
