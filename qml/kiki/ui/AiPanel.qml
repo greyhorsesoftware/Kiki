@@ -49,8 +49,8 @@ Rectangle {
             Icon { name: "x"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter; MouseArea { anchors.fill: parent; anchors.margins: -6; onClicked: ai.close() } }
         }
         ListView {
-            NaturalScroll { }
             id: log
+            NaturalScroll { }
             width: parent.width; height: parent.height - 28 - 10 - 44 - 10 - 20; clip: true; spacing: 10
             model: ai.transcript
             onCountChanged: positionViewAtEnd()

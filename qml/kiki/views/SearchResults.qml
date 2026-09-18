@@ -37,8 +37,8 @@ Item {
         Text { anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter; text: root.indexInfo; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     }
     ListView {
-        UI.NaturalScroll { }
         id: list
+        UI.NaturalScroll { }
         anchors.top: head.bottom; width: parent.width; height: parent.height - head.height
         clip: true; reuseItems: true; model: root.results.count
         onContentYChanged: root.results.setViewport(Math.max(0, Math.floor(contentY / 44)), Math.ceil(height / 44) + 1)

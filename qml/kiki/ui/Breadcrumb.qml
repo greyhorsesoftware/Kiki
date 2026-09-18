@@ -53,12 +53,25 @@ Rectangle {
                 required property string modelData
                 spacing: 6
                 Icon { visible: index > 0; name: "chev-r"; size: 12; color: Kiki.Theme.gutter; anchors.verticalCenter: parent.verticalCenter }
-                Text {
-                    text: modelData
-                    property bool last: index === Kiki.Format.crumbs(bc.uri, bc.home).length - 1
-                    color: last ? Kiki.Theme.fg : Kiki.Theme.muted
-                    font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: last
-                    MouseArea { anchors.fill: parent; onClicked: bc.navigate(bc.crumbUri(index)) }
+                // Every crumb is a chip; home shows its icon instead of a "~".
+                Rectangle {
+                    id: crumbChip
+                    readonly property bool isHome: index === 0 && modelData === "~"
+                    readonly property bool last: index === Kiki.Format.crumbs(bc.uri, bc.home).length - 1
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: isHome ? 28 : crumbText.implicitWidth + 20
+                    height: 22; radius: 11
+                    color: hit.containsMouse ? Kiki.Theme.accent : Kiki.Theme.surface
+                    Icon { visible: crumbChip.isHome; anchors.centerIn: parent; name: "home"; size: 13; color: hit.containsMouse ? Kiki.Theme.bg : Kiki.Theme.fgDim }
+                    Text {
+                        id: crumbText
+                        visible: !crumbChip.isHome
+                        anchors.centerIn: parent
+                        text: modelData
+                        color: hit.containsMouse ? Kiki.Theme.bg : (crumbChip.last ? Kiki.Theme.fg : Kiki.Theme.muted)
+                        font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: crumbChip.last
+                    }
+                    MouseArea { id: hit; anchors.fill: parent; hoverEnabled: true; onClicked: bc.navigate(bc.crumbUri(index)) }
                 }
             }
         }

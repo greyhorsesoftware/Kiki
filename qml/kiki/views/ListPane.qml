@@ -53,8 +53,8 @@ Item {
     }
 
     ListView {
-        UI.NaturalScroll { }
         id: view
+        UI.NaturalScroll { }
         anchors.top: header.bottom; width: parent.width; height: parent.height - header.height
         clip: true; reuseItems: true; cacheBuffer: Kiki.Theme.rowHeight * 40
         model: root.pane.listing.count

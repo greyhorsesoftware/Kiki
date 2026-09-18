@@ -56,8 +56,8 @@ Item {
         }
         Item { width: 1; height: 6 }
         ListView {
-            UI.NaturalScroll { }
             id: list
+            UI.NaturalScroll { }
             width: parent.width; height: parent.height - 44 - 30 - 6
             clip: true; reuseItems: true; model: root.tree.count
             onContentYChanged: root.tree.setViewport(Math.max(0, Math.floor(contentY / 26)), Math.ceil(height / 26) + 1)

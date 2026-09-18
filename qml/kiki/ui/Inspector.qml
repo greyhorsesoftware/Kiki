@@ -15,6 +15,7 @@ Rectangle {
     property bool standalone: false
     signal openWith()
     signal open()
+    signal closed()
     signal chmod(int mode, bool recursive)
 
     color: Kiki.Theme.bg
@@ -41,6 +42,12 @@ Rectangle {
     onMetaChanged: editMode = meta && meta.mode !== null && meta.mode !== undefined ? (meta.mode & 0o777) : 0
     property bool dirty: meta && meta.mode !== null && meta.mode !== undefined && editMode !== (meta.mode & 0o777)
 
+    // A panel you asked for needs a visible way out; Ctrl+I toggles it too.
+    ToggleButton {
+        anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
+        z: 2; icon: "x"; tip: "Close (Ctrl+I)"
+        onClicked: insp.closed()
+    }
     Column {
         anchors.fill: parent; anchors.margins: 16; anchors.leftMargin: 20; spacing: 16
         // Header: icon, name, path
@@ -74,7 +81,13 @@ Rectangle {
                 }
             }
         }
-        Loader { width: parent.width; height: parent.height - 120; sourceComponent: insp.tab === "general" ? general : permissions }
+        Flickable {
+            width: parent.width; height: Math.max(0, parent.height - 120)
+            contentWidth: width; contentHeight: tabLoader.height
+            clip: true; boundsBehavior: Flickable.StopAtBounds
+            NaturalScroll { }
+            Loader { id: tabLoader; width: parent.width; sourceComponent: insp.tab === "general" ? general : permissions }
+        }
     }
     Item {
     }

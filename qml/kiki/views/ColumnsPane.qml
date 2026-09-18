@@ -127,8 +127,8 @@ Item {
     Component { id: cacheComp; Kiki.WindowCache {} }
 
     Flickable {
-        UI.NaturalScroll { }
         id: strip
+        UI.NaturalScroll { }
         anchors.fill: parent; contentWidth: root.stripWidth; clip: true; flickableDirection: Flickable.HorizontalFlick
         boundsBehavior: Flickable.StopAtBounds
         // A two-finger sideways swipe walks the columns. The per-column lists keep the vertical
@@ -162,8 +162,8 @@ Item {
                     width: root.columnWidth; height: strip.height
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
                     ListView {
-                        UI.NaturalScroll { }
                         id: list
+                        UI.NaturalScroll { }
                         property int colIndex: index
                         anchors.fill: parent; anchors.rightMargin: 1; anchors.topMargin: 6
                         clip: true; reuseItems: true
@@ -197,7 +197,11 @@ Item {
                             Connections { target: modelData.cache; function onRowsUpdated(first, n) { if (cr.index >= first && cr.index < first + n) cr.r = modelData.cache.row(cr.index) } function onReset() { cr.r = modelData.cache.row(cr.index) } }
                             Row {
                                 anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 8
-                                UI.Icon { anchors.verticalCenter: parent.verticalCenter; name: cr.r ? cr.r.kind : "file"; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
+                                Item {
+                                    width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
+                                    UI.Icon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; name: cr.r ? cr.r.kind : "file"; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
+                                    Image { visible: cr.r && cr.r.thumb; anchors.fill: parent; source: cr.r && cr.r.thumb ? "file://" + cr.r.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+                                }
                                 Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                                 UI.Icon { visible: cr.r && cr.r.isDir; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.gutter }
                             }

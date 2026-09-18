@@ -21,7 +21,10 @@ Item {
         box.y = Math.max(0, Math.min(pos.y, menu.height - box.height - 4))
         box.forceActiveFocus()
     }
-    function close() { visible = false; closed() }
+    function close() { visible = false; subItems = []; closed() }
+    // One level of submenu: an item carrying `items` opens them beside it.
+    property var subItems: []
+    property real subY: 0
 
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: menu.close() }
 
@@ -42,6 +45,7 @@ Item {
                     // `sep` is absent on most items, and an absent value is not false: it has to be
                     // compared, or every row draws a divider.
                     readonly property bool sep: modelData.sep === true
+                    readonly property bool hasSub: modelData.items !== undefined && modelData.items.length > 0
                     width: col.width; height: (sep ? 5 : 0) + 26
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
                     Rectangle {
@@ -49,9 +53,46 @@ Item {
                         color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
                         Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Text { x: modelData.checked !== undefined ? 26 : 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                        Text { anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-                        MouseArea { id: h; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
+                        Text { visible: !parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                        Icon { visible: parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: Kiki.Theme.muted }
+                        MouseArea {
+                            id: h; anchors.fill: parent; hoverEnabled: true
+                            onEntered: {
+                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subY = parent.parent.y }
+                                else menu.subItems = []
+                            }
+                            onClicked: {
+                                if (modelData.enabled === false) return
+                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subY = parent.parent.y; return }
+                                menu.close(); modelData.action()
+                            }
+                        }
                     }
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        id: subBox
+        visible: menu.subItems.length > 0
+        width: 232; height: subCol.height + 8; radius: 2
+        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        x: Math.min(box.x + box.width - 2, menu.width - width - 4)
+        y: Math.max(0, Math.min(box.y + menu.subY, menu.height - height - 4))
+        MouseArea { anchors.fill: parent }
+        Column {
+            id: subCol; y: 4; width: parent.width
+            Repeater {
+                model: menu.subItems
+                delegate: Rectangle {
+                    required property var modelData
+                    readonly property bool sep: modelData.sep === true
+                    width: subCol.width; height: (sep ? 5 : 0) + 26
+                    color: sh.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
+                    Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
+                    Text { x: 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - 24; elide: Text.ElideRight; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    MouseArea { id: sh; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
                 }
             }
         }

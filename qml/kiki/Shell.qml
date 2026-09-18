@@ -18,9 +18,10 @@ FloatingWindow {
     property var volumes: []
     property var locations: []
     property var devices: []
-    // Plan 03: the inspector follows the selection instead of a toolbar toggle — select
-    // something and it appears.
-    readonly property bool inspector: win.inspectedUri !== ""
+    // Plan 03: list and icon views show the inspector only when asked for it (Get info,
+    // Ctrl+I). Columns view has its own inspector column and ignores this.
+    property bool inspectorRequested: false
+    readonly property bool inspector: inspectorRequested && win.inspectedUri !== ""
     // Favorites panel: hidden by default (Settings → General), shown from the far-left toolbar
     // button or Ctrl+Shift+B.
     property bool sidebarShown: Kiki.Settings.view.sidebar === true
@@ -81,33 +82,31 @@ FloatingWindow {
     property string toast: ""
     // Search (plan 12). Folder scope filters the listing; other scopes open a results view.
     property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
-    property bool searching: false
     // The field above the listing, opened by the toolbar's glass, "/" or Ctrl+F.
-    property bool searchOpen: false
-    function openSearch() { searchOpen = true; toolbar.searchBox.focus() }
-    function toggleSearch() { if (searchOpen) closeSearch(); else openSearch() }
-    property string searchScope: "folder"
-    property string indexInfo: ""
+    property string searchScope: "everywhere"
+    // Filtering (the strip above the listing) and global search (the overlay) are separate.
+    property bool filterOpen: false
+    property int filterTotal: 0
+    function openFilter() {
+        filterTotal = pane.listing.count
+        filterOpen = true
+        const bar = win.pane === win.right ? rightFilter : leftFilter
+        bar.focusInput()
+    }
+    function closeFilter() { filterOpen = false; leftFilter.clear(); rightFilter.clear(); pane.setFilter(""); keys.forceActiveFocus() }
+    function openSearch(seed) { searchOverlay.open(seed !== undefined ? seed : "") }
     function runSearch(text, scope) {
         searchScope = scope
-        if (scope === "folder") { searching = false; pane.setFilter(text); return }
-        pane.setFilter("")
-        if (!text) { searching = false; return }
+        if (!text) return
         if (!results.lid) { results.lid = Kiki.Daemon.allocLid(); Kiki.Daemon.bind(results.lid, results) }
         const req = { lid: results.lid, scope: scope === "everywhere" ? "everywhere" : "location", query: text, mode: "substring" }
         if (scope !== "everywhere") { const l = locations.find(x => x.name === scope); if (l) req.uri = l.remoteUri }
         Kiki.Daemon.request("Search", req, (ok, err) => {
             if (err) { indexInfo = err.message; return }
-            searching = true
             indexInfo = scope === "everywhere" ? "index " + Math.round(ok.indexAge / 60) + " min old" + (ok.capped ? " · capped" : "") : ""
         })
     }
-    function closeSearch() { searching = false; searchOpen = false; toolbar.searchBox.clear(); keys.forceActiveFocus() }
-    function scopeMenu() {
-        const items = [{ label: "This folder", action: () => { toolbar.searchBox.scope = "folder"; runSearch(toolbar.searchBox.text, "folder") } }, { label: "Everywhere", action: () => { toolbar.searchBox.scope = "everywhere"; runSearch(toolbar.searchBox.text, "everywhere") } }]
-        for (const l of locations) items.push({ label: l.name + "  ·  " + l.plugin, sep: items.length === 2, action: () => { toolbar.searchBox.scope = l.name; runSearch(toolbar.searchBox.text, l.name) } })
-        menuUnder(toolbar.searchBox, items)
-    }
+    property string indexInfo: ""
     // Open in (plan 14)
     property var openInTools: []
     function loadOpenIn() { Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) openInTools = ok.tools.filter(t => t.enabled) }) }
@@ -118,7 +117,6 @@ FloatingWindow {
         if (!tool) return
         Kiki.Daemon.request("OpenIn", { id: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
-    function openInMenu() { menuUnder(toolbar.viewButton, openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) }))) }
     function editSelected() {
         const uris = selectedUris(); if (!uris.length) return
         const r = pane.listing.row(pane.selection.current)
@@ -173,7 +171,7 @@ FloatingWindow {
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
-    Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); win.searching = false } }
+    Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); if (win.filterOpen) win.closeFilter() } }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
     function showItems(msg) {
         const uris = msg.uris || []; if (!uris.length) return
@@ -236,10 +234,11 @@ FloatingWindow {
     }
     function viewMenu() {
         const items = [
-            { label: "Icon view", key: "Ctrl+1", checked: pane.view === "icon", action: () => pane.view = "icon" },
-            { label: "List view", key: "Ctrl+2", checked: pane.view === "list", action: () => pane.view = "list" },
-            { label: "Columns view", key: "Ctrl+3", checked: pane.view === "columns", action: () => pane.view = "columns" },
-            { label: "Mirror view", key: "Ctrl+4", checked: win.split, action: () => win.enterMirror() },
+            { label: "Icon", key: "Ctrl+1", checked: pane.view === "icon", action: () => pane.view = "icon" },
+            { label: "List", key: "Ctrl+2", checked: pane.view === "list", action: () => pane.view = "list" },
+            { label: "Columns", key: "Ctrl+3", checked: pane.view === "columns", action: () => pane.view = "columns" },
+            { label: "Mirror", key: "Ctrl+4", checked: win.split, action: () => win.enterMirror() },
+            { label: "Gallery", key: "Ctrl+5", checked: pane.view === "gallery", action: () => win.enterGallery() },
             { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
         ]
         menuUnder(toolbar.viewButton, items)
@@ -257,14 +256,30 @@ FloatingWindow {
         const after = typed.length > 1 ? null : (pane.selection.current >= 0 ? pane.selection.current : null)
         Kiki.Daemon.request("SeekName", { lid: pane.listing.lid, prefix: typed, after: after }, ok => { if (ok && ok.index !== null && ok.index !== undefined) win.selectAt(ok.index, false) })
     }
-    // Open with… (plan 02/03): the daemon lists the desktop entries for the file's MIME type.
-    function openWithMenu(pos) {
-        const u = selectedUris(); if (u.length !== 1) return
-        Kiki.Daemon.request("OpenWith", { uri: u[0] }, ok => {
+    // Open with (plans 02/03 and 14): one list holding the desktop entries for the file's MIME
+    // type and kiki's own tools, so there is a single way to open something elsewhere.
+    function openWithItems() {
+        return win.openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) }))
+    }
+    /// Hands over the tools at once, then the desktop applications when the daemon answers.
+    function loadOpenWith(uris, apply) {
+        apply(win.openWithItems())
+        if (uris.length !== 1) return
+        Kiki.Daemon.request("OpenWith", { uri: uris[0] }, ok => {
             if (!ok) return
-            const items = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: u }) }))
-            if (!items.length) items.push({ label: "No application for " + ok.mime, enabled: false, action: () => {} })
-            if (pos) menu.open(items, pos); else menuUnder(toolbar.viewButton, items)
+            const apps = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: uris }) }))
+            const tools = win.openWithItems()
+            if (tools.length && apps.length) tools[0] = Object.assign({}, tools[0], { sep: true })
+            apply(apps.concat(tools))
+        })
+    }
+    function openWithMenu(pos) {
+        const u = selectedUris(); if (!u.length) return
+        win.loadOpenWith(u, list => {
+            const items = list.length ? list : [{ label: "Nothing to open it with", enabled: false, action: () => {} }]
+            if (menu.visible) menu.items = items
+            else if (pos) menu.open(items, pos)
+            else menuUnder(toolbar.viewButton, items)
         })
     }
     // Trash view (plan 04): restore to the original path, delete for good, or empty everything.
@@ -278,7 +293,14 @@ FloatingWindow {
     Connections { target: win.pane; function onNavigated(uri) { if (uri.startsWith("trash://")) win.loadTrashInfo() } }
     Connections { target: win.pane.listing; function onReset() { if (win.pane.isTrash) win.loadTrashInfo() } }
 
+    property var openWithSub: []
     function contextItems(index) {
+        // Tools go in at once so the submenu is never empty; applications land a moment later.
+        win.openWithSub = win.openWithItems()
+        win.loadOpenWith(win.selectedUris(), list => {
+            win.openWithSub = list
+            if (menu.visible) { const all = menu.items.slice(); for (const it of all) if (it.label === "Open with") it.items = list; menu.items = all }
+        })
         const r = index >= 0 ? pane.listing.row(index) : null
         const sel = pane.selection.count() > 0
         if (pane.isTrash) {
@@ -292,7 +314,8 @@ FloatingWindow {
         }
         const items = [
             { label: "Open", key: "Enter", enabled: sel, action: () => win.openSelected() },
-            { label: "Open with…", enabled: sel && pane.selection.count() === 1 && r && !r.isDir, action: () => win.openWithMenu() },
+            { label: "Open with", enabled: sel, items: win.openWithSub },
+            { label: "Get info", key: "Ctrl+I", enabled: sel, action: () => win.inspectorRequested = true },
             { label: "Copy", key: "Ctrl+C", sep: true, enabled: sel, action: () => win.copySelection(false) },
             { label: "Cut", key: "Ctrl+X", enabled: sel, action: () => win.copySelection(true) },
             { label: "Paste", key: "Ctrl+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
@@ -302,7 +325,6 @@ FloatingWindow {
             { label: "Extract here", enabled: r && r.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.uri }) },
             { label: "Extract to…", enabled: r && r.kind === "archive", action: () => { const folder = r.name.replace(/\.(tar\.(gz|xz|zst|bz2)|tgz|txz|tzst|zip|7z|tar)$/i, ""); Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(folder) }, ok => { if (ok) Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(r.name), dest: pane.childUri(folder) }) }) } },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
-            { label: "Open in…", enabled: win.openInTools.length > 0, action: () => win.openInMenu() },
             { label: "Share…", key: "Alt+S", enabled: sel && win.sharePlugins.length > 0, action: () => win.shareMenu() },
             { label: win.aiStatus.configured ? "Jarvis: Query…" : "Jarvis: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
             { label: "Jarvis: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
@@ -328,6 +350,12 @@ FloatingWindow {
         else openExternal(pane.childUri(r.name))
     }
     function openExternal(uri) { Quickshell.execDetached(["xdg-open", uri]) }
+    /// Right: step into the selected folder. A file has nothing to step into.
+    function enterSelected() {
+        const r = pane.listing.row(pane.selection.current)
+        if (r && r.isDir) pane.open(pane.childUri(r.name))
+        else if (r && (r.kind === "image" || r.kind === "video")) win.enterGallery()
+    }
     function moveSelection(delta, extend) {
         const n = pane.listing.count; if (!n) return
         const cur = pane.selection.current < 0 ? (delta > 0 ? -1 : n) : pane.selection.current
@@ -341,6 +369,13 @@ FloatingWindow {
         if (extend) pane.selection.range(i); else pane.selection.set(i)
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
     }
+    /// The focused pane's view item when it is the gallery, else null.
+    function galleryPane() {
+        const v = (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
+        return v && v.step ? v : null
+    }
+    property string galleryFrom: "icon"
+    function enterGallery() { if (pane.view !== "gallery") { galleryFrom = pane.view; pane.view = "gallery" } }
     /// The focused pane's view item when it is the columns view, else null.
     function columnsPane() {
         const v = (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
@@ -357,36 +392,44 @@ FloatingWindow {
     Item {
         id: keys
         anchors.fill: parent
-        focus: !toolbar.searchBox.active && !toolbar.breadcrumb.editing && !menu.visible && !settingsWin.visible
+        focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
             && !shareSheet.visible && !compressDialog.visible
         Keys.onPressed: event => {
             const ctrl = event.modifiers & Qt.ControlModifier, shift = event.modifiers & Qt.ShiftModifier, alt = event.modifiers & Qt.AltModifier
             switch (event.key) {
-            case Qt.Key_Slash: win.openSearch(); break
-            case Qt.Key_F: if (ctrl) win.openSearch(); else return; break
+            case Qt.Key_Slash: win.openFilter(); break
+            case Qt.Key_Question: shortcuts_.open(); break
             case Qt.Key_L: if (ctrl) toolbar.breadcrumb.edit(); else if (win.vimKeys && win.columnsPane()) win.columnsPane().focusRight(); else return; break
-            case Qt.Key_1: if (ctrl) pane.view = "icon"; else return; break
+            case Qt.Key_1: if (ctrl) pane.view = "icon"; else if (win.galleryPane()) win.galleryPane().actual(); else return; break
             case Qt.Key_2: if (ctrl) pane.view = "list"; else return; break
             case Qt.Key_3: if (ctrl) pane.view = "columns"; else return; break
             case Qt.Key_4: if (ctrl) win.enterMirror(); else return; break
+            case Qt.Key_5: if (ctrl) win.enterGallery(); else return; break
+            // Bare keys are free in the gallery: type-ahead is off there.
+            case Qt.Key_0: if (win.galleryPane()) win.galleryPane().fit(); else return; break
+            case Qt.Key_Plus: case Qt.Key_Equal: if (win.galleryPane()) win.galleryPane().zoomBy(1.25); else return; break
+            case Qt.Key_Minus: if (win.galleryPane()) win.galleryPane().zoomBy(0.8); else return; break
+            case Qt.Key_Space: if (win.galleryPane()) win.galleryPane().step(1); else return; break
             case Qt.Key_J: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(1); else if (win.vimKeys) win.moveSelection(1, shift); else return; break
             case Qt.Key_K: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(-1); else if (win.vimKeys) win.moveSelection(-1, shift); else return; break
-            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else if (win.columnsPane()) win.columnsPane().moveKey(1); else win.moveSelection(win.rowStep, shift); break
-            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else if (win.columnsPane()) win.columnsPane().moveKey(-1); else win.moveSelection(-win.rowStep, shift); break
+            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().moveKey(1); else win.moveSelection(win.rowStep, shift); break
+            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else if (win.galleryPane()) win.galleryPane().step(-1); else if (win.columnsPane()) win.columnsPane().moveKey(-1); else win.moveSelection(-win.rowStep, shift); break
             case Qt.Key_B: if (ctrl && shift) win.sidebarShown = !win.sidebarShown; else if (ctrl) win.focusSidebar(!win.sidebarFocus); else return; break
+            case Qt.Key_F: if (ctrl && shift) win.openSearch(leftFilter.text); else if (ctrl) win.openFilter(); else if (win.galleryPane()) win.galleryPane().filmstrip = !win.galleryPane().filmstrip; else return; break
             case Qt.Key_F4: win.editSelected(); break
             case Qt.Key_Home: win.selectAt(0, shift); break
             case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift); break
             case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift); break
             case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift); break
             case Qt.Key_H: if (ctrl) pane.setHidden(!pane.showHidden); else if (win.vimKeys && win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else return; break
-            case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (alt && shift) { win.openInMenu(); break } if (alt) { win.openIn(""); break } if (win.searching) { resultsView.activate(); break } if (win.columnsPane()) { win.columnsPane().activateKey(); break } win.openSelected(); break
-            case Qt.Key_Backspace: pane.back(); break
+            case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (alt && shift) { win.openWithMenu(); break } if (alt) { win.openIn(""); break } if (win.columnsPane()) { win.columnsPane().activateKey(); break } win.openSelected(); break
+            case Qt.Key_Backspace: pane.up(); break
             // In columns, Left walks back through the columns the inspector pushed off screen and
             // only leaves the folder once it runs out of them.
-            case Qt.Key_Left: if (alt) pane.back(); else if (pane.view === "icon") win.moveSelection(-1, shift); else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else return; break
-            case Qt.Key_Right: if (alt) pane.forward(); else if (pane.view === "icon") win.moveSelection(1, shift); else if (win.columnsPane()) win.columnsPane().focusRight(); else return; break
+            // Left leaves a folder, Right enters one, whichever view is showing.
+            case Qt.Key_Left: if (alt) pane.back(); else if (win.galleryPane()) win.galleryPane().step(-1); else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else pane.up(); break
+            case Qt.Key_Right: if (alt) pane.forward(); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().focusRight(); else win.enterSelected(); break
             case Qt.Key_F5: pane.listing.refresh(); break
             case Qt.Key_E: if (ctrl) { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (d) Kiki.Daemon.request("Eject", { uri: d.uri }) } else if (win.vimKeys) win.editSelected(); else return; break
             case Qt.Key_F2: win.renameSelected(); break
@@ -398,7 +441,8 @@ FloatingWindow {
             case Qt.Key_N: if (ctrl && shift) win.newFolder(); else return; break
             case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
             case Qt.Key_A: if (ctrl) { for (let i = 0; i < pane.listing.count; i++) pane.selection.rows[i] = true; pane.selection.changed() } else return; break
-            case Qt.Key_Escape: if (win.sidebarFocus) win.focusSidebar(false); else pane.selection.clear(); break
+            case Qt.Key_Escape: if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
+            case Qt.Key_I: if (ctrl || win.vimKeys) win.inspectorRequested = !win.inspectorRequested; else return; break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             case Qt.Key_F6: if (win.split) win.transfer(true); else return; break
             case Qt.Key_M: if (ctrl) win.toggleMirror(); else return; break
@@ -421,7 +465,8 @@ FloatingWindow {
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }
-        function search(text: string): void { win.searchOpen = text !== ""; toolbar.searchBox.text = text; win.pane.setFilter(text) }
+        function search(text: string): void { if (text) win.openFilter(); const bar = win.pane === win.right ? rightFilter : leftFilter; bar.text = text; win.pane.setFilter(text) }
+        function searchEverywhere(text: string): void { if (searchOverlay.visible && !text) searchOverlay.close(); else win.openSearch(text) }
         function select(name: string): void { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); return } } }
         function selection(): string { return JSON.stringify(win.selectedUris()) }
         function uri(pane: string): string { return win.pane.uri }
@@ -441,11 +486,14 @@ FloatingWindow {
         function transfer(kind: string): void { win.transfer(kind === "move") }
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
         function state(): string {
-            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, searchOpen: win.searchOpen, settingsVisible: settingsWin.visible, menuVisible: menu.visible, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
+            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
         function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
         function toggleSearch(): void { win.toggleSearch() }
+        function inspector(on: string): void { win.inspectorRequested = on === "" ? !win.inspectorRequested : on === "on" }
+        function shortcuts(): void { if (shortcuts_.visible) shortcuts_.close(); else shortcuts_.open() }
+        function openWith(): void { if (menu.visible) menu.close(); else win.openWithMenu() }
         function columns(action: string): string {
             const c = win.columnsPane(); if (!c) return ""
             if (action === "down") c.moveKey(1); else if (action === "up") c.moveKey(-1)
@@ -457,7 +505,7 @@ FloatingWindow {
         function undo(): void { Kiki.Jobs.undo() }
         function redo(): void { Kiki.Jobs.redo() }
         function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
-        function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false) it.action() }
+        function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
         function windowState(pane: string): string { const l = win.pane.listing; return JSON.stringify({ count: l.count, viewport: [l.viewportFirst, l.viewportCount], held: Object.keys(l._rows).length }) }
         function timestamps(): string { return JSON.stringify({ now: Date.now() }) }
@@ -489,11 +537,8 @@ FloatingWindow {
             repo: win.repo
             onViewMenu: win.viewMenu()
             onPathMenu: win.pathMenu()
-            onSearch: (text, scope) => win.runSearch(text, scope)
-            onScopeMenu: win.scopeMenu()
             onSettings: settingsWin.open("general")
-            searchOpen: win.searchOpen
-            onToggleSearch: win.toggleSearch()
+            onToggleSearch: win.openSearch(leftFilter.text)
             sidebarShown: win.sidebarShown
             onToggleSidebar: win.sidebarShown = !win.sidebarShown
         }
@@ -503,14 +548,6 @@ FloatingWindow {
             Item { width: win.sidebarSpace; height: parent.height }
         Column {
             width: parent.width - win.sidebarSpace; height: parent.height
-            Views.SearchResults {
-                id: resultsView
-                visible: win.searching
-                width: parent.width; height: parent.height
-                results: win.results; query: toolbar.searchBox.text; home: win.home; indexInfo: win.indexInfo
-                scopeLabel: win.searchScope === "everywhere" ? "Everywhere" : win.searchScope
-                onOpen: uri => { win.closeSearch(); const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(uri.endsWith("/") ? uri : r); }
-            }
             UI.MirrorWorkspace {
                 id: mirrorWs
                 visible: win.mirrorOpen
@@ -521,7 +558,7 @@ FloatingWindow {
             }
             UI.MirrorBar {
                 id: mirrorBar
-                visible: win.split && !win.mirrorOpen && !win.searching
+                visible: win.split && !win.mirrorOpen
                 width: parent.width
                 leftPane: win.left; rightPane: win.right; home: win.home
                 lastMirrored: win.lastMirror[win.remoteUri()] || null
@@ -530,16 +567,23 @@ FloatingWindow {
                 onOptions: pos => { const p = mirrorBar.mapToItem(menu.parent, pos.x, pos.y); win.mirrorOptions(Qt.point(p.x, p.y)) }
             }
             Row {
-                visible: !win.mirrorOpen && !win.searching
+                visible: !win.mirrorOpen
                 width: parent.width; height: parent.height - (mirrorBar.visible ? mirrorBar.height : 0)
                 // Left pane (the only pane when not split)
                 Column {
                     width: Math.max(0, (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0)); height: parent.height
                     UI.PaneHeader { visible: win.split; width: parent.width; pane: win.left; home: win.home; onClicked: win.focusPane(win.left) }
+                    UI.FilterBar {
+                        id: leftFilter
+                        visible: win.filterOpen && win.pane === win.left
+                        width: parent.width; pane: win.left; total: win.filterTotal
+                        onPromote: text => { win.closeFilter(); win.openSearch(text) }
+                        onClosed: win.closeFilter()
+                    }
                     Loader {
                         id: viewLoader
-                        width: parent.width; height: parent.height - (win.split ? 34 : 0)
-                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : listView)   // "mirror" renders as a list
+                        width: parent.width; height: parent.height - (win.split ? 34 : 0) - (leftFilter.visible ? leftFilter.height : 0)
+                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : (win.left.view === "gallery" ? galleryView : listView))   // "mirror" renders as a list
                         onLoaded: item.pane = win.left
                     }
                 }
@@ -548,11 +592,18 @@ FloatingWindow {
                     visible: win.split
                     width: win.split ? parent.width - Math.floor((parent.width - 1) / 2) - 1 : 0; height: parent.height
                     UI.PaneHeader { width: parent.width; pane: win.right; home: win.home; onClicked: win.focusPane(win.right) }
+                    UI.FilterBar {
+                        id: rightFilter
+                        visible: win.filterOpen && win.pane === win.right
+                        width: parent.width; pane: win.right; total: win.filterTotal
+                        onPromote: text => { win.closeFilter(); win.openSearch(text) }
+                        onClosed: win.closeFilter()
+                    }
                     Loader {
                         id: rightLoader
                         active: win.split
-                        width: parent.width; height: parent.height - 34
-                        sourceComponent: win.right.view === "icon" ? iconView : (win.right.view === "columns" ? columnsView : listView)
+                        width: parent.width; height: parent.height - 34 - (rightFilter.visible ? rightFilter.height : 0)
+                        sourceComponent: win.right.view === "icon" ? iconView : (win.right.view === "columns" ? columnsView : (win.right.view === "gallery" ? galleryView : listView))
                         onLoaded: item.pane = win.right
                     }
                 }
@@ -564,6 +615,7 @@ FloatingWindow {
                     width: Math.min(Kiki.Theme.inspectorWidth, Math.floor(parent.width * 0.45)); height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onOpen: win.openSelected()
+                    onClosed: win.inspectorRequested = false
                     onOpenWith: win.openWithMenu()
                     onEdit: (u, line) => win.editAt(u, line)
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
@@ -574,9 +626,11 @@ FloatingWindow {
         UI.ShortcutBar {
             id: bar
             width: parent.width
-            keys: win.searching ? [{ key: "Enter", label: "open" }, { key: "↑ ↓", label: "move" }, { key: "Tab", label: "cycle scope" }, { key: "⌫", label: "remove scope" }, { key: "Esc", label: "close" }, { key: "?", label: "all keys" }] : win.split ? [{ key: "Tab", label: "switch pane" }, { key: "^C ^V", label: "transfer" }, { key: "F6", label: "move across" }, { key: "^M", label: "mirror" }, { key: "^⇧S", label: "unsplit" }, { key: "?", label: "all keys" }] : win.pane.view === "columns"
-                ? [{ key: "Enter", label: "open" }, { key: "h l", label: "columns" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
-                : [{ key: "Enter", label: "open" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" }, { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "search" }, { key: "^Z", label: "undo" }, { key: "?", label: "all keys" }]
+            keys: (win.vimKeys ? [{ key: "h j k l", label: "move" }] : []).concat([
+                { key: "Enter", label: "open" }, { key: "←", label: "up" }, { key: "→", label: "into" },
+                { key: "^I", label: "info" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" },
+                { key: "^C", label: "copy" }, { key: "^V", label: "paste" }, { key: "/", label: "filter" },
+                { key: "?", label: "keys" }])
             MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
             status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
         }
@@ -634,8 +688,19 @@ FloatingWindow {
     }
 
     Component { id: listView; Views.ListPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
+    Component { id: galleryView; Views.GalleryPane { pane: win.left; home: win.home; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openExternal(pane.childUri(pane.listing.row(i).name)) }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
     Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
 
+    Views.SearchOverlay {
+        id: searchOverlay
+        parent: win.contentItem
+        results: win.results; locations: win.locations; home: win.home; indexInfo: win.indexInfo
+        onSearch: (text, scope) => win.runSearch(text, scope)
+        onOpenUri: uri => { const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(uri.endsWith("/") ? uri : r) }
+        onRevealUri: uri => { const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(r) }
+        onClosed: keys.forceActiveFocus()
+    }
+    UI.ShortcutsOverlay { id: shortcuts_; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.ContextMenu { id: menu; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }

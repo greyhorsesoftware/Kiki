@@ -8,18 +8,39 @@ Item {
     property Kiki.Pane pane
     signal activate(int index)
     signal contextMenu(int index, point pos)
+    readonly property real zoom: root.pane ? root.pane.iconZoom : 1
     readonly property int cellAvail: Math.max(1, width - 36)
-    readonly property int cellCols: Math.max(1, Math.min(7, Math.floor(cellAvail / 92)))
+    readonly property int cellTarget: Math.round(44 * zoom) + 48
+    readonly property int cellCols: Math.max(1, Math.min(12, Math.round(cellAvail / cellTarget)))
     readonly property int cellW: Math.floor(cellAvail / cellCols)
-    readonly property int cellH: 110
+    readonly property int cellH: Math.round(44 * zoom) + 66
+    function setZoom(z) { if (root.pane) root.pane.iconZoom = Math.max(0.6, Math.min(3, z)) }
 
     function ensureVisible(i) { grid.positionViewAtIndex(i, GridView.Contain) }
     readonly property int perRow: grid.perRow
     readonly property int pageSize: Math.max(1, Math.floor(grid.height / cellH)) * grid.perRow
 
+    // Spreading two fingers grows the icons; Ctrl and the wheel does the same for a mouse.
+    PinchHandler {
+        target: null
+        property real startZoom: 1
+        onActiveChanged: if (active) startZoom = root.zoom
+        onActiveScaleChanged: root.setZoom(startZoom * activeScale)
+    }
+    WheelHandler {
+        target: null
+        acceptedModifiers: Qt.ControlModifier
+        onWheel: event => {
+            const dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 8
+            if (dy === 0) { event.accepted = false; return }
+            root.setZoom(root.zoom * (1 + dy / 300))
+            event.accepted = true
+        }
+    }
+
     GridView {
-        UI.NaturalScroll { }
         id: grid
+        UI.NaturalScroll { }
         anchors.fill: parent; anchors.margins: 18
         clip: true; reuseItems: true; cacheBuffer: root.cellH * 6
         cellWidth: root.cellW; cellHeight: root.cellH
@@ -56,9 +77,9 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 8; width: parent.width - 12
                     Item {
                         id: iconBox
-                        anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(64, parent.width); height: 48
-                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: 44; strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
-                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(128, 128); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+                        anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(Math.round(44 * root.zoom) + 20, parent.width); height: Math.round(44 * root.zoom) + 4
+                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: Math.round(44 * root.zoom); strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(128 * root.zoom), Math.round(128 * root.zoom)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                         Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }
                     Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }

@@ -13,7 +13,6 @@ Rectangle {
     z: 93
     property string page: "general"
     property var about: ({})
-    property var tools: []
     property var index: ({})
     property var plugins: []
     property var sharePlugins: []
@@ -24,7 +23,6 @@ Rectangle {
     function reload() {
         Kiki.Settings.load()
         Kiki.Daemon.request("About", {}, ok => { if (ok) sw.about = ok })
-        Kiki.Daemon.request("OpenInList", {}, ok => { if (ok) sw.tools = ok.tools })
         Kiki.Daemon.request("IndexStatus", {}, ok => { if (ok) sw.index = ok })
         Kiki.Daemon.request("PluginStatus", {}, ok => { if (ok) sw.plugins = ok.plugins })
         Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sw.sharePlugins = ok.plugins })
@@ -36,7 +34,7 @@ Rectangle {
 
     readonly property var pages: [
         { id: "general", label: "General" }, { id: "search", label: "Search" },
-        { id: "openin", label: "Open in" }, { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
+        { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
     ]
 
     MouseArea { anchors.fill: parent; onClicked: sw.close() }
@@ -68,7 +66,7 @@ Rectangle {
     Row {
         anchors.fill: parent; anchors.topMargin: titleBar.height
         Rectangle {
-            width: Math.min(200, Math.floor(parent.width * 0.32)); height: parent.height; color: Kiki.Theme.bgDark
+            width: Math.min(170, Math.floor(parent.width * 0.28)); height: parent.height; color: Kiki.Theme.bgDark
             clip: true
             Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
             Flickable {
@@ -93,12 +91,12 @@ Rectangle {
         }
         Flickable {
             NaturalScroll { }
-            width: Math.max(0, parent.width - Math.min(200, Math.floor(parent.width * 0.32))); height: parent.height
+            width: Math.max(0, parent.width - Math.min(170, Math.floor(parent.width * 0.28))); height: parent.height
             contentHeight: body.height + 48; contentWidth: width; clip: true; boundsBehavior: Flickable.StopAtBounds
             Column {
-                id: body; x: 28; y: 24; width: parent.width - 56; spacing: 18
+                id: body; x: 16; y: 24; width: parent.width - 32; spacing: 18
                 Text { text: sw.pages.find(p => p.id === sw.page).label; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-                Loader { width: parent.width; sourceComponent: ({ general: general, search: search, openin: openin, share: sharePage, git: git, project: project, ai: ai, omarchy: omarchyPage, about: aboutPage })[sw.page] }
+                Loader { width: parent.width; sourceComponent: ({ general: general, search: search, share: sharePage, git: git, project: project, ai: ai, omarchy: omarchyPage, about: aboutPage })[sw.page] }
             }
         }
     }
@@ -111,20 +109,41 @@ Rectangle {
         property string label: ""
         property string hint: ""            // shown on hover rather than crowding the row
         readonly property real avail: parent ? parent.width : 400
-        readonly property real labelWidth: Math.max(90, Math.min(220, avail * 0.42))
+        readonly property real labelWidth: Math.max(90, Math.min(240, avail * 0.55))
         width: avail; clip: true
-        spacing: 14; height: 32
+        spacing: 14; height: Math.max(32, implicitHeight)
         Text { width: labelWidth; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: label; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         HoverHandler { id: rowHover }
         QC.ToolTip { visible: hint !== "" && rowHover.hovered; text: hint; delay: 350 }
     }
     component Choice: Rectangle {
+        id: choice
         property var options: []; property string value: ""; signal picked(string v)
         width: parent && parent.avail !== undefined ? Math.max(110, Math.min(260, parent.avail - parent.labelWidth - 28)) : 260
-        height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
-        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+        height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: drop.visible ? Kiki.Theme.accent : Kiki.Theme.gutter
+        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: choice.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
-        MouseArea { anchors.fill: parent; onClicked: { const i = options.indexOf(value); picked(options[(i + 1) % options.length]) } }
+        MouseArea { anchors.fill: parent; onClicked: drop.open() }
+        // The list drops below the field. A Popup sits in the window's overlay, so it is not
+        // clipped by the page's Flickable.
+        QC.Popup {
+            id: drop
+            y: choice.height + 2; width: choice.width
+            padding: 4
+            background: Rectangle { color: Kiki.Theme.bgDark; radius: 2; border.width: 1; border.color: Kiki.Theme.gutter }
+            contentItem: Column {
+                Repeater {
+                    model: choice.options
+                    delegate: Rectangle {
+                        required property string modelData
+                        width: drop.availableWidth; height: 26; radius: 2
+                        color: opt.containsMouse ? Kiki.Theme.surface : "transparent"
+                        Text { x: 8; anchors.verticalCenter: parent.verticalCenter; text: modelData; color: modelData === choice.value ? Kiki.Theme.accent : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        MouseArea { id: opt; anchors.fill: parent; hoverEnabled: true; onClicked: { choice.picked(modelData); drop.close() } }
+                    }
+                }
+            }
+        }
     }
     component Switch: Rectangle {
         property bool on: false; signal toggled()
@@ -140,16 +159,15 @@ Rectangle {
     }
 
     Component { id: general; Column { spacing: 12
-        Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns", "mirror"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
+        Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns", "gallery", "mirror"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
-        Row2 { hint: "picture folders open in icon view, remote locations in Mirror view (memory wins)"; label: "Pick the view by contents"; Switch { on: Kiki.Settings.view.smartView !== false; onToggled: sw.set("view", "smartView", !on) } }
         Row2 { hint: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }
         Row2 { hint: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } }
         Row2 { hint: "off hides it until Ctrl+Shift+B"; label: "Show favorites panel"; Switch { on: Kiki.Settings.view.sidebar === true; onToggled: sw.set("view", "sidebar", !on) } }
         Row2 { hint: "default for new panes; Ctrl+H or the view menu toggles a pane"; label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } }
         Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
             Button { text: "Forget all"; onClicked: { Kiki.Daemon.request("ClearViewPrefs", {}); sw.saved() } } }
-        Row2 { label: "List columns"; Row { spacing: 12; anchors.verticalCenter: parent.verticalCenter
+        Row2 { id: colsRow; label: "List columns"; Flow { width: Math.max(0, colsRow.avail - colsRow.labelWidth - 14); spacing: 12; anchors.verticalCenter: parent.verticalCenter
             Repeater { model: [["mtime", "Modified"], ["size", "Size"], ["kind", "Kind"], ["atime", "Accessed"]]
                 delegate: Row { required property var modelData; spacing: 6
                     Switch { on: (Kiki.Settings.view.columns || []).indexOf(modelData[0]) >= 0; onToggled: { const cols = ["mtime", "size", "kind", "atime"].filter(c => c === modelData[0] ? !on : (Kiki.Settings.view.columns || []).indexOf(c) >= 0); sw.set("view", "columns", cols) } }
@@ -157,7 +175,6 @@ Rectangle {
         Row2 { hint: "Accessed shows when a file was last read, with a heat colour fading over a year. \"filesystem\" uses the atime the mount keeps" + (sw.homeVolume ? " (this volume: " + sw.homeVolume.atimeSupport + (sw.homeVolume.atimeSupport === "relatime" ? ", updated at most once a day unless the file changed; strictatime gives minute accuracy" : (sw.homeVolume.atimeSupport === "noatime" ? ", never updated: choose kiki" : "")) + ")" : "") + ". \"kiki\" uses this app's own opens (Open, Open with, Open in, the viewer, Share) and falls back to atime with a hollow swatch."; label: "Heat source"; Choice { options: ["filesystem", "kiki"]; value: Kiki.Settings.view.heatSource || "filesystem"; onPicked: v => sw.set("view", "heatSource", v) }
             Button { text: "Clear access log"; onClicked: Kiki.Daemon.request("ClearAccessLog", {}, () => sw.saved()) } }
         Row2 { label: "Theme"; Choice { options: ["follow Omarchy", "Tokyo Night"]; value: Kiki.Settings.view.theme || "follow Omarchy"; onPicked: v => sw.set("view", "theme", v) } }
-        Row2 { label: "Toast duration (ms)"; NumberBox { value: Kiki.Settings.timers.toastMs; onEdited: v => sw.set("timers", "toastMs", v) } }
     } }
     Component { id: search; Column { spacing: 12
         Text { text: (sw.index.entries || 0).toLocaleString() + " names indexed · " + Kiki.Format.bytes(sw.index.bytes || 0) + (sw.index.refreshing ? " · refreshing" : ""); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
@@ -169,14 +186,6 @@ Rectangle {
             TextEdit { anchors.fill: parent; anchors.margins: 8; text: (Kiki.Settings.index && Kiki.Settings.index.excludes ? Kiki.Settings.index.excludes : [".cache", ".git", "node_modules", "__pycache__", ".Trash", "target"]).join("\n"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
                 onEditingFinished: { const ex = text.split("\n").map(s => s.trim()).filter(s => s); Kiki.Daemon.request("SetSettings", { patch: { index: { excludes: ex } } }, () => { Kiki.Settings.load(); Kiki.Daemon.request("IndexRebuild", {}); sw.saved() }) } } } }
         Button { text: "Rebuild index"; onClicked: { Kiki.Daemon.request("IndexRebuild", {}); sw.saved() } }
-    } }
-    Component { id: openin; Column { spacing: 6
-        Repeater { model: sw.tools; delegate: Row { required property var modelData; spacing: 14; height: 30
-            Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: modelData.enabled ? Kiki.Theme.green : Kiki.Theme.gutter }
-            Text { width: 160; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: modelData.enabled ? Kiki.Theme.fg : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-            Text { width: 70; anchors.verticalCenter: parent.verticalCenter; text: modelData.role || ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-            Text { width: 300; anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight; text: modelData.enabled ? modelData.command : modelData.reason; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
-        Text { text: "Edit ~/.config/kiki/open-in.toml to add or override tools; the list reloads on save."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     } }
     property var integration: ({})
     property var volumes: []

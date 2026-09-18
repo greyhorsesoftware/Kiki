@@ -10,6 +10,7 @@ WheelHandler {
     }
     target: null
     orientation: Qt.Vertical
+    acceptedModifiers: Qt.NoModifier
     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
     onWheel: event => {
         const dy = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 2

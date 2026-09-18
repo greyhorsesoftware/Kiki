@@ -15,6 +15,8 @@ QtObject {
     property var history: []
     property int historyIndex: -1
     property bool focused: false
+    // Icon view zoom: pinch on a trackpad, or Ctrl and the wheel.
+    property real iconZoom: 1
     property int renamingIndex: -1
     signal renameRequested(string uri, string name)
 
@@ -52,14 +54,14 @@ QtObject {
     property string _smartChecked: ""
     readonly property var pictureNames: ["pictures", "photos", "dcim", "screenshots", "wallpapers", "camera", "camera roll"]
     function _smart() {
-        if (_smartChecked === uri || hasPref || Kiki.Settings.view.smartView === false || view === "mirror") return
+        if (_smartChecked === uri || hasPref || view === "mirror") return
         _smartChecked = uri
         const name = decodeURIComponent(uri.replace(/\/+$/, "").split("/").pop() || "").toLowerCase()
-        let pick = pictureNames.indexOf(name) >= 0 ? "icon" : ""
+        let pick = pictureNames.indexOf(name) >= 0 ? "gallery" : ""
         if (!pick) {
             const n = Math.min(listing.count, 200); let held = 0, media = 0
             for (let i = 0; i < n; i++) { const r = listing.row(i); if (!r) continue; held++; if (r.kind === "image" || r.kind === "video") media++ }
-            if (held >= 12 && media / held >= 0.6) pick = "icon"
+            if (held >= 12 && media / held >= 0.6) pick = "gallery"
         }
         if (pick && pick !== view) { _applying = true; view = pick; _applying = false }
     }

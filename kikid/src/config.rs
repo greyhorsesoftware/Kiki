@@ -94,7 +94,6 @@ pub fn settings() -> Value {
             .b("showHidden", false)
             .b("sidebar", false)
             .b("relativeDates", true)
-            .b("smartView", true)
             .s("heatSource", "filesystem")
             .b("vimKeys", false)
             .b("rememberPerFolder", true)
