@@ -206,7 +206,9 @@ fn run_cli(tx: Sender<Value>, id: u64, uris: &[Uri], question: &str, history: &V
         let _ = tx.send(proto::event("AiError").u("id", id).s("code", "Unsupported").s("message", "CLI mode works on local files; API mode can read remote ones").done());
         return;
     }
-    let cwd = std::path::Path::new(&paths[0]).parent().map(|d| d.to_path_buf()).unwrap_or_else(crate::config::home);
+    // A question with nothing selected is a fair question ("how big is this folder?"): answer it
+    // from home rather than indexing an empty list, which used to take the daemon down with it.
+    let cwd = paths.first().and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf())).unwrap_or_else(crate::config::home);
     let mut prompt = String::new();
     if let Some(h) = history.as_arr() {
         for turn in h {
@@ -216,7 +218,11 @@ fn run_cli(tx: Sender<Value>, id: u64, uris: &[Uri], question: &str, history: &V
             prompt.push('\n');
         }
     }
-    prompt.push_str(&format!("Read {} and answer concisely in plain text. Question: {}", paths.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", "), question));
+    if paths.is_empty() {
+        prompt.push_str(&format!("Answer concisely in plain text. Question: {question}"));
+    } else {
+        prompt.push_str(&format!("Read {} and answer concisely in plain text. Question: {}", paths.iter().map(|x| format!("`{x}`")).collect::<Vec<_>>().join(", "), question));
+    }
     let mut cmd = Command::new(&bin);
     cmd.args(args.iter().map(|a| a.replace("{prompt}", &prompt).replace("{files}", &paths.join(" "))));
     cmd.current_dir(&cwd).env("KIKI_SELECTION", paths.join("\n")).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());

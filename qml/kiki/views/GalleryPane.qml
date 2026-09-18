@@ -14,6 +14,33 @@ Item {
     property bool filmstrip: true
     property real zoom: 0                       // 0 = fit the stage
     readonly property int stripHeight: filmstrip ? 84 : 0
+    /// The bar under the picture: play, pause and how the slideshow runs.
+    readonly property int controlsHeight: 40
+    /// What the picture has to itself.
+    readonly property int stageHeight: Math.max(0, height - stripHeight - controlsHeight)
+
+    // ---------------------------------------------------------------- slideshow
+    property bool playing: false
+    readonly property int slideDelay: Math.max(1, Kiki.Settings.view.slideshowDelay || 4)
+    readonly property bool slideLoop: Kiki.Settings.view.slideshowLoop !== false
+    function togglePlay() { playing = !playing }
+    function advance() {
+        if (!pane) return
+        // step() says false at the last picture; from there it either starts again or stops.
+        if (root.step(1)) return
+        if (!slideLoop) { playing = false; return }
+        for (let i = 0; i < pane.listing.count; i++) {
+            const r = pane.listing.row(i)
+            if (r && (r.kind === "image" || r.kind === "video")) { pane.selection.set(i); root.zoom = 0; return }
+        }
+        playing = false
+    }
+    property Timer slideshow: Timer {
+        interval: root.slideDelay * 1000
+        repeat: true
+        running: root.playing && root.pane && root.pane.listing.count > 1
+        onTriggered: root.advance()
+    }
     /// One thumbnail plus the gap after it: the layout and the viewport maths share it, or the
     /// daemon is told about the wrong rows and the thumbnails at the edges never arrive.
     readonly property int shotWidth: 72
@@ -80,15 +107,37 @@ Item {
     // The stage is darker than the rest of the window, so the picture is the brightest thing on
     // screen whatever the theme.
     Rectangle {
-        width: parent.width; height: parent.height - root.stripHeight
+        width: parent.width; height: root.stageHeight
         color: Qt.darker(Kiki.Theme.bgDark, 1.25)
+    }
+
+    /// The picture on screen before this one, kept while the new one loads so the change is a
+    /// fade rather than a blink. Paging quickly just replaces it; nothing queues up.
+    property string ghostSource: ""
+    onSourceChanged: {
+        if (img.status === Image.Ready && img.source != "") {
+            ghost.source = img.source
+            ghost.opacity = 1
+        }
+        img.opacity = 0
     }
 
     Flickable {
         id: stage
-        width: parent.width; height: parent.height - root.stripHeight
+        width: parent.width; height: root.stageHeight
         contentWidth: Math.max(width, img.width); contentHeight: Math.max(height, img.height)
         clip: true; boundsBehavior: Flickable.StopAtBounds
+
+        Image {
+            id: ghost
+            anchors.fill: parent
+            anchors.margins: root.inset
+            fillMode: Image.PreserveAspectFit
+            smooth: true; mipmap: true; cache: false; asynchronous: true
+            opacity: 0
+            visible: opacity > 0
+            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.InOutQuad } }
+        }
         // A hairline around the picture, so a dark photograph still has an edge against the mat.
         Rectangle {
             visible: img.visible && img.status === Image.Ready
@@ -108,6 +157,10 @@ Item {
             height: root.zoom === 0 ? Math.round(implicitHeight * root.fitScale) : Math.round(implicitHeight * root.zoom)
             x: Math.max(0, (stage.contentWidth - width) / 2)
             y: Math.max(0, (stage.contentHeight - height) / 2)
+            opacity: 0
+            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.InOutQuad } }
+            onStatusChanged: if (status === Image.Ready) { img.opacity = 1; ghost.opacity = 0 }
+            Component.onCompleted: if (status === Image.Ready) opacity = 1
         }
         // Anything that is not a picture, or has not loaded, keeps its kind icon.
         Column {
@@ -134,10 +187,114 @@ Item {
         UI.NaturalScroll { }
     }
 
+    // The bar under the picture: play, pause, and the two things a slideshow needs to know.
+    Item {
+        id: controls
+        y: stage.height; width: parent.width; height: root.controlsHeight
+
+        // A pill under the buttons, so they read as one control over a picture of any colour.
+        Rectangle {
+            anchors.centerIn: parent
+            width: buttons.width + 20; height: 34; radius: height / 2
+            color: Qt.rgba(Kiki.Theme.surface.r, Kiki.Theme.surface.g, Kiki.Theme.surface.b, 0.55)
+            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.06)
+        }
+        Row {
+            id: buttons
+            anchors.centerIn: parent
+            spacing: 6
+
+            UI.ToggleButton {
+                objectName: "gallery-play"
+                icon: root.playing ? "pause" : "play"
+                tip: root.playing ? "Pause" : "Play"
+                onClicked: root.togglePlay()
+            }
+            UI.ToggleButton {
+                objectName: "gallery-settings"
+                icon: "gear"
+                tip: "Slideshow"
+                onClicked: slideOptions.visible = !slideOptions.visible
+            }
+        }
+
+        Text {
+            visible: root.playing
+            anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter
+            text: root.slideDelay + "s" + (root.slideLoop ? " · loop" : "")
+            color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
+        }
+    }
+
+    // Slideshow options, over the bar rather than in a window of their own.
+    Rectangle {
+        id: slideOptions
+        objectName: "gallery-options"
+        visible: false
+        width: 260; height: opts.height + 24; radius: 8
+        x: Math.round((root.width - width) / 2)
+        y: Math.max(8, controls.y - height - 8)
+        color: Kiki.Theme.bg
+        border.width: 1; border.color: Kiki.Theme.line
+        z: 5
+        MouseArea { anchors.fill: parent }
+
+        Column {
+            id: opts
+            y: 12; width: parent.width; spacing: 10
+
+            Text {
+                x: 14; text: "SLIDESHOW"; color: Kiki.Theme.muted
+                font.family: Kiki.Theme.mono; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1
+            }
+            Row {
+                x: 14; spacing: 8
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Every"; color: Kiki.Theme.fgDim
+                    font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
+                }
+                Repeater {
+                    model: [2, 4, 8, 15]
+                    delegate: Rectangle {
+                        required property int modelData
+                        objectName: "delay-" + modelData
+                        width: 38; height: 24; radius: 12
+                        color: root.slideDelay === modelData ? Kiki.Theme.accent : "transparent"
+                        border.width: 1
+                        border.color: root.slideDelay === modelData ? Kiki.Theme.accent : Kiki.Theme.gutter
+                        Text {
+                            anchors.centerIn: parent; text: modelData + "s"
+                            color: root.slideDelay === modelData ? Kiki.Theme.bg : Kiki.Theme.fgDim
+                            font.family: Kiki.Theme.mono; font.pixelSize: 11
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: Kiki.Settings.set("view", "slideshowDelay", modelData) }
+                    }
+                }
+            }
+            Row {
+                x: 14; spacing: 8
+                Rectangle {
+                    objectName: "slide-loop"
+                    width: 16; height: 16; radius: 3; anchors.verticalCenter: parent.verticalCenter
+                    color: root.slideLoop ? Kiki.Theme.accent : Kiki.Theme.bgDark
+                    border.width: 1; border.color: root.slideLoop ? Kiki.Theme.accent : Kiki.Theme.gutter
+                    UI.Icon { visible: root.slideLoop; anchors.centerIn: parent; name: "check"; size: 10; strokeWidth: 2.5; color: Kiki.Theme.bg }
+                    MouseArea { anchors.fill: parent; onClicked: Kiki.Settings.set("view", "slideshowLoop", !root.slideLoop) }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Loop"; color: Kiki.Theme.fgDim
+                    font.family: Kiki.Theme.mono; font.pixelSize: 12
+                }
+            }
+        }
+    }
+
     Rectangle {
         id: stripBar
         visible: root.filmstrip
-        y: stage.height; width: parent.width; height: root.stripHeight
+        y: stage.height + root.controlsHeight; width: parent.width; height: root.stripHeight
         color: Kiki.Theme.bgDark
         Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
         ListView {

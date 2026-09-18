@@ -16,6 +16,18 @@ fn ready() -> Result<()> {
     Ok(())
 }
 
+/// The devices in `opendrop find` output: "Found index 0  ID abc123  name Someone's iPhone".
+fn found(out: &str) -> Vec<Target> {
+    let mut t = Vec::new();
+    for line in out.lines() {
+        let Some(rest) = line.strip_prefix("Found index ") else { continue };
+        let idx = rest.split_whitespace().next().unwrap_or("0").to_string();
+        let name = line.split("name ").nth(1).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("Apple device").to_string();
+        t.push(Target { id: idx, name, detail: "AirDrop".into(), online: true, icon: "phone".into() });
+    }
+    t
+}
+
 impl ShareHandler for AirDrop {
     fn describe(&self) -> ShareDescribe {
         ShareDescribe {
@@ -36,17 +48,7 @@ impl ShareHandler for AirDrop {
     fn targets(&mut self, _c: &Value, _s: &Value, _q: Option<&str>) -> Result<Vec<Target>> {
         ready()?;
         let out = Command::new("opendrop").args(["find", "--timeout", "3"]).output().map_err(PluginError::io)?;
-        let mut t = Vec::new();
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            // "Found index 0  ID abc123  name Someone's iPhone"
-            if let Some(rest) = line.strip_prefix("Found index ") {
-                let mut it = rest.split_whitespace();
-                let idx = it.next().unwrap_or("0").to_string();
-                let name = line.split("name ").nth(1).unwrap_or("Apple device").to_string();
-                t.push(Target { id: idx, name, detail: "AirDrop".into(), online: true, icon: "phone".into() });
-            }
-        }
-        Ok(t)
+        Ok(found(&String::from_utf8_lossy(&out.stdout)))
     }
     fn share(&mut self, _c: &Value, _s: &Value, files: &[String], target: Option<&str>, _compose: &Value, p: &mut ShareProgress) -> Result<ShareResult> {
         ready()?;
@@ -66,4 +68,30 @@ impl ShareHandler for AirDrop {
 
 fn main() {
     let _ = sdk::run_share(&mut AirDrop);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_found_line_is_a_device() {
+        let t = found("Found index 0  ID abc  name Gideon's iPhone\nFound index 1  ID def  name iPad\n");
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].id, "0");
+        assert_eq!(t[0].name, "Gideon's iPhone");
+        assert_eq!(t[1].id, "1");
+    }
+
+    #[test]
+    fn a_device_that_gives_no_name_still_appears() {
+        let t = found("Found index 2  ID ghi\n");
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].name, "Apple device");
+    }
+
+    #[test]
+    fn chatter_around_the_list_is_ignored() {
+        assert!(found("Looking for devices...\nnothing here\n").is_empty());
+    }
 }

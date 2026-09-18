@@ -23,6 +23,10 @@ Singleton {
     property color fgDim: "#a9b1d6"
     property color muted: "#565f89"
     property color accent: "#7aa2f7"
+    /// Navigational icons — sidebar, toolbar, breadcrumb — are all drawn in this, so they match
+    /// each other and move together when the theme changes. Accent means "active", the status
+    /// colours mean something is wrong or connected; neither is decoration.
+    property color chrome: "#a9b1d6"
     property color cyan: "#7dcfff"
     property color purple: "#bb9af7"
     property color green: "#9ece6a"
@@ -31,6 +35,9 @@ Singleton {
 
     /// The theme Omarchy says is current, for the settings page and for tests.
     property string name: ""
+    /// The desktop's icon theme: Omarchy names one per theme, and elsewhere GTK's setting is the
+    /// nearest thing to a system answer. Empty means nobody said, so kiki draws its own.
+    property string iconTheme: ""
     property string mono: "Cascadia Mono"
     property int fontSize: 13
     property int rowHeight: 28
@@ -73,6 +80,27 @@ Singleton {
         onFileChanged: reload()
     }
     property bool _haveColors: false
+    /// Omarchy publishes the icon theme beside the palette.
+    property FileView iconsFile: FileView {
+        path: theme.stateDir + "icons.theme"
+        watchChanges: true
+        onLoaded: theme.iconTheme = text().trim()
+        onFileChanged: reload()
+    }
+    /// Not on Omarchy: GTK's own setting, which every desktop writes.
+    property FileView gtk4: FileView {
+        path: Quickshell.env("HOME") + "/.config/gtk-4.0/settings.ini"
+        onLoaded: theme._gtkIcons(text())
+    }
+    property FileView gtk3: FileView {
+        path: Quickshell.env("HOME") + "/.config/gtk-3.0/settings.ini"
+        onLoaded: theme._gtkIcons(text())
+    }
+    function _gtkIcons(text) {
+        if (theme.iconTheme || !text) return           // Omarchy's answer wins where there is one
+        const m = text.match(/^\s*gtk-icon-theme-name\s*=\s*(.+)$/m)
+        if (m) theme.iconTheme = m[1].trim()
+    }
     property FileView themeName: FileView {
         path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme.name"
         watchChanges: true
@@ -81,7 +109,14 @@ Singleton {
     }
     property Timer poll: Timer {
         interval: 2000; running: true; repeat: true
-        onTriggered: { theme.omarchy.reload(); theme.themeName.reload(); if (!theme._haveColors) theme.legacy.reload() }
+        // Every file behind the `current` symlink, which Omarchy replaces wholesale: a watch is
+        // on the old inode the moment the theme changes, so they are all re-read.
+        onTriggered: {
+            theme.omarchy.reload()
+            theme.themeName.reload()
+            theme.iconsFile.reload()
+            if (!theme._haveColors) theme.legacy.reload()
+        }
     }
 
     /// Omarchy's own palette: one flat table of named colours.
@@ -102,6 +137,7 @@ Singleton {
         fg = c.bright_foreground || c.foreground
         fgDim = c.foreground
         muted = c.dark_foreground || c.muted || Qt.darker(c.foreground, 2.0)
+        chrome = c.light_foreground || c.foreground
         accent = c.accent || c.blue || accent
         cyan = c.cyan || cyan
         purple = c.magenta || purple
@@ -130,6 +166,7 @@ Singleton {
         gutter = Qt.lighter(bg, 1.9)
         fgDim = Qt.darker(fg, 1.15)
         muted = b("black") || n("black") || Qt.darker(fg, 2.0)
+        chrome = Qt.darker(fg, 1.1)
         if (n("blue")) accent = n("blue")
         if (n("cyan")) cyan = n("cyan")
         if (n("magenta")) purple = n("magenta")

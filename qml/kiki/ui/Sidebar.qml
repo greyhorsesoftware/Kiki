@@ -85,7 +85,7 @@ Rectangle {
                     required property int index
                     compact: sidebar.compact
                     icon: sidebar.favIcon(modelData.name)
-                    iconColor: modelData.name === "Trash" ? Kiki.Theme.fgDim : Kiki.Theme.accent
+                    // Favourites are furniture: the one you are in is the accent, the rest match.
                     label: modelData.name
                     keyed: sidebar.keyIndex === sidebar.keyOffset("favorite", index)
                     active: sidebar.currentUri === modelData.uri
@@ -120,7 +120,7 @@ Rectangle {
             onPlusClicked: sidebar.addLocation()
             SidebarItem {
                 compact: sidebar.compact
-                icon: "trash"; iconColor: Kiki.Theme.fgDim; label: "Trash"
+                icon: "trash"; label: "Trash"
                 keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
                 active: sidebar.currentUri.startsWith("trash://")
                 droppable: true
@@ -134,7 +134,7 @@ Rectangle {
                     required property int index
                     compact: sidebar.compact
                     keyed: sidebar.keyIndex === sidebar.keyOffset("location", index)
-                    icon: "server"; iconColor: modelData.plugin === "sftp" ? Kiki.Theme.green : Kiki.Theme.cyan
+                    icon: "server"
                     label: modelData.name + " · " + modelData.plugin
                     active: sidebar.currentUri.startsWith(modelData.plugin + "://" + modelData.name)
                     onClicked: sidebar.openLocation(modelData)
@@ -145,7 +145,7 @@ Rectangle {
             SidebarItem {
                 visible: sidebar.compact
                 compact: true
-                icon: "plus"; iconColor: Kiki.Theme.muted; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
+                icon: "plus"; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
                 onClicked: sidebar.addLocation()
             }
         }

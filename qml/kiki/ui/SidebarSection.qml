@@ -21,7 +21,7 @@ Column {
         Rectangle {
             visible: section.plus && !section.compact; width: 24; height: 24; radius: 2; anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter
             color: plusHover.containsMouse ? Kiki.Theme.surface : "transparent"
-            Icon { anchors.centerIn: parent; name: "plus"; size: 14; color: Kiki.Theme.muted }
+            Icon { anchors.centerIn: parent; name: "plus"; size: 14; color: Kiki.Theme.chrome }
             MouseArea { id: plusHover; anchors.fill: parent; hoverEnabled: true; onClicked: section.plusClicked() }
         }
     }

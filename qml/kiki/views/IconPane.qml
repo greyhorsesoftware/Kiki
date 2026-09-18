@@ -59,6 +59,9 @@ Item {
             objectName: "tile-" + index
             property var row: root.pane.listing.row(index)
             property bool selected: root.pane.selection.has(index)
+            /// What the tile draws: the thumbnail at its painted size, or the kind icon.
+            readonly property real artWidth: (row && row.thumb && thumb.paintedWidth > 0) ? thumb.paintedWidth : root.iconSize
+            readonly property real artHeight: (row && row.thumb && thumb.paintedHeight > 0) ? thumb.paintedHeight : root.iconSize
             width: grid.cellWidth; height: grid.cellHeight
             Connections { target: root.pane.listing; function onRowsUpdated(first, n) { if (cell.index >= first && cell.index < first + n) cell.row = root.pane.listing.row(cell.index) } function onReset() { cell.row = root.pane.listing.row(cell.index) } }
             Connections { target: root.pane.selection; function onChanged() { cell.selected = root.pane.selection.has(cell.index) } }
@@ -73,8 +76,13 @@ Item {
                     radius: 8
                     color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.16)
                     border.width: 1; border.color: Kiki.Theme.accent
-                    width: iconBox.width + 12; height: iconBox.height + 12
-                    x: Math.round((body.width - width) / 2); y: col.y + iconBox.y - 6
+                    // Around what is actually drawn — a picture is only as wide as it is painted,
+                    // and the frame should sit the same distance from every edge of it.
+                    readonly property int pad: 8
+                    width: Math.round(cell.artWidth) + pad * 2
+                    height: Math.round(cell.artHeight) + pad * 2
+                    x: Math.round((body.width - width) / 2)
+                    y: Math.round(col.y + iconBox.y + (iconBox.height - height) / 2)
                 }
                 Rectangle {
                     visible: cell.selected
@@ -90,8 +98,8 @@ Item {
                     Item {
                         id: iconBox
                         anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
-                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: root.iconSize; strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
-                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+                        UI.KindIcon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; kind: cell.row ? cell.row.kind : "file"; size: root.iconSize; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                        Image { id: thumb; visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                         Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }
                     Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }

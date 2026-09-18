@@ -134,6 +134,15 @@ impl Client {
                 crate::dbus::chooser_result(b.str_field("token").unwrap_or(""), b.get("uris").cloned().unwrap_or(Value::Null));
                 Ok(Some(Value::obj().done()))
             }
+            "Icon" => {
+                let name = b.str_field("name").unwrap_or("");
+                let theme = b.str_field("theme").unwrap_or("hicolor");
+                let size = b.u64_field("size").unwrap_or(32) as u32;
+                match crate::icons::lookup(theme, name, size) {
+                    Some(p) => Ok(Some(Value::obj().s("path", p.to_string_lossy()).done())),
+                    None => Ok(Some(Value::obj().done())),
+                }
+            }
             "Keymap" => Ok(Some(Value::obj().v("keys", crate::config::keymap()).done())),
             "About" => Ok(Some(
                 Value::obj()

@@ -5,7 +5,7 @@ import "." as Kiki
 // settings.toml as served by the daemon, with the same defaults it applies.
 QtObject {
     id: settings
-    property var view: ({ "default": "list", sort: "name", order: "asc", inspector: false, sidebar: true, sidebarStyle: "rail", rememberPerFolder: true, columns: ["mtime", "size", "kind"] })
+    property var view: ({ "default": "list", icons: "kiki", sort: "name", order: "asc", inspector: false, sidebar: true, sidebarStyle: "rail", rememberPerFolder: true, slideshowDelay: 4, slideshowLoop: true, columns: ["mtime", "size", "kind"] })
     // Per-folder view memory (plan 02): uri -> { view, sort, order }
     property var viewPrefs: ({})
     function viewPref(uri) { return view.rememberPerFolder ? viewPrefs[uri] || null : null }

@@ -4,7 +4,7 @@ import ".." as Kiki
 Rectangle {
     id: item
     property string icon: "folder"
-    property color iconColor: Kiki.Theme.accent
+    property color iconColor: item.active ? Kiki.Theme.accent : Kiki.Theme.chrome
     property string label: ""
     objectName: "sidebar-" + (label || icon)
     /// What the rail tooltip says; the label unless a shortcut is worth spelling out.

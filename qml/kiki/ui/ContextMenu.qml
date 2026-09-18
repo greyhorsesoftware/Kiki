@@ -21,9 +21,18 @@ Item {
         box.y = Math.max(0, Math.min(pos.y, menu.height - box.height - 4))
         box.forceActiveFocus()
     }
-    function close() { visible = false; subItems = []; closed() }
+    function close() { visible = false; subItems = []; subLabel = ""; closed() }
+    /// Replace the items of a submenu that is already open (or of the row, for the next hover).
+    function refill(label, items) {
+        const all = menu.items.slice()
+        for (const it of all) if (it.label === label) it.items = items
+        menu.items = all
+        if (menu.subLabel === label) menu.subItems = items
+    }
     // One level of submenu: an item carrying `items` opens them beside it.
     property var subItems: []
+    /// Which item's submenu is showing, so a list that arrives late can replace it in place.
+    property string subLabel: ""
     property real subY: 0
 
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: menu.close() }
@@ -53,19 +62,22 @@ Item {
                         y: parent.sep ? 5 : 0; width: parent.width; height: 26
                         color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
                         Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                        Text { x: modelData.checked !== undefined ? 26 : 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Icon { visible: modelData.icon !== undefined; x: 12; anchors.verticalCenter: parent.verticalCenter; name: modelData.icon || "file"; size: 14; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.accent }
+                        Text { x: modelData.icon !== undefined ? 34 : (modelData.checked !== undefined ? 26 : 12); anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Text { visible: !parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                         Icon { visible: parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: Kiki.Theme.muted }
                         MouseArea {
                             id: h; anchors.fill: parent; hoverEnabled: true
                             onEntered: {
-                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subY = parent.parent.y }
-                                else menu.subItems = []
+                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y }
+                                else { menu.subItems = []; menu.subLabel = "" }
                             }
                             onClicked: {
                                 if (modelData.enabled === false) return
-                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subY = parent.parent.y; return }
-                                menu.close(); modelData.action()
+                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y; return }
+                                const act = modelData.action
+                                menu.close()
+                                if (act) act()
                             }
                         }
                     }
@@ -88,12 +100,23 @@ Item {
                 model: menu.subItems
                 delegate: Rectangle {
                     required property var modelData
+                    objectName: "menu-" + modelData.label
                     readonly property bool sep: modelData.sep === true
                     width: subCol.width; height: (sep ? 5 : 0) + 26
                     color: sh.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
-                    Text { x: 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - 24; elide: Text.ElideRight; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                    MouseArea { id: sh; anchors.fill: parent; hoverEnabled: true; onClicked: if (modelData.enabled !== false) { menu.close(); modelData.action() } }
+                    Icon { visible: modelData.icon !== undefined; x: 12; y: (parent.sep ? 5 : 0) + 6; name: modelData.icon || "file"; size: 14; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.accent }
+                    Text { x: modelData.icon !== undefined ? 34 : 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - (modelData.icon !== undefined ? 46 : 24); elide: Text.ElideRight; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    MouseArea {
+                        id: sh
+                        anchors.fill: parent; hoverEnabled: true
+                        onClicked: {
+                            if (modelData.enabled === false) return
+                            const act = modelData.action
+                            menu.close()
+                            if (act) act()
+                        }
+                    }
                 }
             }
         }

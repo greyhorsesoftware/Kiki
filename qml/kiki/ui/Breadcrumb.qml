@@ -62,7 +62,7 @@ Rectangle {
                     width: isHome ? 28 : crumbText.implicitWidth + 20
                     height: 22; radius: 11
                     color: hit.containsMouse ? Kiki.Theme.accent : Kiki.Theme.surface
-                    Icon { visible: crumbChip.isHome; anchors.centerIn: parent; name: "home"; size: 13; color: hit.containsMouse ? Kiki.Theme.bg : Kiki.Theme.fgDim }
+                    Icon { visible: crumbChip.isHome; anchors.centerIn: parent; name: "home"; size: 13; color: hit.containsMouse ? Kiki.Theme.bg : Kiki.Theme.chrome }
                     Text {
                         id: crumbText
                         visible: !crumbChip.isHome

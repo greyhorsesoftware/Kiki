@@ -47,6 +47,28 @@ fn account(config: &Value, secrets: &Value) -> Result<smtp::Account> {
     })
 }
 
+/// What `xdg-email` is asked to do: the parts of the message that were filled in, then the
+/// attachments, then the recipient — which has to come last, as the address is the operand.
+fn composer_args(compose: &Value, files: &[String]) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(s) = compose.str_field("subject").filter(|s| !s.is_empty()) {
+        args.push("--subject".into());
+        args.push(s.to_string());
+    }
+    if let Some(b) = compose.str_field("body").filter(|b| !b.is_empty()) {
+        args.push("--body".into());
+        args.push(b.to_string());
+    }
+    for f in files {
+        args.push("--attach".into());
+        args.push(f.clone());
+    }
+    if let Some(to) = compose.str_field("to").filter(|t| !t.is_empty()) {
+        args.push(format!("mailto:{to}"));
+    }
+    args
+}
+
 impl ShareHandler for Mail {
     fn describe(&self) -> ShareDescribe {
         ShareDescribe {
@@ -106,24 +128,7 @@ impl ShareHandler for Mail {
         }
         p.report(0, 1, 0, 0, "opening composer");
         let mut cmd = Command::new("xdg-email");
-        if let Some(s) = compose.str_field("subject") {
-            if !s.is_empty() {
-                cmd.arg("--subject").arg(s);
-            }
-        }
-        if let Some(b) = compose.str_field("body") {
-            if !b.is_empty() {
-                cmd.arg("--body").arg(b);
-            }
-        }
-        for f in files {
-            cmd.arg("--attach").arg(f);
-        }
-        if let Some(to) = compose.str_field("to") {
-            if !to.is_empty() {
-                cmd.arg(format!("mailto:{to}"));
-            }
-        }
+        cmd.args(composer_args(compose, files));
         let st = cmd.status().map_err(PluginError::io)?;
         if !st.success() {
             return Err(PluginError::io("mail composer could not be opened"));
@@ -135,4 +140,28 @@ impl ShareHandler for Mail {
 
 fn main() {
     let _ = sdk::run_share(&mut Mail);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_share_attaches_the_files_and_asks_nothing_else() {
+        let args = composer_args(&Value::obj().done(), &["/tmp/a.png".to_string(), "/tmp/b.png".to_string()]);
+        assert_eq!(args, vec!["--attach", "/tmp/a.png", "--attach", "/tmp/b.png"]);
+    }
+
+    #[test]
+    fn what_was_filled_in_is_passed_on_and_the_address_comes_last() {
+        let compose = Value::obj().s("subject", "Holiday").s("body", "Here they are").s("to", "a@example.com").done();
+        let args = composer_args(&compose, &["/tmp/a.png".to_string()]);
+        assert_eq!(args, vec!["--subject", "Holiday", "--body", "Here they are", "--attach", "/tmp/a.png", "mailto:a@example.com"]);
+    }
+
+    #[test]
+    fn empty_fields_are_left_out_rather_than_passed_empty() {
+        let compose = Value::obj().s("subject", "").s("body", "").s("to", "").done();
+        assert!(composer_args(&compose, &[]).is_empty());
+    }
 }

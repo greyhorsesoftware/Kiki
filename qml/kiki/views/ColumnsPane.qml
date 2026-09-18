@@ -239,7 +239,7 @@ Item {
                                 anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 8
                                 Item {
                                     width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
-                                    UI.Icon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; name: cr.r ? cr.r.kind : "file"; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
+                                    UI.KindIcon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; kind: cr.r ? cr.r.kind : "file"; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
                                     Image { visible: cr.r && cr.r.thumb; anchors.fill: parent; source: cr.r && cr.r.thumb ? "file://" + cr.r.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                                 }
                                 Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

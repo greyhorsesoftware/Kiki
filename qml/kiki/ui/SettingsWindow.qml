@@ -169,6 +169,7 @@ Rectangle {
     }
 
     Component { id: general; Column { spacing: 12
+        Row2 { label: "File icons"; Choice { options: ["kiki", "system"]; value: Kiki.Settings.view.icons || "kiki"; onPicked: v => sw.set("view", "icons", v) } }
         Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns", "gallery", "mirror"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
         Row2 { hint: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }

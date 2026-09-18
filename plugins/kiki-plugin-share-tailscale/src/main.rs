@@ -13,7 +13,12 @@ fn peers() -> Result<Vec<Target>> {
     if !out.status.success() {
         return Err(PluginError::network("tailscale is not running or not logged in (try: tailscale up)"));
     }
-    let v = json::parse(&out.stdout).map_err(|e| PluginError::io(e.to_string()))?;
+    peers_from(&out.stdout)
+}
+
+/// The peers in a `tailscale status --json` document, online ones first.
+fn peers_from(status: &[u8]) -> Result<Vec<Target>> {
+    let v = json::parse(status).map_err(|e| PluginError::io(e.to_string()))?;
     let mut targets = Vec::new();
     if let Some(Value::Obj(peers)) = v.get("Peer") {
         for p in peers.values() {
@@ -26,6 +31,38 @@ fn peers() -> Result<Vec<Target>> {
     }
     targets.sort_by(|a, b| b.online.cmp(&a.online).then(a.name.cmp(&b.name)));
     Ok(targets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STATUS: &[u8] = br#"{"Peer":{
+        "a":{"HostName":"laptop","DNSName":"laptop.tail1234.ts.net.","Online":false,"OS":"linux"},
+        "b":{"HostName":"phone","DNSName":"phone.tail1234.ts.net.","Online":true,"OS":"android"}
+    }}"#;
+
+    #[test]
+    fn peers_are_named_by_their_short_name_and_sorted_online_first() {
+        let t = peers_from(STATUS).unwrap();
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].name, "phone");          // online before offline
+        assert_eq!(t[0].id, "phone");            // the DNS name without the tailnet
+        assert!(t[0].online);
+        assert_eq!(t[0].detail, "android");
+        assert_eq!(t[1].name, "laptop");
+        assert!(!t[1].online);
+    }
+
+    #[test]
+    fn a_status_document_with_no_peers_is_empty_not_an_error() {
+        assert!(peers_from(b"{}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn nonsense_is_an_error_rather_than_a_panic() {
+        assert!(peers_from(b"not json").is_err());
+    }
 }
 
 impl ShareHandler for Tailscale {

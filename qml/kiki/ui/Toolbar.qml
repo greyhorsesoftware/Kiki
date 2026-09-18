@@ -74,8 +74,8 @@ Rectangle {
             color: gearHover.containsMouse ? Kiki.Theme.surface : "transparent"
             Row {
                 anchors.centerIn: parent; spacing: 4
-                Icon { name: "gear"; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
-                Icon { name: "chev-d"; size: 10; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "gear"; color: Kiki.Theme.chrome; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "chev-d"; size: 10; color: Kiki.Theme.chrome; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea { id: gearHover; anchors.fill: parent; hoverEnabled: true; onClicked: bar.settings() }
         }

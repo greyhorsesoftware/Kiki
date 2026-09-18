@@ -153,16 +153,32 @@ FloatingWindow {
     // Share (plan 18)
     property var sharePlugins: []
     function loadShare() { Kiki.Daemon.request("SharePlugins", {}, ok => { if (ok) sharePlugins = ok.plugins.filter(p => p.enabled !== false) }) }
+    /// One entry per share plugin, with its own icon. A plugin that names no targets is sent to
+    /// at once — Mail opens a composer with the files attached, and a form in front of that only
+    /// asks for what the composer is about to ask for.
+    function shareItems() {
+        const uris = selectedUris()
+        const items = sharePlugins.map(p => ({
+            label: p.name, icon: p.icon || "share",
+            action: () => { if (!uris.length) return; if (p.targets === "none") shareNow(p, null, uris); else shareTargets(p, uris) }
+        }))
+        return items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }]
+    }
     function shareMenu() {
-        const uris = selectedUris(); if (!uris.length) return
-        const items = sharePlugins.map(p => ({ label: p.name, action: () => { if (p.targets === "none") shareSheet.open(p, null, uris); else shareTargets(p, uris) } }))
-        if (!items.length) items.push({ label: "No share plugins installed", enabled: false, action: () => {} })
-        menuUnder(toolbar.viewButton, items)
+        if (!selectedUris().length) return
+        menuUnder(toolbar.viewButton, shareItems())
+    }
+    /// Share without asking anything first. If the plugin needs more than the files — an SMTP
+    /// account wants a recipient — it says so, and the sheet opens to collect it.
+    function shareNow(p, target, uris) {
+        Kiki.Daemon.request("Share", { plugin: p.id, uris: uris, target: target ? target.id : undefined, compose: {} }, (ok, err) => {
+            if (err) shareSheet.open(p, target, uris)
+        })
     }
     function shareTargets(p, uris) {
         Kiki.Daemon.request("ShareTargets", { plugin: p.id }, (ok, err) => {
             if (err) { Kiki.Jobs.showToast({ text: err.message, undoable: false }); return }
-            const items = ok.targets.map(t => ({ label: t.name + (t.online ? "" : "  (offline)") + (t.detail ? "  ·  " + t.detail : ""), enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
+            const items = ok.targets.map(t => ({ label: t.name + (t.online ? "" : "  (offline)") + (t.detail ? "  ·  " + t.detail : ""), icon: p.icon || "share", enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
             if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
             menuUnder(toolbar.viewButton, items)
         })
@@ -264,19 +280,18 @@ FloatingWindow {
     }
     // Open with (plans 02/03 and 14): one list holding the desktop entries for the file's MIME
     // type and kiki's own tools, so there is a single way to open something elsewhere.
-    function openWithItems() {
-        return win.openInTools.map(t => ({ label: t.name + (t.role ? "  ·  " + t.role : ""), action: () => win.openIn(t.id) }))
-    }
-    /// Hands over the tools at once, then the desktop applications when the daemon answers.
+    /// Open with is the desktop's applications. The terminal tools and agents of plan 14 are
+    /// their own thing (`Alt+Enter`, the editor keys) and do not belong in a list of apps.
+    function openWithItems() { return [{ label: "Looking…", enabled: false, action: () => {} }] }
     function loadOpenWith(uris, apply) {
         apply(win.openWithItems())
-        if (uris.length !== 1) return
-        Kiki.Daemon.request("OpenWith", { uri: uris[0] }, ok => {
-            if (!ok) return
-            const apps = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: uris }) }))
-            const tools = win.openWithItems()
-            if (tools.length && apps.length) tools[0] = Object.assign({}, tools[0], { sep: true })
-            apply(apps.concat(tools))
+        if (uris.length !== 1) { apply([{ label: "Select one file", enabled: false, action: () => {} }]); return }
+        Kiki.Daemon.request("OpenWith", { uri: uris[0] }, (ok, err) => {
+            if (!ok) { apply([{ label: err ? err.message : "Nothing offered", enabled: false, action: () => {} }]); return }
+            const apps = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), icon: "open",
+                                             action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: uris },
+                                                 (r, e) => { if (e) Kiki.Jobs.showToast({ text: e.message, undoable: false }) }) }))
+            apply(apps.length ? apps : [{ label: "No application for this kind", enabled: false, action: () => {} }])
         })
     }
     function openWithMenu(pos) {
@@ -305,10 +320,7 @@ FloatingWindow {
     function contextItemsForUri(uri, row) {
         const uris = [uri]
         win.openWithSub = win.openWithItems()
-        win.loadOpenWith(uris, list => {
-            win.openWithSub = list
-            if (menu.visible) { const all = menu.items.slice(); for (const it of all) if (it.label === "Open with") it.items = list; menu.items = all }
-        })
+        win.loadOpenWith(uris, list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
         const folder = uri.replace(/\/[^/]*$/, "")
         return [
             { label: "Open", key: "Enter", action: () => row && row.isDir ? win.pane.open(uri) : win.openExternal(uri) },
@@ -323,12 +335,10 @@ FloatingWindow {
         ]
     }
     function contextItems(index) {
-        // Tools go in at once so the submenu is never empty; applications land a moment later.
+        // A placeholder goes in at once so the submenu is never empty; the applications land a
+        // moment later and replace it, even if the submenu is already showing.
         win.openWithSub = win.openWithItems()
-        win.loadOpenWith(win.selectedUris(), list => {
-            win.openWithSub = list
-            if (menu.visible) { const all = menu.items.slice(); for (const it of all) if (it.label === "Open with") it.items = list; menu.items = all }
-        })
+        win.loadOpenWith(win.selectedUris(), list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
         const r = index >= 0 ? pane.listing.row(index) : null
         const sel = pane.selection.count() > 0
         if (pane.isTrash) {
@@ -352,7 +362,7 @@ FloatingWindow {
             { label: "Extract here", enabled: r && r.kind === "archive", action: () => ops.extractHere(r.name) },
             { label: "Extract to…", enabled: r && r.kind === "archive", action: () => ops.extractTo(r.name) },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
-            { label: "Share…", key: "Alt+S", enabled: sel && win.sharePlugins.length > 0, action: () => win.shareMenu() },
+            { label: "Share", key: keymap.chordFor("share"), enabled: sel && win.sharePlugins.length > 0, items: win.shareItems() },
             { label: win.aiStatus.configured ? "Jarvis: Query…" : "Jarvis: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
             { label: "Jarvis: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
             { label: "Jarvis: Explain this file", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Explain what this file does and how it is structured.") },
@@ -509,7 +519,16 @@ FloatingWindow {
     readonly property int rowStep: viewLoader.item && viewLoader.item.perRow ? viewLoader.item.perRow : 1
     readonly property int pageStep: viewLoader.item && viewLoader.item.pageSize ? viewLoader.item.pageSize : 20
 
-    Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } } }
+    Connections {
+        target: Kiki.Daemon
+        function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } }
+        // A restarted daemon knows nothing of the listings this window had open: their ids died
+        // with it, so every pane opens its folder again.
+        function onReconnected() {
+            for (const p of [win.left, win.right]) if (p && p.uri) p.listing.open(p.uri)
+            win.loadTrashInfo()
+        }
+    }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "FavoritesChanged" || msg.event === "VolumesChanged" || msg.event === "LocationsChanged" || msg.event === "DeviceAdded" || msg.event === "DeviceRemoved") win.loadSidebar(); if (msg.event === "DeviceRemoved" && win.pane.uri.startsWith(msg.uri.replace(/\/$/, ""))) win.pane.open("file://" + win.home) } }
 
     // Keymap (plan 02). Every action here is also reachable over IPC.
@@ -594,7 +613,14 @@ FloatingWindow {
         function edit(uri: string, line: string): void { win.editAt(uri, parseInt(line) || 1) }
         function reveal(uri: string): void { if (win.projectMode) projectTree.reveal(uri); else { const p = uri.replace(/\/[^/]*$/, ""); win.pane.open(p); const name = decodeURIComponent(uri.split("/").pop()); Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } }) } }
         function saved(uri: string): void { win.pane.listing.refresh() }
-        function share(plugin: string, target: string): void { win.shareMenu() }
+        /// `share` alone opens the menu; `share <plugin>` sends to it, as clicking it would.
+        function share(plugin: string, target: string): void {
+            if (!plugin) { win.shareMenu(); return }
+            const p = win.sharePlugins.find(x => x.id === plugin); if (!p) return
+            const uris = win.selectedUris(); if (!uris.length) return
+            if (p.targets === "none" && !target) win.shareNow(p, null, uris)
+            else win.shareTargets(p, uris)
+        }
         function aiQuery(uri: string, question: string): void { win.pane.selection.clear(); win.aiOpen = true; aiPanel.openFor([uri]); if (question) aiPanel.ask(question) }
         function aiClose(): void { win.aiOpen = false }
         function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else { settingsWin.close(); keys.forceActiveFocus() } }
@@ -605,6 +631,7 @@ FloatingWindow {
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
         function state(): string {
             return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.pane.renamingIndex,
+                daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
                 dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, shortcuts: shortcuts_.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
@@ -633,8 +660,9 @@ FloatingWindow {
         function about(): void { if (aboutDlg.visible) aboutDlg.close(); else aboutDlg.open() }
         /// The palette in force, for scripts and for checking a theme change landed.
         function theme(): string {
-            return JSON.stringify({ name: Kiki.Theme.name, bg: String(Kiki.Theme.bg), fg: String(Kiki.Theme.fg),
-                                    accent: String(Kiki.Theme.accent), surface: String(Kiki.Theme.surface) })
+            return JSON.stringify({ name: Kiki.Theme.name, icons: Kiki.Theme.iconTheme,
+                                    folderIcon: Quickshell.iconPath("folder", true), bg: String(Kiki.Theme.bg),
+                                    fg: String(Kiki.Theme.fg), accent: String(Kiki.Theme.accent), surface: String(Kiki.Theme.surface) })
         }
         function keymap(): void { if (keysWin.visible) keysWin.close(); else keysWin.open() }
         /// Where an element is, in window coordinates, for a test that drives the pointer: the

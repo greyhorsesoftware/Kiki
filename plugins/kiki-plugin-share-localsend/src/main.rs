@@ -71,9 +71,20 @@ fn discover() -> Vec<Target> {
 /// "https://host:port" -> (https, host, port)
 fn parse_target(t: &str) -> Result<(bool, String, u16)> {
     let (proto, rest) = t.split_once("://").unwrap_or(("https", t));
-    let (host, port) = match rest.rsplit_once(':') {
-        Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h, p.parse().unwrap_or(PORT)),
-        _ => (rest, PORT),
+    // `[fe80::1]:53317` is the only unambiguous way to write an address with colons in it; a bare
+    // one is all host, or the last group would be read as a port.
+    let (host, port) = if let Some(rest) = rest.strip_prefix('[') {
+        match rest.split_once(']') {
+            Some((h, after)) => (h, after.strip_prefix(':').and_then(|p| p.parse().ok()).unwrap_or(PORT)),
+            None => (rest, PORT),
+        }
+    } else if rest.matches(':').count() > 1 {
+        (rest, PORT)
+    } else {
+        match rest.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => (h, p.parse().unwrap_or(PORT)),
+            _ => (rest, PORT),
+        }
     };
     if host.is_empty() {
         return Err(PluginError::new("Invalid", "pick a device"));
@@ -197,4 +208,56 @@ impl ShareHandler for LocalSend {
 
 fn main() {
     let _ = sdk::run_share(&mut LocalSend);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_target_may_name_its_protocol_host_and_port() {
+        assert_eq!(parse_target("http://192.168.1.5:53317").unwrap(), (false, "192.168.1.5".into(), 53317));
+        assert_eq!(parse_target("https://phone.local:1234").unwrap(), (true, "phone.local".into(), 1234));
+    }
+
+    #[test]
+    fn a_bare_host_is_https_on_the_default_port() {
+        assert_eq!(parse_target("phone.local").unwrap(), (true, "phone.local".into(), PORT));
+    }
+
+    #[test]
+    fn an_address_with_colons_in_it_is_all_host() {
+        let (secure, host, port) = parse_target("fe80::1").unwrap();
+        assert!(secure);
+        assert_eq!(host, "fe80::1");
+        assert_eq!(port, PORT);
+    }
+
+    #[test]
+    fn brackets_are_how_such_an_address_names_a_port() {
+        assert_eq!(parse_target("http://[fe80::1]:53317").unwrap(), (false, "fe80::1".into(), 53317));
+        assert_eq!(parse_target("[fe80::1]").unwrap(), (true, "fe80::1".into(), PORT));
+    }
+
+    #[test]
+    fn an_empty_target_is_refused() {
+        assert!(parse_target("https://").is_err());
+    }
+
+    #[test]
+    fn the_type_comes_from_the_extension_and_falls_back_to_bytes() {
+        assert_eq!(file_type("holiday.JPG"), "image/jpeg");
+        assert_eq!(file_type("notes.md"), "text/plain");
+        assert_eq!(file_type("archive.zip"), "application/zip");
+        assert_eq!(file_type("no-extension"), "application/octet-stream");
+    }
+
+    #[test]
+    fn the_receivers_refusals_are_told_apart() {
+        assert_eq!(status_error(401, true).code, "Invalid");      // asks for a PIN
+        assert_eq!(status_error(401, true).field.as_deref(), Some("pin"));
+        assert_eq!(status_error(403, false).code, "Cancelled");   // declined
+        assert_eq!(status_error(409, false).code, "Busy");
+        assert_eq!(status_error(500, false).code, "Network");
+    }
 }

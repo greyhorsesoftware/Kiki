@@ -13,14 +13,33 @@ fn kdeconnect_devices() -> Vec<Target> {
     let mut v = Vec::new();
     if let Some(o) = out {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
-            let mut it = line.splitn(2, ' ');
-            if let (Some(id), Some(name)) = (it.next(), it.next()) {
-                let online = Command::new("kdeconnect-cli").args(["-d", id, "--ping"]).output().map(|o| o.status.success()).unwrap_or(false);
-                v.push(Target { id: format!("kdeconnect:{id}"), name: name.to_string(), detail: "KDE Connect".into(), online, icon: "phone".into() });
+            if let Some((id, name)) = kdeconnect_line(line) {
+                let online = Command::new("kdeconnect-cli").args(["-d", &id, "--ping"]).output().map(|o| o.status.success()).unwrap_or(false);
+                v.push(Target { id: format!("kdeconnect:{id}"), name, detail: "KDE Connect".into(), online, icon: "phone".into() });
             }
         }
     }
     v
+}
+
+/// `kdeconnect-cli -l --id-name-only` prints "<id> <name>", and a name may have spaces in it.
+fn kdeconnect_line(line: &str) -> Option<(String, String)> {
+    let (id, name) = line.trim().split_once(' ')?;
+    if id.is_empty() || name.trim().is_empty() {
+        return None;
+    }
+    Some((id.to_string(), name.trim().to_string()))
+}
+
+/// `signal-cli listContacts` prints "Number: +1555…  Name: Alice …"; a contact with no name is
+/// known by its number.
+fn signal_line(line: &str) -> Option<(String, String)> {
+    let num = line.split_whitespace().nth(1).unwrap_or("");
+    if !num.starts_with('+') {
+        return None;
+    }
+    let name = line.split("Name:").nth(1).map(|s| s.split("  ").next().unwrap_or("").trim().to_string()).unwrap_or_default();
+    Some((num.to_string(), if name.is_empty() { num.to_string() } else { name }))
 }
 
 fn signal_contacts(config: &Value) -> Vec<Target> {
@@ -35,11 +54,8 @@ fn signal_contacts(config: &Value) -> Vec<Target> {
     let mut v = Vec::new();
     if let Some(o) = out {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
-            // "Number: +1555…  Name: Alice …"
-            let num = line.split_whitespace().nth(1).unwrap_or("");
-            let name = line.split("Name:").nth(1).map(|s| s.trim().split("  ").next().unwrap_or("").to_string()).unwrap_or_default();
-            if num.starts_with('+') {
-                v.push(Target { id: format!("signal:{num}"), name: if name.is_empty() { num.to_string() } else { name }, detail: "Signal".into(), online: true, icon: "message".into() });
+            if let Some((num, name)) = signal_line(line) {
+                v.push(Target { id: format!("signal:{num}"), name, detail: "Signal".into(), online: true, icon: "message".into() });
             }
         }
     }
@@ -113,4 +129,35 @@ impl ShareHandler for Messages {
 
 fn main() {
     let _ = sdk::run_share(&mut Messages);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_kdeconnect_device_keeps_the_spaces_in_its_name() {
+        assert_eq!(kdeconnect_line("abc123 Gideon's Phone"), Some(("abc123".into(), "Gideon's Phone".into())));
+    }
+
+    #[test]
+    fn a_line_with_no_name_is_not_a_device() {
+        assert_eq!(kdeconnect_line("abc123"), None);
+        assert_eq!(kdeconnect_line(""), None);
+    }
+
+    #[test]
+    fn a_signal_contact_is_read_by_number_and_name() {
+        assert_eq!(signal_line("Number: +15551234  Name: Alice  Blocked: false"), Some(("+15551234".into(), "Alice".into())));
+    }
+
+    #[test]
+    fn a_contact_with_no_name_is_known_by_its_number() {
+        assert_eq!(signal_line("Number: +15551234  Name:   Blocked: false"), Some(("+15551234".into(), "+15551234".into())));
+    }
+
+    #[test]
+    fn a_header_line_is_not_a_contact() {
+        assert_eq!(signal_line("Contacts:"), None);
+    }
 }

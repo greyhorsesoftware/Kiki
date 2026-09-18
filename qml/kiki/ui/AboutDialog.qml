@@ -59,7 +59,7 @@ Rectangle {
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "A fast file manager for Omarchy"
+                text: "The Omarchiest of file managers"
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
             Item { width: 1; height: 10 }
