@@ -83,7 +83,7 @@ TestCase {
         compare(icons.iconSize, base * 2)
         compare(icons.cellH - h1, base)                    // the cell grows by the icon alone
         verify(icons.cellW >= w1)
-        compare(icons.cellH - icons.iconSize, 66)          // padding is constant
+        compare(icons.cellH - icons.iconSize, 72)          // padding is constant
     }
 
     // Nautilus opens a folder at 96px, and so does this.

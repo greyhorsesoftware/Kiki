@@ -631,6 +631,11 @@ FloatingWindow {
         function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
         function about(): void { if (aboutDlg.visible) aboutDlg.close(); else aboutDlg.open() }
+        /// The palette in force, for scripts and for checking a theme change landed.
+        function theme(): string {
+            return JSON.stringify({ name: Kiki.Theme.name, bg: String(Kiki.Theme.bg), fg: String(Kiki.Theme.fg),
+                                    accent: String(Kiki.Theme.accent), surface: String(Kiki.Theme.surface) })
+        }
         function keymap(): void { if (keysWin.visible) keysWin.close(); else keysWin.open() }
         /// Where an element is, in window coordinates, for a test that drives the pointer: the
         /// rectangle of the first item with this objectName, or an empty object when nothing has

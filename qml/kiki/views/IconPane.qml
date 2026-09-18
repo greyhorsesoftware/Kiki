@@ -16,7 +16,7 @@ Item {
     readonly property int cellTarget: iconSize + 48
     readonly property int cellCols: Math.max(1, Math.min(12, Math.round(cellAvail / cellTarget)))
     readonly property int cellW: Math.floor(cellAvail / cellCols)
-    readonly property int cellH: iconSize + 66
+    readonly property int cellH: iconSize + 72
     function setZoom(z) { if (root.pane) root.pane.iconZoom = Math.max(0.4, Math.min(2.5, z)) }
 
     function ensureVisible(i) { grid.positionViewAtIndex(i, GridView.Contain) }
@@ -66,19 +66,27 @@ Item {
             Item {
                 id: body
                 anchors.fill: parent; anchors.margins: 4
-                // The selection hugs the icon and the name rather than filling the whole cell.
+                // Two marks rather than one box around the pair: a rounded frame on the icon,
+                // and a pill behind the name, so the name stays readable at any tile size.
                 Rectangle {
                     visible: cell.selected
-                    radius: 3
+                    radius: 8
                     color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.16)
                     border.width: 1; border.color: Kiki.Theme.accent
-                    width: Math.min(body.width, Math.max(iconBox.width, label.paintedWidth) + 16)
-                    height: col.height + 12
-                    x: Math.round((body.width - width) / 2); y: col.y - 6
+                    width: iconBox.width + 12; height: iconBox.height + 12
+                    x: Math.round((body.width - width) / 2); y: col.y + iconBox.y - 6
+                }
+                Rectangle {
+                    visible: cell.selected
+                    radius: height / 2
+                    color: Kiki.Theme.accent
+                    width: Math.min(body.width, label.paintedWidth + 16)
+                    height: label.paintedHeight + 6
+                    x: Math.round((body.width - width) / 2); y: col.y + label.y - 3
                 }
                 Column {
                     id: col
-                    anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 8; width: parent.width - 12
+                    anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 14; width: parent.width - 12
                     Item {
                         id: iconBox
                         anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
@@ -86,7 +94,7 @@ Item {
                         Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                         Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }
-                    Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                    Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 }
                 DropArea {
                     anchors.fill: parent

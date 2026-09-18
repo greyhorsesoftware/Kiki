@@ -49,6 +49,8 @@ package() {
   install -Dm644 "${_srcdir}/packaging/systemd/kiki.socket"   "${pkgdir}/usr/lib/systemd/user/kiki.socket"
   install -Dm644 "${_srcdir}/packaging/systemd/kikid.service" "${pkgdir}/usr/lib/systemd/user/kikid.service"
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
+  # The mark the desktop entry names, and the one the About panel tints to the current theme.
+  install -Dm644 "${_srcdir}/app-images/cat-head-wireframe.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.kiki.App.svg"
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.service"  "${pkgdir}/usr/share/dbus-1/services/org.kiki.App.service"
   install -Dm644 "${_srcdir}/packaging/org.freedesktop.impl.portal.desktop.kiki.service" "${pkgdir}/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.kiki.service"
   install -Dm644 "${_srcdir}/packaging/kiki.portal"           "${pkgdir}/usr/share/xdg-desktop-portal/portals/kiki.portal"

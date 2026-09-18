@@ -45,14 +45,11 @@ Rectangle {
             width: parent.width
             spacing: 6
 
-            // Stand-in mark: the app icon goes here when there is one.
-            Rectangle {
+            // The mark: the wireframe cat, kiki herself.
+            AppMark {
                 objectName: "about-icon"
                 anchors.horizontalCenter: parent.horizontalCenter
-                width: 96; height: 96; radius: 22
-                color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.14)
-                border.width: 1; border.color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.35)
-                Icon { anchors.centerIn: parent; name: "folder"; size: 52; strokeWidth: 1.5; color: Kiki.Theme.accent }
+                width: 112; height: 112
             }
             Item { width: 1; height: 8 }
             Text {
