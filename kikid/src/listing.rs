@@ -205,15 +205,25 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
     } else {
         PathBuf::from(&key)
     };
-    if let Some(l) = cache().lock().unwrap().map.get(&key).cloned() {
-        let mut inner = l.inner.lock().unwrap();
-        inner.last_used = Instant::now();
-        let stale = inner.stale;
-        drop(inner);
-        if stale {
-            l.rescan();
+    // The guard has to be let go before anything below takes the cache lock again: an `if let`
+    // scrutinee lives to the end of its block, and `forget` would deadlock on it.
+    let hit = cache().lock().unwrap().map.get(&key).cloned();
+    if let Some(l) = hit {
+        // A directory deleted and recreated under the same name is a different directory, and
+        // the cached listing holds a handle on the old one: rescanning it reads the dead inode
+        // and reports an empty folder for ever. Drop it and open the new one.
+        if !l.dir.still_at(&l.path) {
+            forget(uri);
+        } else {
+            let mut inner = l.inner.lock().unwrap();
+            inner.last_used = Instant::now();
+            let stale = inner.stale;
+            drop(inner);
+            if stale {
+                l.rescan();
+            }
+            return Ok((l, !stale));
         }
-        return Ok((l, !stale));
     }
     let dir: Box<dyn Source> = if uri.is_local() || trash {
         Box::new(DirHandle::open(&path)?)
@@ -301,6 +311,13 @@ pub fn mark_stale(path: &std::path::Path) {
     if let Some(l) = cache().lock().unwrap().map.get(&key_of(path)).cloned() {
         l.inner.lock().unwrap().stale = true;
     }
+}
+
+/// The directory itself was deleted or moved away: mark the listing stale for the windows that
+/// are still on it, and take it out of the cache so the next open builds a fresh handle.
+pub fn gone(path: &std::path::Path) {
+    mark_stale(path);
+    forget(&Uri::from_path(path));
 }
 
 pub fn find(path: &std::path::Path) -> Option<Arc<Listing>> {
@@ -1117,6 +1134,36 @@ mod tests {
             std::fs::write(dir.join(format!("file{i}.txt")), vec![b'x'; i % 7]).unwrap();
         }
         dir
+    }
+
+    /// A folder deleted and recreated with the same name is a different folder: the cached
+    /// listing holds a handle on the old inode, and reusing it shows the old contents (or
+    /// nothing at all) for ever.
+    #[test]
+    fn a_recreated_folder_is_listed_afresh() {
+        let dir = std::env::temp_dir().join(format!("kiki-recreate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("before.txt"), b"before").unwrap();
+        let uri = Uri::from_path(&dir);
+
+        let (l, _) = open(&uri).unwrap();
+        assert!(wait_scan(&l, Duration::from_secs(5)));
+        assert_eq!(l.window(1, 1, 0, 10).u64_field("n"), Some(1));
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("after-one.txt"), b"1").unwrap();
+        std::fs::write(dir.join("after-two.txt"), b"2").unwrap();
+
+        let (l2, cached) = open(&uri).unwrap();
+        assert!(!cached, "a replaced directory must not be served from the cache");
+        assert!(wait_scan(&l2, Duration::from_secs(5)));
+        let w = l2.window(1, 2, 0, 10);
+        assert_eq!(w.u64_field("n"), Some(2));
+        let rows = w.get("rows").unwrap().as_arr().unwrap();
+        assert_eq!(rows[0].str_field("name"), Some("after-one.txt"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

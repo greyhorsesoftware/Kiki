@@ -30,14 +30,16 @@ QtObject {
 
     // ---------------------------------------------------------------- clipboard
 
-    function copySelection(cut) { const u = selectedUris(); if (u.length) clipboard = { uris: u, cut: !!cut } }
+    /// Each of these acts on the pane's selection, or on `uris` when a view has its own idea of
+    /// what was clicked — columns view, where the row may belong to a folder the pane is not in.
+    function copySelection(cut, uris) { const u = uris || selectedUris(); if (u.length) clipboard = { uris: u, cut: !!cut } }
     function paste() {
         if (!clipboard.uris.length) return
         Kiki.Jobs.submit({ op: clipboard.cut ? "move" : "copy", items: clipboard.uris, dest: pane.uri })
         if (clipboard.cut) clipboard = { uris: [], cut: false }
     }
-    function copyPath() {
-        const u = selectedUris(); if (!u.length) return
+    function copyPath(uris) {
+        const u = uris || selectedUris(); if (!u.length) return
         copyText(u.map(x => x.startsWith("file://") ? decodeURIComponent(x.slice(7)) : x).join("\n"))
     }
 
@@ -61,12 +63,12 @@ QtObject {
         pane.renamingIndex = pane.selection.current
     }
 
-    function trashSelection() { const u = selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "trash", items: u }) }
+    function trashSelection(uris) { const u = uris || selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "trash", items: u }) }
     function restoreSelection() { const n = selectedNames(); if (n.length) Kiki.Jobs.submit({ op: "restore", names: n }) }
 
     /// In the trash there is nothing left to lose, so it goes without asking.
-    function deleteForever() {
-        const u = selectedUris(); if (!u.length) return
+    function deleteForever(uris) {
+        const u = uris || selectedUris(); if (!u.length) return
         if (pane.isTrash) { Kiki.Jobs.submit({ op: "delete", items: u }); return }
         const what = u.length === 1
             ? decodeURIComponent(u[0].split("/").pop()) + " will be deleted, not moved to the trash. This cannot be undone."
@@ -102,19 +104,32 @@ QtObject {
         target: ops.pane
         function onRenameRequested(uri, name) { Kiki.Jobs.submit({ op: "rename", uri: uri, name: name }) }
     }
-    /// A new folder lands on a Reset: select it and open the editor on it.
+    /// A new folder lands on a Reset: select it and open the editor on it. The row may not be in
+    /// the listing yet, and the view may recycle the delegate out from under the editor while it
+    /// is still settling — which closes it again — so this keeps trying until the editor sticks
+    /// and gives up after a second rather than spinning.
+    function _tryRename() {
+        if (!renameSoon) return
+        _renameTries++
+        if (_renameTries > 25) { renameSoon = ""; return }
+        for (let i = 0; i < pane.listing.count; i++) {
+            const r = pane.listing.row(i)
+            if (r && r.name === renameSoon) {
+                pane.selection.set(i)
+                renameSelected()
+                if (pane.renamingIndex >= 0) renameSoon = ""
+                return
+            }
+        }
+    }
+    property int _renameTries: 0
+    onRenameSoonChanged: if (renameSoon) _renameTries = 0
+    property Timer _renameWatch: Timer {
+        interval: 40; repeat: true; running: ops.renameSoon !== ""
+        onTriggered: ops._tryRename()
+    }
     property Connections _created: Connections {
         target: ops.pane ? ops.pane.listing : null
-        function onReset() {
-            if (!ops.renameSoon) return
-            const name = ops.renameSoon
-            ops.renameSoon = ""
-            Qt.callLater(() => {
-                for (let i = 0; i < ops.pane.listing.count; i++) {
-                    const r = ops.pane.listing.row(i)
-                    if (r && r.name === name) { ops.pane.selection.set(i); ops.renameSelected(); break }
-                }
-            })
-        }
+        function onReset() { ops._tryRename() }
     }
 }

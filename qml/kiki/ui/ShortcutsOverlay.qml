@@ -39,6 +39,7 @@ Rectangle {
             ["Ctrl+H", "hidden files"],
             ["Ctrl+I", "info panel"],
             ["Ctrl+,", "settings"],
+            ["Ctrl+?", "this list, and rebinding"],
             ["F5", "refresh"],
         ] },
         { title: "Files", keys: [

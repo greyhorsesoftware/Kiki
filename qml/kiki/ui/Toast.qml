@@ -12,6 +12,7 @@ Rectangle {
         id: row; anchors.verticalCenter: parent.verticalCenter; x: 14; spacing: 14
         Text { anchors.verticalCenter: parent.verticalCenter; text: t.toast ? t.toast.text : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         Rectangle {
+            objectName: "toast-undo"
             visible: t.toast && t.toast.undoable
             height: 26; width: undoRow.width + 20; radius: 2; color: Kiki.Theme.surface; anchors.verticalCenter: parent.verticalCenter
             Row { id: undoRow; anchors.centerIn: parent; spacing: 8

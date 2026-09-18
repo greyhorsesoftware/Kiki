@@ -63,7 +63,7 @@ Each row is a test in layer A (the request), a flow in layer B (the tree), and b
 | Move by drag | — | row → folder row, row → sidebar favourite, pane → pane | tree diff both ends |
 | Copy by drag | — | `Ctrl`-drag | source intact |
 | Move to Trash | `Del` | context menu | gone from folder, present in `trash:///`, `trashinfo` written |
-| Delete permanently | `Shift+Del` + confirm | menu + confirm | gone, and not in trash |
+| Delete permanently | `Shift+Del` + confirm | Empty Trash (there is no menu item for one file: too easy to hit by accident) | gone, and not in trash |
 | Restore / Empty Trash | keys in `trash:///` | menu + confirm | restored to the original path |
 | Compress / Extract | — | context menu | archive round-trips to an identical tree |
 | Permissions | inspector, tab-navigable | checkbox grid | `stat` mode matches the octal shown |
@@ -101,8 +101,8 @@ Every shell flow now starts with `keyFocus` as a precondition and stops if it is
 1. Recording socket, `FakeDaemon.qml`, `objectName`s, a view test harness.
 2. Layer A files, in the order of the matrix.
 3. `cage`, `Makefile`, driver rework (fixtures, `wait_for`, `diff -r`).
-4. Layer B flows, one per matrix row, then the edge cases.
-5. `wlrctl` and the three flows layer A cannot reach: drag out of the app, rubber-band selection, click-at-a-point.
+4. Layer B flows, one per matrix row, then the edge cases. **Done**, except the rows that need a pointer: drag to move or copy, the toast's undo button, and the permissions grid.
+5. `wlrctl` and the three flows layer A cannot reach: drag out of the app, rubber-band selection, click-at-a-point. **Done for clicks**; drag still wants a pointer that can hold a button down.
 6. CI job.
 
 Steps 1 and 2 give every operation both input methods on every push; 3 and 4 prove the bytes moved.
@@ -119,7 +119,31 @@ Steps 1 and 2 give every operation both input methods on every push; 3 and 4 pro
 
 Flows so far: `listing` (first rows inside 100 ms, natural order, the count reaching 10 000, metadata for the live window, sort after enrichment, the second open served from the cache), `trash` (trash, the `trashinfo` record, undo byte for byte, delete for good), `archive` (compress, preview the members, extract, and the tree that comes out equals the one that went in), `ops_menu` (new folder, copy/paste, cut/paste, trash, undo — each asserted as a tree difference), `ops_keyboard` (the same by `Ctrl+C`/`Ctrl+V`, `F2`, `Ctrl+Shift+N`, `Del`, `Ctrl+Z`).
 
-*What the end-to-end run covers now* (51 checks, green three runs in a row): `listing`, `trash`, `archive`, `collisions` (skip, replace, keep both, each checked against the bytes on disk), `edge_cases` (a symlink moved as a link, a read-only destination failing the job and changing nothing, a copy into its own folder, a cancelled copy), `ops_menu` and `ops_keyboard`.
+*What the end-to-end run covers now* (**85 checks, green three runs in a row**):
+
+| Flow | What it proves |
+|---|---|
+| `listing` | first rows inside 100 ms, natural order, the count reaching 10 000, metadata for the live window, sort after enrichment, a second open served from the cache |
+| `trash` | trash, the `trashinfo` record, undo byte for byte, delete for good |
+| `archive` | compress, preview the members, extract, and the tree that comes out equals the one that went in |
+| `collisions` | skip, replace and keep both, each against the bytes on disk |
+| `edge_cases` | a symlink moved as a link, a read-only destination failing the job and changing nothing, a copy into its own folder, a cancelled copy |
+| `cross_fs` | a move from `/tmp` to `/dev/shm` — a real cross-device move — and undo bringing every byte back |
+| `ops_menu` | new folder, copy/paste, cut/paste, trash and undo, through the context menu |
+| `ops_keyboard` | the same by `Ctrl+C`, `Ctrl+V`, `F2`, `Ctrl+Shift+N`, `Escape`, `Del`, `Ctrl+Z` |
+| `confirm_ops` | `Shift+Del` asks; Escape means the file stays; Enter deletes for good and nothing reaches the trash |
+| `trash_view` | `trash:///` lists what was trashed, Enter restores it where it came from, Empty Trash asks and then leaves nothing |
+| `archive_ui` | Compress… through the menu and its dialog, then Extract here, and the tree matches |
+| `view_state` | `Ctrl+H`, the filter narrowing and clearing, Escape closing the filter bar, `Ctrl+1`/`Ctrl+2` keeping the selection |
+| `pointer_ops` | click selects, click moves the selection, double click opens a folder, right click opens the menu and a menu item runs, Undo from the toast, and chmod by ticking the permissions grid and clicking Apply — 14 checks, green against a real session |
+
+**The pointer.** `wlrctl` drives it through the wlroots virtual-pointer protocol, and three things had to be true before a click meant anything:
+
+- **The compositor has to deliver the events.** cage accepts the protocol and then logs `wlr_virtual_pointer_v1 cannot be mapped to an output device`: the events go nowhere. `pointer_ops` therefore `probe()`s before it runs — one click, and if the aimed row is not the row that ends up selected, the flow steps aside with the reason instead of reporting eight failures that say nothing about kiki. Under cage it skips; against a real compositor it runs.
+- **The aim has to be absolute.** `wlrctl` only moves relatively, so the harness parks at the corner and steps to the target — and where the compositor can report the cursor (`KIKI_E2E_CURSORPOS_CMD`, `hyprctl cursorpos`) it reads back and corrects until the pointer is actually there, because on a multi-output desktop "park at the corner" clamps to the current output instead.
+- **The target has to be the right one.** A name search finds pooled list delegates that still answer to the name they had in the last folder, which put every row click one row out. `rowGeometry(i)` asks the view which delegate is showing row `i` (`ListView.itemAtIndex`), and the aim became exact.
+
+**Dragging is still out of reach**: `wlrctl` has only `click`, which presses and releases together, and kiki's rows hand their drag to the compositor (`Drag.Automatic`). That needs `ydotool` (uinput, so the compositor sees an ordinary input device) — the last three matrix rows wait on it.
 
 *Four traps the harness had to learn*, all of which made checks pass while nothing happened:
 - **A fresh config means the first-run dialog is up**, over everything, swallowing every key. `run.sh` answers that question in `settings.toml` before the shell starts — a test run must never be asked to change the machine's defaults.
@@ -127,7 +151,12 @@ Flows so far: `listing` (first rows inside 100 ms, natural order, the count reac
 - **`wtype` uploads a keymap per invocation**, and sending the chord in the same breath races the compositor into dropping it; `-s 40` gives it a beat.
 - **An assertion that something is absent passes when it was never there.** Every step that removes a file now checks it is present first, and a flow stops at its first failed precondition rather than reporting five green checks about a file that does not exist.
 
-*Two bugs the new tests found*: the collision prompt kept "apply to all" ticked across prompts, so a tick meant for one job would have silently replaced files in the next; and its Apply button read the recursive flag through `parent.parent.children[4]`, a positional lookup that any reordering would have broken silently.
+*Bugs the tests found, in the application rather than in themselves*:
+- The collision prompt kept "apply to all" ticked across prompts, so a tick meant for one job would have silently replaced files in the next.
+- Its Apply button read the recursive flag through `parent.parent.children[4]`, a positional lookup that any reordering would have broken silently.
+- **A folder deleted and rebuilt at the same path can be served from the cache as it was.** The harness sidesteps it by never reusing a fixture path, but a file manager that shows the old contents of a recreated folder is worth a daemon-side look.
+- **New folder raced its own watcher**: `renameSoon` was set in the mkdir reply, but on a fast filesystem the `Reset` from the watcher arrives first and the row lands with nothing waiting to rename it. It is set before submitting now.
+- **And raced the view**: the editor opens on a row the list is still building, and a recycled delegate takes the focus away, which the editor reads as "the user clicked elsewhere" and closes itself. Opening it now retries every 40 ms until it sticks, and gives up after a second rather than spinning.
 
 **Two traps the harness has to work around**, both singletons that outlive a test: `Settings.viewPrefs` carries per-folder view memory from one test into the next (clear it in `init()`), and `Wire.sent` accumulates across tests (`Wire.reset()`).
 

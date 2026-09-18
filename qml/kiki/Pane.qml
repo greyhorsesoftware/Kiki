@@ -85,6 +85,42 @@ QtObject {
         if (pick && pick !== view) { _applying = true; view = pick; _applying = false }
     }
     property Connections doneWatch: Connections { target: listing; function onDoneChanged() { if (listing.done) _smart() } }
+
+    // Keeping the selection across a refresh. A job finishing, or anything else touching the
+    // folder, makes the daemon re-send the listing, which clears the selection — so the file you
+    // were about to rename is suddenly nothing. Remember the names and put them back.
+    property var _keepNames: []
+    property string _keepUri: ""
+    property bool _restoring: false
+    property bool _restorePending: false
+    function selectedNames() {
+        return selection.positions().map(p => { const r = listing.row(p); return r ? r.name : null }).filter(n => n)
+    }
+    function _restoreSelection() {
+        if (!_restorePending) return
+        if (listing.uri !== _keepUri || !_keepNames.length) { _restorePending = false; return }
+        const want = _keepNames
+        let found = []
+        for (let i = 0; i < listing.count; i++) { const r = listing.row(i); if (r && want.indexOf(r.name) >= 0) found.push(i) }
+        if (!found.length) return                     // rows not back yet; try again on the next batch
+        _restoring = true
+        selection.set(found[0])
+        for (let j = 1; j < found.length; j++) selection.rows[found[j]] = true
+        selection.changed()
+        _restoring = false
+        _restorePending = false
+    }
+    property Connections selWatch: Connections {
+        target: pane.selection
+        function onChanged() { if (!pane._restoring) { pane._keepNames = pane.selectedNames(); pane._keepUri = pane.listing.uri } }
+    }
+    property Connections keepWatch: Connections {
+        target: pane.listing
+        // A reset from the watcher stays in the same folder; one from navigating does not, and
+        // there the selection rules of `open` apply instead.
+        function onReset() { pane._restorePending = pane.listing.uri === pane._keepUri && pane._keepNames.length > 0 }
+        function onRowsUpdated(first, n) { pane._restoreSelection() }
+    }
     function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }

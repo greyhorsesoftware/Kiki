@@ -19,6 +19,7 @@ Rectangle {
     signal settings()
     property alias breadcrumb: crumb
     property alias viewButton: viewButton
+    property alias gearButton: gearBtn
     property alias searchButton: searchBtn
     // Favorites panel toggle (far left).
     property bool sidebarShown: true
@@ -64,6 +65,19 @@ Rectangle {
             onClicked: bar.toggleSearch()
         }
         ViewSwitcher { id: viewButton; visible: bar.width >= 360; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
-        ToggleButton { id: gearBtn; anchors.verticalCenter: parent.verticalCenter; icon: "gear"; tip: "Settings (Ctrl+,)"; onClicked: bar.settings() }
+        // A menu, not a button: the chevron says so, the way the view switcher does.
+        Rectangle {
+            id: gearBtn
+            objectName: "gear"
+            anchors.verticalCenter: parent.verticalCenter
+            width: 48; height: 34; radius: 2
+            color: gearHover.containsMouse ? Kiki.Theme.surface : "transparent"
+            Row {
+                anchors.centerIn: parent; spacing: 4
+                Icon { name: "gear"; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
+                Icon { name: "chev-d"; size: 10; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea { id: gearHover; anchors.fill: parent; hoverEnabled: true; onClicked: bar.settings() }
+        }
     }
 }

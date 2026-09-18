@@ -136,7 +136,7 @@ mod imp {
             s.by_wd.remove(&wd);
         }
         drop(s);
-        crate::listing::mark_stale(path);
+        crate::listing::gone(path);
     }
 }
 

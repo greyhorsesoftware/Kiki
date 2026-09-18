@@ -102,7 +102,7 @@ pub fn rss_now_mb() -> f64 {
         let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
         let pages: f64 = statm.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as f64;
-        return (pages * page / (1024.0 * 1024.0) * 10.0).round() / 10.0;
+        (pages * page / (1024.0 * 1024.0) * 10.0).round() / 10.0
     }
     #[cfg(target_os = "macos")]
     {

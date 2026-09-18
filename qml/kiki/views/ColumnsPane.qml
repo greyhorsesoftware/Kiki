@@ -8,9 +8,23 @@ Item {
     id: root
     property Kiki.Pane pane
     signal activate(string uri)
+    /// A right click on a row, with the URI of that row — which may live in any column, not just
+    /// the one the pane's listing is on.
+    signal contextMenu(string uri, var row, point pos)
     signal fileSelected(string uri)
     signal edit(string uri, int line)
-    property int columnWidth: 220
+    /// What a column is when the strip is full of them.
+    property int columnWidthBase: 220
+    /// The narrowest a column can be squeezed before names stop being readable; past that the
+    /// strip scrolls instead.
+    readonly property int columnWidthMin: 150
+    /// The columns own the width the info panel does not take, shared equally: a folder or two
+    /// gets wide columns rather than a wide panel and a gap.
+    readonly property int columnWidth: {
+        if (columns.length === 0) return columnWidthBase
+        const room = strip.width - (inspectedUri !== "" ? inspectorWidth : 0)
+        return Math.max(columnWidthMin, Math.floor(room / columns.length))
+    }
     property string home: ""
     property var columns: []          // [{ uri, cache, selected }]
     property string inspectedUri: ""
@@ -19,7 +33,16 @@ Item {
     // arrived from the daemon yet (resolved by onRowsUpdated below).
     property int focusCol: 0
     property int pendingIndex: -1
-    readonly property int inspectorWidth: Math.max(300, strip.width - columns.length * columnWidth)
+    /// 0 until someone drags the info column's edge, and that width from then on.
+    property int inspectorW: 0
+    /// The info column is at its widest by default and drags narrower, never wider: the columns
+    /// are what the view is for. Computed without reference to `columnWidth`, or the two would
+    /// chase each other.
+    readonly property int inspectorMax: Math.min(Kiki.Theme.inspectorWidth, Math.floor(strip.width * 0.45))
+    readonly property int inspectorMin: 240
+    readonly property int inspectorWidth: inspectorW > 0
+        ? Math.max(inspectorMin, Math.min(inspectorW, inspectorMax))
+        : inspectorMax
     readonly property alias scrollX: strip.contentX
     readonly property int stripWidth: columns.length * columnWidth + (inspectedUri !== "" ? inspectorWidth : 0)
 
@@ -31,6 +54,13 @@ Item {
         columns = [{ uri: root.pane.uri, cache: root.pane.listing, selected: -1 }]
         focusCol = 0; pendingIndex = -1
         inspectedUri = ""; inspectedRow = null
+    }
+    /// Move the highlight within a column without opening anything.
+    function markSelected(col, index) {
+        const cols = columns.slice()
+        cols[col] = Object.assign({}, cols[col], { selected: index })
+        columns = cols
+        focusCol = col
     }
     function push(fromCol, index, row) {
         const cols = columns.slice(0, fromCol + 1)
@@ -150,6 +180,8 @@ Item {
             x: root.columns.length * root.columnWidth; width: root.inspectorWidth; height: strip.height
             uri: root.inspectedUri; row: root.inspectedRow; home: root.home
             onEdit: (u, line) => root.edit(u, line)
+            onResized: dx => root.inspectorW = root.inspectorWidth - dx
+            onResizeEnded: Kiki.Settings.set("view", "inspectorWidth", root.inspectorWidth)
         }
         Row {
             id: row
@@ -187,6 +219,9 @@ Item {
                         delegate: Rectangle {
                             id: cr
                             required property int index
+                            // An arrow-function handler is plain JavaScript: the file's ids are
+                            // not in its scope, so the pane is reached through a bound property.
+                            readonly property var owner: root
                             property var r: modelData.cache.row(index)
                             property bool sel: index === modelData.selected
                             // The focused column shows its selection in the accent; the others in grey.
@@ -212,7 +247,19 @@ Item {
                             }
                             MouseArea {
                                 anchors.fill: parent
-                                onClicked: if (cr.r) root.push(list.colIndex, cr.index, cr.r)
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: mouse => {
+                                    if (!cr.r) return
+                                    const uri = modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)
+                                    if (mouse.button === Qt.RightButton) {
+                                        // Mark it without pushing: a right click on a folder asks
+                                        // about the folder, it does not step into it.
+                                        cr.owner.markSelected(list.colIndex, cr.index)
+                                        cr.owner.contextMenu(uri, cr.r, cr.mapToItem(null, mouse.x, mouse.y))
+                                        return
+                                    }
+                                    cr.owner.push(list.colIndex, cr.index, cr.r)
+                                }
                                 onDoubleClicked: if (cr.r) root.activate(modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name))
                             }
                         }

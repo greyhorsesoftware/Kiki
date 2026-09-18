@@ -138,6 +138,7 @@ impl Client {
             "About" => Ok(Some(
                 Value::obj()
                     .s("version", env!("CARGO_PKG_VERSION"))
+                    .s("build", env!("KIKI_BUILD"))
                     .s("socket", crate::config::socket_path_string())
                     .s("pluginDir", crate::plugin::plugin_dirs().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join(":"))
                     .s("configDir", crate::config::config_dir().to_string_lossy())

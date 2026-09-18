@@ -19,6 +19,17 @@ pub struct DirHandle {
 }
 
 impl DirHandle {
+    /// Device and inode of the open handle: what it was opened on, whatever the name now says.
+    pub fn id(&self) -> Option<(u64, u64)> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            return self.file.metadata().ok().map(|m| (m.dev(), m.ino()));
+        }
+        #[cfg(not(unix))]
+        None
+    }
+
     pub fn open(path: &Path) -> Result<DirHandle> {
         let file = File::open(path)?;
         if !file.metadata()?.is_dir() {
@@ -48,6 +59,23 @@ impl super::Source for DirHandle {
     }
     fn watchable(&self) -> bool {
         true
+    }
+    fn still_at(&self, path: &Path) -> bool {
+        match (self.id(), std::fs::metadata(path)) {
+            (Some(mine), Ok(now)) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    return mine == (now.dev(), now.ino());
+                }
+                #[cfg(not(unix))]
+                true
+            }
+            // Nothing there any more, or no way to tell: the caller reopens, which is the safe
+            // way round — a fresh handle on a missing directory fails loudly.
+            (_, Err(_)) => false,
+            _ => true,
+        }
     }
 }
 

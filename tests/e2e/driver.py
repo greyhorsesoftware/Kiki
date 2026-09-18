@@ -7,12 +7,18 @@ virtual keyboard — is skipped by name rather than failed, and the summary says
 
     driver.py <socket> <out-dir> [--daemon-only] [--flow NAME ...]
 """
-import importlib, os, shutil, sys, traceback
+import importlib, os, shutil, sys, traceback  # noqa: F401
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from harness import Checks, Daemon, Shell, make_tree  # noqa: E402
+from harness import Checks, Daemon, Pointer, Shell, make_tree  # noqa: E402
 
-FLOWS = ["listing", "trash", "archive", "collisions", "edge_cases", "ops_menu", "ops_keyboard"]
+FLOWS = [
+    # daemon only
+    "listing", "trash", "archive", "collisions", "edge_cases", "cross_fs",
+    # through the window
+    "ops_menu", "ops_keyboard", "confirm_ops", "trash_view", "archive_ui", "view_state",
+    "pointer_ops",
+]
 
 
 class Ctx:
@@ -22,12 +28,19 @@ class Ctx:
         self.checks = Checks(name)
         self.daemon = daemon
         self.shell = shell
+        self.pointer = Pointer(shell)
+        self.base = root
         self.root = root
         self._lids = []
+        self._fixtures = 0
 
     def fixture(self, spec):
-        if os.path.exists(self.root):
-            shutil.rmtree(self.root)
+        """Build a fixture under a path no run has used before.
+
+        Never reuse a path: listings are cached and shared, so a folder deleted and rebuilt under
+        the same name can be served from the cache as it was."""
+        self._fixtures += 1
+        self.root = os.path.join(self.base, str(self._fixtures))
         return make_tree(self.root, spec)
 
     def lid(self, back=None):
@@ -45,6 +58,8 @@ def have(capability, args):
         return "--daemon-only" not in args
     if capability == "keyboard":
         return "--daemon-only" not in args and shutil.which("wtype") is not None
+    if capability == "pointer":
+        return "--daemon-only" not in args and shutil.which("wlrctl") is not None
     return False
 
 
@@ -67,10 +82,21 @@ def main():
             skipped.append(f"{name} ({', '.join(missing)} not available)")
             print(f"SKIP {title}: needs {', '.join(missing)}")
             continue
+        probe = getattr(mod, "probe", None)
+        if probe:
+            ctx0 = Ctx(name, daemon, shell, os.path.join(home, f"{name}-probe-{os.getpid()}"))
+            shell.call("dismiss")
+            reason = probe(ctx0)
+            if reason:
+                skipped.append(f"{name} ({reason})")
+                print(f"SKIP {title}: {reason}")
+                continue
         print(f"\n{title} [{name}]")
         if "shell" in getattr(mod, "NEEDS", set()):
             shell.call("dismiss")      # no flow inherits an editor or a menu from the last one
-        ctx = Ctx(name, daemon, shell, os.path.join(home, name))
+        # The pid keeps a path from ever being reused between runs: the daemon caches listings
+        # by URI, and a folder deleted and rebuilt at the same path can be served as it was.
+        ctx = Ctx(name, daemon, shell, os.path.join(home, f"{name}-{os.getpid()}"))
         try:
             mod.run(ctx)
         except Exception:

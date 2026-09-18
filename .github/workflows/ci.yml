@@ -35,13 +35,15 @@ jobs:
             target
           key: cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Format and lint
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy --workspace --all-targets -- -D warnings
+        # `make lint` covers what the package ships (the workspace's default members); the
+        # optional location plugins are built separately below so they cannot rot.
+        run: make lint
       - name: Unit and integration tests
-        run: cargo test --workspace
+        run: make test-rust
       - name: Protocol and plugin contract tests
-        run: cargo test --workspace --test '*' -- --include-ignored
+        run: cargo test --test '*' -- --include-ignored
+      - name: Build the plugins that are not in the default build
+        run: cargo build --release -p kiki-plugin-mtp -p kiki-plugin-ptp -p kiki-plugin-afc -p kiki-plugin-gio
       - name: JSON reader fuzz smoke
         run: |
           cargo install cargo-fuzz --locked
@@ -49,19 +51,20 @@ jobs:
         continue-on-error: true
 
   qml:
-    name: QML leaf components
+    name: QML leaf and interaction tests
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
       - name: Install Qt
-        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed qt6-base qt6-declarative xorg-server-xvfb
+        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed make qt6-base qt6-declarative xorg-server-xvfb
       - uses: actions/checkout@v4
       - name: Run qmltestrunner
         run: |
+          # The leaf and interaction tests (plan 28): they drive synthetic mouse and key input,
+          # which the offscreen platform delivers as long as each TestCase declares
+          # `when: windowShown` and `visible: true`.
           export QT_QPA_PLATFORM=offscreen
-          # Arch installs the Qt 6 tools under /usr/lib/qt6/bin without a -qt6 suffix
-          # tests/qml/stubs stands in for the Quickshell modules the kiki singletons import
-          /usr/lib/qt6/bin/qmltestrunner -import tests/qml/stubs -input tests/qml
+          make test-qml
 
   package:
     name: Build package (${{ matrix.arch }})
@@ -91,7 +94,7 @@ jobs:
 
   # The shell harness runs on x86_64 only for now; Quickshell from the AUR on ARM is a follow-up.
   e2e:
-    name: Shell, visual, layout, performance
+    name: End to end (a real daemon, a real tree)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -126,10 +129,16 @@ jobs:
           name: kiki-package-x86_64
           path: pkg
       - run: pacman -U --noconfirm --overwrite '*' pkg/kiki-*.pkg.tar.zst
-      - name: Run the harness under cage
+      - name: Run the flows under cage
+        # No build tree here on purpose: the harness falls back to the installed kiki, so what
+        # runs is the package. Flows that need something this image does not have — a pointer
+        # that the compositor can map to an output — skip by name and say so.
         run: |
           chown -R builder .
-          sudo -u builder bash -c 'XDG_RUNTIME_DIR=$(mktemp -d) tests/e2e/run.sh'
+          sudo -u builder bash -c 'tests/e2e/run.sh'
+      - name: Show the logs
+        if: always()
+        run: tail -n 40 tests/e2e/out/*.log || true
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

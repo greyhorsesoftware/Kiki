@@ -61,7 +61,6 @@ Singleton {
 
     function _apply(text) {
         if (!text) return
-        if (Kiki.Settings.view.theme && Kiki.Settings.view.theme !== "follow Omarchy") return  // explicit theme: keep the built-in palette
         // [colors.primary] background/foreground and [colors.normal] black..white
         const sec = {}
         let cur = ""

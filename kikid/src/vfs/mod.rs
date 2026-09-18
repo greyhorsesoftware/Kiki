@@ -119,6 +119,12 @@ pub trait Source: Send + Sync {
     fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>;
     /// True when inotify can watch it (local directories only).
     fn watchable(&self) -> bool;
+    /// Whether this handle still refers to what lives at `path`. A directory deleted and
+    /// recreated with the same name is a different directory, and a handle opened on the old one
+    /// reads the old one — which is empty — for ever. Sources that cannot tell say yes.
+    fn still_at(&self, _path: &std::path::Path) -> bool {
+        true
+    }
     /// Stop an in-progress scan (a remote listing nobody is looking at any more).
     fn cancel(&self) {}
 }

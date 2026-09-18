@@ -10,7 +10,7 @@ TestCase {
     name: "InspectorPermissions"
     when: windowShown
     visible: true
-    width: 420; height: 620
+    width: 420; height: 900
 
     UI.Inspector {
         id: insp

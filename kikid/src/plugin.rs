@@ -43,13 +43,14 @@ pub fn ships(scheme: &str) -> bool {
 
 /// Whether a directory entry is something we could actually run. A development plugin directory
 /// is usually `target/release`, which is full of `kiki-plugin-<name>.d` dependency files.
+#[cfg(unix)]
 pub fn runnable(path: &std::path::Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        return std::fs::metadata(path).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false);
-    }
-    #[cfg(not(unix))]
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+pub fn runnable(path: &std::path::Path) -> bool {
     path.is_file()
 }
 

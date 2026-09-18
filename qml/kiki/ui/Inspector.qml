@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import ".." as Kiki
 
 // Tabbed inspector: General (preview and fields) and Permissions. Reads through
@@ -15,9 +16,28 @@ Rectangle {
     property bool standalone: false
     signal closed()
     signal chmod(int mode, bool recursive)
+    /// Dragging the leading edge: `dx` is the movement, positive to the right.
+    signal resized(real dx)
+    /// The drag is over, so the width is worth remembering.
+    signal resizeEnded()
 
     color: Kiki.Theme.bg
     Rectangle { visible: !standalone; width: 1; height: parent.height; color: Kiki.Theme.line }
+    // The panel is as wide as you drag it: a grip on the edge it shares with the listing.
+    MouseArea {
+        id: grip
+        objectName: "inspector-grip"
+        visible: !insp.standalone
+        width: 6; height: parent.height; z: 20
+        cursorShape: Qt.SplitHCursor
+        hoverEnabled: true
+        preventStealing: true
+        property real last: 0
+        onPressed: mouse => last = mouse.x
+        onPositionChanged: mouse => { if (pressed) { insp.resized(mouse.x - last) } }
+        onReleased: insp.resizeEnded()
+        Rectangle { anchors.fill: parent; color: grip.containsMouse || grip.pressed ? Kiki.Theme.accent : "transparent"; opacity: 0.5 }
+    }
 
     onUriChanged: { preview = null; if (uri) reload() }
     function reload() {
@@ -54,12 +74,69 @@ Rectangle {
             Icon { name: insp.kind(); size: 40; strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
             Column {
                 width: parent.width - 52; spacing: 4
+                // The name alone: the folder it is in is a field under General, and repeating the
+                // whole path here only crowded the header.
                 Text { width: parent.width; elide: Text.ElideRight; text: insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
-                Rectangle {
-                    width: parent.width; height: 24; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line
-                    Text { anchors.verticalCenter: parent.verticalCenter; x: 8; width: parent.width - 16; elide: Text.ElideMiddle; text: Kiki.Format.display(insp.uri, insp.home); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            }
+        }
+        // The preview is of the file, not of a tab: it stays while the tabs change under it.
+        Rectangle {
+            id: previewBox
+            readonly property bool markdown: insp.preview && insp.preview.markdown === true
+            readonly property bool isImage: insp.preview && insp.preview.path !== undefined
+            /// A local picture is read from the file itself rather than from its 256px thumbnail,
+            /// which the panel is wide enough to show blown up and blurred.
+            readonly property bool localImage: insp.kind() === "image" && insp.uri.indexOf("file://") === 0
+            // An image preview takes the width of the panel and keeps its own ratio, rather
+            // than sitting letterboxed in a short box.
+            readonly property int imageHeight: img.implicitWidth > 0
+                ? Math.min(400, Math.round((width - 12) * img.implicitHeight / img.implicitWidth) + 12)
+                : 240
+            // A folder (or anything with no preview) is just its icon: no box around it.
+            readonly property bool iconOnly: !insp.preview || insp.preview.children !== undefined
+            width: parent.width
+            height: Math.min(markdown ? 300 : (isImage ? imageHeight : 150), Math.round(insp.height * 0.4))
+            radius: 2
+            // A picture is its own frame; the box is for text, where an edge helps.
+            color: (iconOnly || isImage) ? "transparent" : Kiki.Theme.bgDark
+            border.width: (iconOnly || isImage) ? 0 : 1; border.color: Kiki.Theme.line; clip: true
+            Text {
+                visible: insp.preview && insp.preview.text !== undefined && !parent.markdown
+                anchors.fill: parent; anchors.margins: 10
+                text: insp.preview && insp.preview.text !== undefined ? insp.preview.text : ""
+                color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; lineHeight: 1.4; wrapMode: Text.NoWrap
+            }
+            // Markdown (plan 23): rendered by Qt's own Markdown support, scrollable, in the UI font.
+            Flickable {
+                NaturalScroll { }
+                visible: parent.markdown
+                anchors.fill: parent; anchors.margins: 10; contentHeight: md.height; clip: true; boundsBehavior: Flickable.StopAtBounds
+                Text {
+                    id: md
+                    width: parent.width
+                    textFormat: Text.MarkdownText
+                    text: insp.preview && insp.preview.markdown ? insp.preview.text + (insp.preview.truncated ? "\n\n---\n*preview truncated; open the file for the rest*" : "") : ""
+                    color: Kiki.Theme.fgDim; linkColor: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 12; lineHeight: 1.35; wrapMode: Text.WordWrap
+                    onLinkActivated: link => Qt.openUrlExternally(link)
                 }
             }
+            Image {
+                id: img
+                visible: insp.preview && insp.preview.path !== undefined
+                anchors.fill: parent; anchors.margins: 6; fillMode: Image.PreserveAspectFit
+                asynchronous: true; smooth: true; mipmap: true; cache: false
+                source: previewBox.localImage ? insp.uri : (insp.preview && insp.preview.path ? "file://" + insp.preview.path : "")
+                // Decoded at the size it is drawn at, on this screen: anything less shows.
+                sourceSize: Qt.size(Math.round(previewBox.width * Screen.devicePixelRatio),
+                                    Math.round(400 * Screen.devicePixelRatio))
+            }
+            Column {
+                visible: insp.preview && insp.preview.members !== undefined
+                anchors.fill: parent; anchors.margins: 10
+                Repeater { model: insp.preview && insp.preview.members ? insp.preview.members.slice(0, 9) : []; delegate: Text { required property var modelData; text: (modelData.isDir ? "" : "  ") + modelData.name; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; elide: Text.ElideMiddle; width: 250 } }
+            }
+            // A folder shows its icon rather than a list of what is inside it.
+            Icon { visible: !insp.preview || insp.preview.children !== undefined; anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
         }
         // Tabs
         Item {
@@ -71,6 +148,7 @@ Rectangle {
                     model: [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
                     delegate: Item {
                         required property var modelData
+                        objectName: "tab-" + modelData.id
                         width: t.implicitWidth + 4; height: 32
                         Text { id: t; anchors.centerIn: parent; text: modelData.label; color: insp.tab === modelData.id ? Kiki.Theme.fg : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: insp.tab === modelData.id ? Kiki.Theme.accent : "transparent" }
@@ -80,7 +158,8 @@ Rectangle {
             }
         }
         Flickable {
-            width: parent.width; height: Math.max(0, parent.height - 120)
+            // Whatever the header, the preview and the tab strip leave.
+            width: parent.width; height: Math.max(0, parent.height - previewBox.height - 120)
             contentWidth: width; contentHeight: tabLoader.height
             clip: true; boundsBehavior: Flickable.StopAtBounds
             NaturalScroll { }
@@ -103,55 +182,6 @@ Rectangle {
         id: general
         Column {
             spacing: 18
-            // Preview box
-            Rectangle {
-                readonly property bool markdown: insp.preview && insp.preview.markdown === true
-                readonly property bool isImage: insp.preview && insp.preview.path !== undefined
-                // An image preview takes the width of the panel and keeps its own ratio, rather
-                // than sitting letterboxed in a short box.
-                readonly property int imageHeight: img.implicitWidth > 0
-                    ? Math.min(400, Math.round((width - 12) * img.implicitHeight / img.implicitWidth) + 12)
-                    : 240
-                // A folder (or anything with no preview) is just its icon: no box around it.
-                readonly property bool iconOnly: !insp.preview || insp.preview.children !== undefined
-                width: parent.width; height: markdown ? 300 : (isImage ? imageHeight : 150); radius: 2
-                color: iconOnly ? "transparent" : Kiki.Theme.bgDark
-                border.width: iconOnly ? 0 : 1; border.color: Kiki.Theme.line; clip: true
-                Text {
-                    visible: insp.preview && insp.preview.text !== undefined && !parent.markdown
-                    anchors.fill: parent; anchors.margins: 10
-                    text: insp.preview && insp.preview.text !== undefined ? insp.preview.text : ""
-                    color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; lineHeight: 1.4; wrapMode: Text.NoWrap
-                }
-                // Markdown (plan 23): rendered by Qt's own Markdown support, scrollable, in the UI font.
-                Flickable {
-                    NaturalScroll { }
-                    visible: parent.markdown
-                    anchors.fill: parent; anchors.margins: 10; contentHeight: md.height; clip: true; boundsBehavior: Flickable.StopAtBounds
-                    Text {
-                        id: md
-                        width: parent.width
-                        textFormat: Text.MarkdownText
-                        text: insp.preview && insp.preview.markdown ? insp.preview.text + (insp.preview.truncated ? "\n\n---\n*preview truncated; open the file for the rest*" : "") : ""
-                        color: Kiki.Theme.fgDim; linkColor: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 12; lineHeight: 1.35; wrapMode: Text.WordWrap
-                        onLinkActivated: link => Qt.openUrlExternally(link)
-                    }
-                }
-                Image {
-                    id: img
-                    visible: insp.preview && insp.preview.path !== undefined
-                    anchors.fill: parent; anchors.margins: 6; fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true
-                    source: insp.preview && insp.preview.path ? "file://" + insp.preview.path : ""
-                    sourceSize: Qt.size(512, 512)
-                }
-                Column {
-                    visible: insp.preview && insp.preview.members !== undefined
-                    anchors.fill: parent; anchors.margins: 10
-                    Repeater { model: insp.preview && insp.preview.members ? insp.preview.members.slice(0, 9) : []; delegate: Text { required property var modelData; text: (modelData.isDir ? "" : "  ") + modelData.name; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; elide: Text.ElideMiddle; width: 250 } }
-                }
-                // A folder shows its icon rather than a list of what is inside it.
-                Icon { visible: !insp.preview || insp.preview.children !== undefined; anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
-            }
             Column {
                 spacing: 8; width: parent.width
                 Field { label: "Type"; value: Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }

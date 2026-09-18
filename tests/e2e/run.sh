@@ -21,7 +21,6 @@ printf '[integration]\nasked = true\n' > "$KIKI_CONFIG_DIR/settings.toml"
 export KIKI_STATE_DIR="$work/state"
 export KIKI_THUMB_DIR="$work/thumbs"
 export KIKI_TRASH_DIR="$work/trash"
-export KIKI_PLUGIN_DIR="${KIKI_PLUGIN_DIR:-$root/target/release}"
 export HOME_FIXTURE="$work/home"; mkdir -p "$HOME_FIXTURE"
 export KIKI_START="file://$HOME_FIXTURE"
 export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman
@@ -34,9 +33,17 @@ EOS
 chmod +x "$work/secret-tool"
 export KIKI_SECRET_TOOL="$work/secret-tool"
 
+# Prefer this checkout's build; fall back to an installed kiki, which is what CI tests.
+export KIKI_PLUGIN_DIR="${KIKI_PLUGIN_DIR:-$root/target/release}"
 kikid_bin="${KIKID:-$root/target/release/kikid}"
-qs_conf="${KIKI_SHELL_DIR:-$root/qml}"
-[ -x "$kikid_bin" ] || { echo "no kikid at $kikid_bin — run 'make build' first" >&2; exit 2; }
+if [ ! -x "$kikid_bin" ]; then
+  kikid_bin="$(command -v kikid || true)"
+  [ -n "$kikid_bin" ] || { echo "no kikid: build with 'make build', or install the package" >&2; exit 2; }
+  export KIKI_PLUGIN_DIR="${KIKI_PLUGIN_DIR:-/usr/lib/kiki/plugins}"
+  qs_default=/usr/share/kiki
+fi
+qs_conf="${KIKI_SHELL_DIR:-${qs_default:-$root/qml}}"
+[ -f "$qs_conf/shell.qml" ] || { echo "no shell.qml under $qs_conf" >&2; exit 2; }
 
 cleanup() {
   [ -n "${KIKI_E2E_KEEP:-}" ] && { echo "fixture kept at $work"; return; }

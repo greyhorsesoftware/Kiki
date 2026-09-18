@@ -14,6 +14,11 @@ Item {
     property bool filmstrip: true
     property real zoom: 0                       // 0 = fit the stage
     readonly property int stripHeight: filmstrip ? 84 : 0
+    /// One thumbnail plus the gap after it: the layout and the viewport maths share it, or the
+    /// daemon is told about the wrong rows and the thumbnails at the edges never arrive.
+    readonly property int shotWidth: 72
+    readonly property int shotGap: 8
+    readonly property int shotPitch: shotWidth + shotGap
     readonly property int current: pane ? pane.selection.current : -1
     property var row: null
     function refreshRow() { row = (pane && current >= 0) ? pane.listing.row(current) : null }
@@ -26,7 +31,7 @@ Item {
     /// Tell the daemon which rows the filmstrip is showing, so their thumbnails get made.
     function syncStrip() {
         if (!pane) return
-        pane.listing.setViewport(Math.max(0, Math.floor(strip.contentX / 78)), Math.ceil(strip.width / 78) + 2)
+        pane.listing.setViewport(Math.max(0, Math.floor(strip.contentX / shotPitch)), Math.ceil(strip.width / shotPitch) + 2)
     }
     /// Opening a folder clears the selection, which would leave the stage on a placeholder.
     /// Land on the first picture instead, or the first row when none has arrived yet.
@@ -64,15 +69,33 @@ Item {
     function fit() { zoom = 0 }
     function actual() { zoom = 1 }
     function zoomBy(f) { zoom = Math.max(0.1, Math.min(8, (zoom || fitScale) * f)) }
+    /// Air between the picture and the edges of the stage: a photograph looks better mounted
+    /// than bled to the edge, and the gap is where the eye rests.
+    readonly property int inset: 28
     readonly property real fitScale: img.implicitWidth > 0
-        ? Math.min(1, Math.min(stage.width / img.implicitWidth, stage.height / img.implicitHeight))
+        ? Math.min(1, Math.min(Math.max(1, stage.width - 2 * root.inset) / img.implicitWidth,
+                               Math.max(1, stage.height - 2 * root.inset) / img.implicitHeight))
         : 1
+
+    // The stage is darker than the rest of the window, so the picture is the brightest thing on
+    // screen whatever the theme.
+    Rectangle {
+        width: parent.width; height: parent.height - root.stripHeight
+        color: Qt.darker(Kiki.Theme.bgDark, 1.25)
+    }
 
     Flickable {
         id: stage
         width: parent.width; height: parent.height - root.stripHeight
         contentWidth: Math.max(width, img.width); contentHeight: Math.max(height, img.height)
         clip: true; boundsBehavior: Flickable.StopAtBounds
+        // A hairline around the picture, so a dark photograph still has an edge against the mat.
+        Rectangle {
+            visible: img.visible && img.status === Image.Ready
+            x: img.x - 1; y: img.y - 1; width: img.width + 2; height: img.height + 2
+            color: "transparent"; radius: 3
+            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.10)
+        }
         Image {
             id: img
             visible: root.isImage && root.source !== ""
@@ -119,9 +142,27 @@ Item {
         Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
         ListView {
             id: strip
-            anchors.fill: parent; anchors.topMargin: 6; anchors.bottomMargin: 6; anchors.leftMargin: 8
-            orientation: ListView.Horizontal; spacing: 6
+            // Centred while the pictures fit, filling the bar once they do not.
+            height: parent.height - 12
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 16, Math.max(1, contentWidth))
+            orientation: ListView.Horizontal; spacing: root.shotGap
             clip: true; reuseItems: true
+            // A strip scrolls sideways whatever the wheel says: a mouse has only a vertical one,
+            // and a trackpad's sideways swipe should move it the way the fingers go.
+            WheelHandler {
+                target: null
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: event => {
+                    const px = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2
+                    const py = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 2
+                    const d = px !== 0 ? px : py
+                    if (d === 0) { event.accepted = false; return }
+                    strip.contentX = Math.max(0, Math.min(strip.contentX + d, Math.max(0, strip.contentWidth - strip.width)))
+                    event.accepted = true
+                }
+            }
             model: root.pane ? root.pane.listing.count : 0
             onContentXChanged: root.syncStrip()
             onWidthChanged: root.syncStrip()
@@ -131,14 +172,14 @@ Item {
                 id: shot
                 required property int index
                 property var r: root.pane.listing.row(index)
-                width: 72; height: strip.height; radius: 2
-                color: "transparent"
-                border.width: index === root.current ? 2 : 0
-                border.color: Kiki.Theme.accent
+                width: root.shotWidth; height: strip.height; radius: 8
+                color: index === root.current ? Kiki.Theme.surface : Qt.rgba(1, 1, 1, 0.03)
+                border.width: index === root.current ? 2 : 1
+                border.color: index === root.current ? Kiki.Theme.accent : Qt.rgba(1, 1, 1, 0.05)
                 Connections { target: root.pane.listing; function onRowsUpdated(first, n) { if (shot.index >= first && shot.index < first + n) shot.r = root.pane.listing.row(shot.index) } }
                 Image {
                     visible: shot.r && shot.r.thumb
-                    anchors.fill: parent; anchors.margins: 3
+                    anchors.fill: parent; anchors.margins: 5
                     source: shot.r && shot.r.thumb ? "file://" + shot.r.thumb : ""
                     sourceSize: Qt.size(144, 144); fillMode: Image.PreserveAspectFit
                     asynchronous: true; smooth: true

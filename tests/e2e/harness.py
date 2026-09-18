@@ -129,9 +129,31 @@ class Shell:
         self.call("open", uri)
         return self.wait_state(lambda s: s.get("uri") == uri and s.get("done"))
 
-    def select(self, name):
-        self.call("select", name)
-        return self.wait_state(lambda s: any(u.endswith("/" + name) for u in s.get("selection", [])))
+    def select(self, name, timeout=TIMEOUT):
+        """Select a row by name, retrying while we wait: a file that has just been written may
+        not be in the listing the moment we ask for it, and asking once selects nothing."""
+        def try_once():
+            self.call("select", name)
+            return any(u.endswith("/" + name) for u in self.state().get("selection", [])) or None
+        return wait_for(try_once, timeout, interval=0.15)
+
+    def geometry(self, name):
+        """The rectangle of a named element, or of a row: "row-2" asks the view which delegate
+        is showing row 2, which a name search cannot answer while delegates are pooled."""
+        if name.startswith("row-") and name[4:].isdigit():
+            call = ("rowGeometry", name[4:])
+        else:
+            call = ("geometry", name)
+        try:
+            g = json.loads(self.call(*call) or "{}")
+        except json.JSONDecodeError:
+            return None
+        # An element scrolled out of its list still reports a rectangle; aiming at it would hit
+        # whatever is really at those coordinates.
+        return g if g.get("onscreen", g.get("visible")) else None
+
+    def wait_geometry(self, name, timeout=TIMEOUT):
+        return wait_for(lambda: self.geometry(name), timeout)
 
     def menu(self, label):
         """Invoke a context-menu item by its label, the way a click on it would."""
@@ -156,6 +178,100 @@ class Shell:
 
     def type(self, text):
         subprocess.run(["wtype", "-s", self.SETTLE_MS, "-d", "5", text], check=False, timeout=10)
+
+
+class Pointer:
+    """The pointer, through the wlroots virtual-pointer protocol.
+
+    `wlrctl` only moves relatively and only clicks (press and release together), so absolute
+    aiming is "park at the corner, then step to the target", and a drag — which needs the button
+    held across the motion — is not possible with it; that wants ydotool.
+    """
+
+    def __init__(self, shell, origin=None):
+        self.shell = shell
+        if origin is None:
+            env = os.environ.get("KIKI_E2E_POINTER_ORIGIN", "0,0").split(",")
+            origin = (int(env[0]), int(env[1]))
+        self.origin = origin
+
+    def _run(self, *args):
+        subprocess.run(["wlrctl", "pointer", *args], check=False, timeout=10)
+
+    def warp(self, x, y):
+        tx, ty = int(x) + self.origin[0], int(y) + self.origin[1]
+        # Parking at the corner assumes the compositor clamps to the origin of the desktop; with
+        # more than one output it clamps to the current one instead and the aim drifts by
+        # whatever the offset is. Where the compositor can say where the cursor is, ask.
+        where = os.environ.get("KIKI_E2E_CURSORPOS_CMD")
+        if where:
+            # Relative motion plus a compositor that reports the cursor lazily is a moving
+            # target, so aim, read back, and correct until it is actually there.
+            for _ in range(5):
+                at = self._cursor(where)
+                if at is None:
+                    break
+                if at == (tx, ty):
+                    return
+                self._run("move", str(tx - at[0]), str(ty - at[1]))
+                time.sleep(0.05)
+            else:
+                return
+        self._run("move", "-10000", "-10000")
+        self._run("move", str(tx), str(ty))
+
+    # The move and the click are separate processes: without a beat between them the button
+    # press reaches the compositor before the motion does, and every click lands on the previous
+    # target rather than this one.
+    SETTLE = 0.1
+
+    def _cursor(self, where):
+        out = subprocess.run(where.split(), capture_output=True, text=True, timeout=10).stdout
+        try:
+            x, y = (int(v) for v in out.replace(" ", "").split(","))
+            return (x, y)
+        except ValueError:
+            return None
+
+    def click(self, button="left"):
+        time.sleep(self.SETTLE)
+        self._run("click", button)
+
+    def click_at(self, x, y, button="left"):
+        self.warp(x, y)
+        self.click(button)
+
+    def click_name(self, name, button="left", timeout=TIMEOUT):
+        """Click the centre of the element with this objectName. False when it never appeared."""
+        g = self.stable_geometry(name, timeout)
+        if not g:
+            return False
+        self.click_at(g["cx"], g["cy"], button)
+        return True
+
+    def stable_geometry(self, name, timeout=TIMEOUT):
+        """The element's rectangle, once it has stopped moving: a view that has just been given
+        a new folder is still laying out, and a click aimed at where a row was lands on its
+        neighbour."""
+        g = self.shell.wait_geometry(name, timeout)
+        for _ in range(5):
+            if not g:
+                return None
+            time.sleep(0.08)
+            again = self.shell.geometry(name)
+            if again == g:
+                return g
+            g = again
+        return g
+
+    def double_click_name(self, name, timeout=TIMEOUT):
+        g = self.stable_geometry(name, timeout)
+        if not g:
+            return False
+        self.warp(g["cx"], g["cy"])
+        self.click()
+        self._run("click", "left")      # the second click has to follow at once to count as one
+        return True
 
 
 # ---------------------------------------------------------------------------- trees

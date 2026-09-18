@@ -145,10 +145,10 @@ Rectangle {
         id: configure
         Item {
             Column {
-                anchors.horizontalCenter: parent.horizontalCenter; y: 28; width: 620; spacing: 14
-                Row { spacing: 12; height: 30
+                anchors.horizontalCenter: parent.horizontalCenter; y: 28; width: Math.min(620, parent.width - 48); spacing: 14
+                Row { id: detectRow; spacing: 12; height: 30; width: parent.width
                     Text { width: 150; anchors.verticalCenter: parent.verticalCenter; text: "Detect changes by"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                    Rectangle { width: 260; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+                    Rectangle { width: Math.max(160, detectRow.width - 162); height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
                         Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: ({ auto: "Automatic (size + date)", sizeMtime: "Size + modification date", sizeOnly: "Size only" })[ws.detector]; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
                         MouseArea { anchors.fill: parent; onClicked: { const o = ["auto", "sizeMtime", "sizeOnly"]; ws.detector = o[(o.indexOf(ws.detector) + 1) % o.length] } } }
@@ -201,10 +201,10 @@ Rectangle {
                 color: r && r.checked ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: r && r.checked ? Kiki.Theme.accent : Kiki.Theme.gutter
                 Icon { visible: r && r.checked; anchors.centerIn: parent; name: "check"; size: 10; strokeWidth: 2.5; color: Kiki.Theme.bg }
                 MouseArea { anchors.fill: parent; enabled: r && r.action !== "skip"; onClicked: ws.toggleRow(index, !r.checked) } }
-            Row { width: 150; spacing: 6; anchors.verticalCenter: parent.verticalCenter
+            Row { width: Math.min(150, Math.floor(parent.width * 0.3)); spacing: 6; anchors.verticalCenter: parent.verticalCenter; clip: true
                 Icon { anchors.verticalCenter: parent.verticalCenter; size: 12; name: r ? (r.action === "delete" || r.action === "rmdir" ? "x" : (r.action === "skip" ? "equals" : (ws.upload ? "arr-u" : "arr-dn"))) : "equals"; color: r ? (r.action === "delete" || r.action === "rmdir" ? Kiki.Theme.red : (r.reason === "changed" ? Kiki.Theme.yellow : (r.action === "skip" ? Kiki.Theme.gutter : Kiki.Theme.accent))) : Kiki.Theme.gutter }
                 Text { text: r ? (r.action === "copy" ? "copy (" + r.reason + ")" : (r.action === "skip" ? "unchanged" : r.action)) : ""; color: r && (r.action === "delete" || r.action === "rmdir") ? Kiki.Theme.red : (r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fgDim); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
-            Text { width: parent.width - 16 - 12 - 150 - 12 - 90 - (running ? 232 : 0); anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideMiddle; text: r ? r.rel : ""; color: r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { width: Math.max(60, parent.width - 16 - 12 - Math.min(150, Math.floor(parent.width * 0.3)) - 12 - 90 - (running ? 232 : 0)); anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideMiddle; text: r ? r.rel : ""; color: r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { width: 90; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; text: r && r.bytes ? Kiki.Format.bytes(r.bytes) : "—"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Row { visible: running; width: 220; spacing: 6; anchors.verticalCenter: parent.verticalCenter
                 Icon { visible: r && r.state === "done"; name: "check"; size: 14; color: Kiki.Theme.green; anchors.verticalCenter: parent.verticalCenter }

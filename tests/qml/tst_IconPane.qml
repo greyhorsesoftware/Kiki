@@ -78,10 +78,17 @@ TestCase {
     // apart as they grow (plan 23).
     function test_zoom_grows_the_cell_by_the_glyph_alone() {
         pane.iconZoom = 1
-        const w1 = icons.cellW, h1 = icons.cellH
+        const base = icons.iconSize, w1 = icons.cellW, h1 = icons.cellH
         pane.iconZoom = 2
-        compare(icons.cellH - h1, Math.round(44 * 2) - Math.round(44 * 1))
+        compare(icons.iconSize, base * 2)
+        compare(icons.cellH - h1, base)                    // the cell grows by the icon alone
         verify(icons.cellW >= w1)
-        compare(icons.cellH - Math.round(44 * 2), 66)      // padding is constant
+        compare(icons.cellH - icons.iconSize, 66)          // padding is constant
+    }
+
+    // Nautilus opens a folder at 96px, and so does this.
+    function test_the_default_icon_is_96px() {
+        pane.iconZoom = 1
+        compare(icons.iconSize, 96)
     }
 }

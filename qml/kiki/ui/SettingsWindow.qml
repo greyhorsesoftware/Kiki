@@ -186,7 +186,6 @@ Rectangle {
                     Text { anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } } } }
         Row2 { hint: "Accessed shows when a file was last read, with a heat colour fading over a year. \"filesystem\" uses the atime the mount keeps" + (sw.homeVolume ? " (this volume: " + sw.homeVolume.atimeSupport + (sw.homeVolume.atimeSupport === "relatime" ? ", updated at most once a day unless the file changed; strictatime gives minute accuracy" : (sw.homeVolume.atimeSupport === "noatime" ? ", never updated: choose kiki" : "")) + ")" : "") + ". \"kiki\" uses this app's own opens (Open, Open with, Open in, the viewer, Share) and falls back to atime with a hollow swatch."; label: "Heat source"; Choice { options: ["filesystem", "kiki"]; value: Kiki.Settings.view.heatSource || "filesystem"; onPicked: v => sw.set("view", "heatSource", v) }
             Button { text: "Clear access log"; onClicked: Kiki.Daemon.request("ClearAccessLog", {}, () => sw.saved()) } }
-        Row2 { label: "Theme"; Choice { options: ["follow Omarchy", "Tokyo Night"]; value: Kiki.Settings.view.theme || "follow Omarchy"; onPicked: v => sw.set("view", "theme", v) } }
     } }
     Component { id: search; Column { spacing: 12
         Text { text: (sw.index.entries || 0).toLocaleString() + " names indexed · " + Kiki.Format.bytes(sw.index.bytes || 0) + (sw.index.refreshing ? " · refreshing" : ""); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }

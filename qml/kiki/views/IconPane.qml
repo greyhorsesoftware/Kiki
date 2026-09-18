@@ -2,7 +2,8 @@ import QtQuick
 import ".." as Kiki
 import "../ui" as UI
 
-// Icon grid: up to 7 columns, as many as fit at ~92px each, 44px kind icons.
+// Icon grid: tiles as wide as they need to be, with a 96px icon at zoom 1 — the size Nautilus
+// opens a folder at, which is what a picture folder wants before anyone reaches for the zoom.
 Item {
     id: root
     property Kiki.Pane pane
@@ -10,11 +11,13 @@ Item {
     signal contextMenu(int index, point pos)
     readonly property real zoom: root.pane ? root.pane.iconZoom : 1
     readonly property int cellAvail: Math.max(1, width - 36)
-    readonly property int cellTarget: Math.round(44 * zoom) + 48
+    /// The icon at zoom 1; everything in a tile is measured from it.
+    readonly property int iconSize: Math.round(96 * zoom)
+    readonly property int cellTarget: iconSize + 48
     readonly property int cellCols: Math.max(1, Math.min(12, Math.round(cellAvail / cellTarget)))
     readonly property int cellW: Math.floor(cellAvail / cellCols)
-    readonly property int cellH: Math.round(44 * zoom) + 66
-    function setZoom(z) { if (root.pane) root.pane.iconZoom = Math.max(0.6, Math.min(3, z)) }
+    readonly property int cellH: iconSize + 66
+    function setZoom(z) { if (root.pane) root.pane.iconZoom = Math.max(0.4, Math.min(2.5, z)) }
 
     function ensureVisible(i) { grid.positionViewAtIndex(i, GridView.Contain) }
     readonly property int perRow: grid.perRow
@@ -78,9 +81,9 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 8; width: parent.width - 12
                     Item {
                         id: iconBox
-                        anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(Math.round(44 * root.zoom) + 20, parent.width); height: Math.round(44 * root.zoom) + 4
-                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: Math.round(44 * root.zoom); strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
-                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(128 * root.zoom), Math.round(128 * root.zoom)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
+                        anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
+                        UI.Icon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; name: cell.row ? cell.row.kind : "file"; size: root.iconSize; strokeWidth: 1; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                        Image { visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                         Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }
                     Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }

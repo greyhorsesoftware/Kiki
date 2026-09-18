@@ -22,13 +22,15 @@ QtObject {
     property var jarvis: ({ provider: "omarchy", cliCommand: "" })
     property var index: ({ roots: [], excludes: [] })
     property var integration: ({ asked: false })
+    /// Rebound shortcuts: action id -> chord. Empty means everything is on its default.
+    property var keys: ({})
     property var mirror: ({ last: {} })
     property bool loaded: false
 
     function load() {
         Kiki.Daemon.request("Settings", {}, (ok, err) => {
             if (!ok) return
-            for (const k of ["view", "timers", "editor", "git", "project", "jarvis", "index", "integration", "mirror"]) if (ok[k]) settings[k] = Object.assign({}, settings[k], ok[k])
+            for (const k of ["view", "timers", "editor", "git", "project", "jarvis", "index", "integration", "mirror", "keys"]) if (ok[k]) settings[k] = Object.assign({}, settings[k], ok[k])
             loaded = true
         })
         loadViewPrefs()

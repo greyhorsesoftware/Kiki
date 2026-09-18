@@ -24,6 +24,9 @@ Item {
     readonly property int nameWidth: Math.max(48, root.width - 24 - valueWidth)
 
     function ensureVisible(i) { view.positionViewAtIndex(i, ListView.Contain) }
+    /// The delegate showing row `i`, asked of the view rather than found by name: delegates are
+    /// pooled and a recycled one can still answer to the name it had in the last folder.
+    function rowItem(i) { return view.itemAtIndex(i) }
     readonly property int perRow: 1
     readonly property int pageSize: Math.max(1, Math.floor(view.height / Kiki.Theme.rowHeight))
 

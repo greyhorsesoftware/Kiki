@@ -69,10 +69,12 @@ fn le_u16(v: &[u16]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 fn from_le_u32(b: &[u8]) -> Vec<u32> {
-    b.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect()
+    let (chunks, _) = b.as_chunks::<4>();
+    chunks.iter().map(|c| u32::from_le_bytes(*c)).collect()
 }
 fn from_le_u16(b: &[u8]) -> Vec<u16> {
-    b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect()
+    let (chunks, _) = b.as_chunks::<2>();
+    chunks.iter().map(|c| u16::from_le_bytes(*c)).collect()
 }
 
 impl Index {
