@@ -11,5 +11,6 @@ Rectangle {
     width: 34; height: 34; radius: 2
     color: active || hover.containsMouse ? Kiki.Theme.surface : "transparent"
     Icon { anchors.centerIn: parent; name: btn.icon; color: btn.active ? Kiki.Theme.accent : Kiki.Theme.muted }
+    Tip { visible: btn.tip !== "" && hover.containsMouse; text: btn.tip }
     MouseArea { id: hover; anchors.fill: parent; onClicked: btn.clicked(); hoverEnabled: true }
 }

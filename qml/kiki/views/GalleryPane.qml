@@ -23,21 +23,28 @@ Item {
     // Remote files cannot be handed to the loader as a path; their cached thumbnail stands in.
     readonly property string source: !row ? "" : (uri.startsWith("file://") ? uri : (row.thumb ? "file://" + row.thumb : ""))
 
+    /// Tell the daemon which rows the filmstrip is showing, so their thumbnails get made.
+    function syncStrip() {
+        if (!pane) return
+        pane.listing.setViewport(Math.max(0, Math.floor(strip.contentX / 78)), Math.ceil(strip.width / 78) + 2)
+    }
     /// Opening a folder clears the selection, which would leave the stage on a placeholder.
     /// Land on the first picture instead, or the first row when none has arrived yet.
     function selectFirst() {
-        if (!pane || current >= 0 || pane.listing.count === 0) return
-        for (let i = 0; i < Math.min(pane.listing.count, 200); i++) {
+        if (!pane || pane.listing.uri !== pane.uri) return
+        if (current >= 0 || pane.listing.count === 0) return
+        for (let i = 0; i < pane.listing.count; i++) {
             const r = pane.listing.row(i)
-            if (r && (r.kind === "image" || r.kind === "video")) { pane.selection.set(i); ensureVisible(i); return }
+            if (!r) return
+            if (r.kind === "image" || r.kind === "video") { pane.selection.set(i); ensureVisible(i); return }
         }
-        pane.selection.set(0)
+        if (pane.listing.done) pane.selection.set(0)
     }
     Component.onCompleted: { selectFirst(); refreshRow() }
     Connections {
         target: root.pane ? root.pane.listing : null
-        function onCountChanged() { root.selectFirst(); root.refreshRow() }
-        function onReset() { root.selectFirst(); root.refreshRow() }
+        function onCountChanged() { root.selectFirst(); root.refreshRow(); root.syncStrip() }
+        function onReset() { root.selectFirst(); root.refreshRow(); root.syncStrip() }
         function onRowsUpdated(first, n) { root.selectFirst(); root.refreshRow() }
     }
 
@@ -46,11 +53,13 @@ Item {
     readonly property int perRow: 1
     readonly property int pageSize: 1
     function step(d) {
-        const n = pane.listing.count; if (!n) return
+        const n = pane.listing.count; if (!n) return false
+        if (d < 0 && current <= 0) return false
         const i = Math.max(0, Math.min(n - 1, (current < 0 ? 0 : current + d)))
         pane.selection.set(i)
         ensureVisible(i)
         zoom = 0
+        return true
     }
     function fit() { zoom = 0 }
     function actual() { zoom = 1 }
@@ -114,7 +123,9 @@ Item {
             orientation: ListView.Horizontal; spacing: 6
             clip: true; reuseItems: true
             model: root.pane ? root.pane.listing.count : 0
-            onContentXChanged: root.pane.listing.setViewport(Math.max(0, Math.floor(contentX / 78)), Math.ceil(width / 78) + 2)
+            onContentXChanged: root.syncStrip()
+            onWidthChanged: root.syncStrip()
+            Component.onCompleted: root.syncStrip()
             Connections { target: root.pane ? root.pane.listing : null; function onReset() { strip.forceLayout() } }
             delegate: Rectangle {
                 id: shot

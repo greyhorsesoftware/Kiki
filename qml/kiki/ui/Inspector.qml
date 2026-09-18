@@ -13,8 +13,6 @@ Rectangle {
     property var preview: null
     property var meta: row ? row.meta : null
     property bool standalone: false
-    signal openWith()
-    signal open()
     signal closed()
     signal chmod(int mode, bool recursive)
 
@@ -169,12 +167,6 @@ Rectangle {
                 Field { label: "Group"; value: insp.meta && insp.meta.group ? insp.meta.group : "—" }
                 Field { label: "Git"; value: insp.row && insp.row.git ? insp.row.git.state : "—"; valueColor: Kiki.Theme.yellow; visible: insp.row && insp.row.git }
             }
-            Item { width: 1; height: 8 }
-            Row {
-                spacing: 8
-                Button { text: "Open"; primary: true; onClicked: insp.open() }
-                Button { text: "Open with…"; enabled: insp.row && !insp.row.isDir; onClicked: insp.openWith() }
-            }
         }
     }
 
@@ -200,6 +192,7 @@ Rectangle {
                             Rectangle {
                                 visible: index > 0
                                 property int bit: [0, 4, 2, 1][index]
+                                objectName: "perm-" + who.who.toLowerCase() + "-" + bit
                                 property bool on: (insp.editMode >> who.shift) & bit
                                 anchors.centerIn: parent; width: 16; height: 16; radius: 2
                                 color: on ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: on ? Kiki.Theme.accent : Kiki.Theme.gutter
@@ -219,20 +212,22 @@ Rectangle {
                 Field { label: "Group"; value: insp.meta && insp.meta.group ? insp.meta.group : "—" }
             }
             Row {
+                id: recursiveRow
                 spacing: 8
                 property bool recursive: false
                 Rectangle {
+                    objectName: "perm-recursive"
                     width: 16; height: 16; radius: 2; anchors.verticalCenter: parent.verticalCenter
-                    color: parent.recursive ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: parent.recursive ? Kiki.Theme.accent : Kiki.Theme.gutter
-                    MouseArea { anchors.fill: parent; onClicked: parent.parent.recursive = !parent.parent.recursive }
+                    color: recursiveRow.recursive ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: recursiveRow.recursive ? Kiki.Theme.accent : Kiki.Theme.gutter
+                    MouseArea { anchors.fill: parent; onClicked: recursiveRow.recursive = !recursiveRow.recursive }
                 }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "Apply to contained items"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
             Item { width: 1; height: 8 }
             Row {
                 spacing: 8
-                Button { text: "Apply"; primary: true; enabled: insp.dirty; onClicked: insp.chmod(insp.editMode, parent.parent.children[4].recursive) }
-                Button { text: "Revert"; enabled: insp.dirty; onClicked: insp.editMode = insp.meta.mode & 0o777 }
+                Button { objectName: "perm-apply"; text: "Apply"; primary: true; enabled: insp.dirty; onClicked: insp.chmod(insp.editMode, recursiveRow.recursive) }
+                Button { objectName: "perm-revert"; text: "Revert"; enabled: insp.dirty; onClicked: insp.editMode = insp.meta.mode & 0o777 }
             }
         }
     }

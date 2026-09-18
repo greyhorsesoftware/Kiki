@@ -26,6 +26,7 @@ Rectangle {
             ["Tab", "other pane (mirror view)"],
             ["Ctrl+B", "focus favorites"],
             ["Ctrl+Shift+B", "show / hide favorites"],
+            ["Ctrl+Shift+L", "add a location"],
         ] },
         { title: "Find", keys: [
             ["/   Ctrl+F", "filter this folder"],
@@ -34,7 +35,7 @@ Rectangle {
             ["type a name", "jump to it (off with Vim keys)"],
         ] },
         { title: "View", keys: [
-            ["Ctrl+1 .. Ctrl+4", "icon / list / columns / mirror"],
+            ["Ctrl+1 .. Ctrl+5", "icon / list / columns / mirror / gallery"],
             ["Ctrl+H", "hidden files"],
             ["Ctrl+I", "info panel"],
             ["Ctrl+,", "settings"],
@@ -45,8 +46,8 @@ Rectangle {
             ["F4", "edit"],
             ["Del", "move to trash"],
             ["Shift+Del", "delete for good"],
-            ["Ctrl+C  Ctrl+X  Ctrl+V", "copy / cut / paste"],
-            ["Ctrl+Shift+C", "copy path"],
+            ["Super+C  Super+X  Super+V", "copy / cut / paste (Ctrl works too)"],
+            ["Super+Shift+C", "copy path"],
             ["Ctrl+Shift+N", "new folder"],
             ["Ctrl+Z  Ctrl+Shift+Z", "undo / redo"],
             ["Alt+Enter", "open with the default tool"],

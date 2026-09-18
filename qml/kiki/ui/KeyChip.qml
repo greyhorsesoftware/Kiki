@@ -4,6 +4,7 @@ import ".." as Kiki
 Row {
     property string key: ""
     property string label: ""
+    objectName: "chip-" + key
     spacing: 5
     Rectangle {
         height: 16; width: keyText.implicitWidth + 10; radius: 2

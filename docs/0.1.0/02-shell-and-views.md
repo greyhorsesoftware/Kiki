@@ -95,7 +95,7 @@ Rules: a component never reaches for a model it was not given; lists take a mode
 | `Backspace`, `Alt+Left` | back |
 | `F5` | refresh (re-list, bypassing the cache) |
 | `Ctrl+I` | inspector (plan 03) |
-| `Ctrl+C` `Ctrl+X` `Ctrl+V` | copy, cut, paste (plan 04) |
+| `Super+C` `Super+X` `Super+V` | copy, cut, paste (plan 04); `Ctrl` works too, since Omarchy's universal clipboard binding rewrites the Super chord to it |
 | `F2` | rename (plan 04) |
 | `Del` | move to trash (plan 04) |
 | `Ctrl+Z` `Ctrl+Shift+Z` | undo, redo (plan 04) |

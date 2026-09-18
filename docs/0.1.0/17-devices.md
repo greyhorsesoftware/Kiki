@@ -8,6 +8,8 @@ Builds on: `06-remote-locations.md` (plugin processes, plugin API), `01-daemon-a
 
 A plugged-in Android phone (MTP), iPhone (AFC) or camera (PTP) appears in a **Devices** section of the sidebar within a second, browses like any other location with thumbnails and previews, supports copy in both directions and delete where the protocol allows, and disappears cleanly on unplug or eject. Each protocol is a plugin process; the daemon adds hotplug detection and nothing device-specific.
 
+> **Not in the default build.** `plugin::LOCATION_KINDS` and the workspace's `default-members` ship only `sftp` and `ftps` today; this plan's plugin builds with `-p` and needs its entry added back to both lists (see `06-remote-locations.md`).
+
 ## Plugins
 
 Three binaries following `API-PLUGIN.md`, each linking its C library so those dependencies never enter kikid. All report `trash: false`, `setMtime: false`, `mode: false`, and a new capability `partialRead: false` (see below).

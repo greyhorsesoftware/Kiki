@@ -72,6 +72,7 @@ Each step ships on its own and is verified before the next starts.
 | 25 | `25-smb.md` | 6, 8, 9, 24 | SMB (and WebDAV, AFP) locations through one GIO/GVfs plugin: mounts, discovery, attribute-rich listings, mirror; `smb://` handler |
 | 26 | `26-benchmarks.md` | 1, 11 | Synthetic trees, one timed pass over the daemon's hot paths, JSON results, baselines, CI comparison |
 | 27 | `27-gallery-view.md` | 3, 13, 21, 23, 24 | Gallery is the fifth view: one image filling the pane over a filmstrip of its neighbours; arrows page, zoom and trash in place |
+| 28 | `28-ui-test-coverage.md` | 2, 4, 11, 23 | Every file operation tested through the interface by keyboard and by mouse: a recording socket for the QML suite, `objectName`s, the `cage` harness, the filesystem as the oracle |
 | 15 | `15-git-status.md` | 1, 2, 3 | Git badges in every view from `git status --porcelain=v2`, branch chip in the breadcrumb, inspector git detail (ships after 3, any time before 10) |
 | 16 | `16-project-mode.md` | 2, 9, 13, 14, 15 | `e` on a folder: kiki becomes a narrow project tree and arranges editor and agent beside it through Hyprland (ships after 15, before 10) |
 | 14 | `13-code-viewer-and-editor.md` | 3, 14 | Highlighted code viewer in the inspector; the editor bridge as the Open in entry marked `role = "editor"` (ships after Open in, before 10) |

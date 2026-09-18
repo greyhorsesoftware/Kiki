@@ -58,7 +58,9 @@ Ping
 
 **Connections**: the plugin holds one browsing session per location. For a job (plan 04) the daemon asks the plugin for a second session (`Connect { location, role: job }`), so a transfer never shares a channel with the browser and a cancelled job cannot break the next listing; the plugin closes it when the job ends. Sessions idle out after 5 minutes.
 
-**Dialog**: one tab per registered plugin; fields from `form()`. Connect runs `validate` then `connect` before saving; errors show inline on the field the plugin names. Editing a location reopens the same dialog.
+**Shipped kinds**: which protocols a kiki speaks is decided when it is built, not configured at run time. `plugin::LOCATION_KINDS` in `kikid/src/plugin.rs` lists them — `ftps` and `sftp` — and discovery (`available`), `Describe`, the Add-location dialog and `AddLocation` all go through it, so a plugin binary that turns up in the plugin directory anyway is never spawned and `AddLocation` answers `Unsupported`. The workspace's `default-members` builds the matching set, so `cargo build --release` and the PKGBUILD produce exactly those plugins; the device plugins (`mtp`, `ptp`, `afc`) and the GIO one (`smb`, `dav`, `afp`) stay in the tree and build with `-p`. Adding a kind back is two edits: the const and `default-members` (plus the PKGBUILD's install list). The stub plugin the contract test drives is a location kind too, enabled by kikid's `stub` feature, which only its own dev-dependency turns on.
+
+**Dialog**: one tile per shipped plugin; fields from `form()`. `Ctrl+Shift+L` opens it, as does the `+` in the sidebar. Connect runs `validate` then `connect` before saving; errors show inline on the field the plugin names. Editing a location reopens the same dialog.
 
 **Operations on remote paths** reuse plan 04's jobs: copy and move between any two backends stream through the daemon; rename and mkdir map directly; delete is a confirmed, non-undoable delete because there is no remote trash (the journal records nothing for it).
 

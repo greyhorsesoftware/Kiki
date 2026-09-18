@@ -42,6 +42,7 @@ Item {
                 model: menu.items
                 delegate: Item {
                     required property var modelData
+                    objectName: "menu-" + modelData.label
                     // `sep` is absent on most items, and an absent value is not false: it has to be
                     // compared, or every row draws a divider.
                     readonly property bool sep: modelData.sep === true

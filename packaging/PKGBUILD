@@ -7,10 +7,9 @@ pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')
 url="https://github.com/davidjclark/kiki"
 license=('MIT')
-depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative' 'libmtp' 'libgphoto2' 'libimobiledevice' 'usbmuxd')
+depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf')
-optdepends=('gvfs-smb: SMB locations' 'gvfs: WebDAV and AFP locations'
-            'openssh: SFTP host key tools'
+optdepends=('openssh: SFTP host key tools'
             'tailscale: share files over Taildrop'
             'kdeconnect: share to a paired phone'
             'signal-cli: share via Signal'
@@ -23,13 +22,13 @@ _srcdir="${startdir}/.."
 build() {
   cd "${_srcdir}"
   export CARGO_TARGET_DIR="${srcdir}/target"
-  cargo build --release --locked --workspace
+  cargo build --release --locked
 }
 
 check() {
   cd "${_srcdir}"
   export CARGO_TARGET_DIR="${srcdir}/target"
-  cargo test --release --locked --workspace
+  cargo test --release --locked
 }
 
 package() {
@@ -40,14 +39,8 @@ package() {
   for p in dbus highlight share-mail share-messages share-tailscale share-localsend share-airdrop; do
     install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
   done
-  for p in ptp mtp afc gio; do
-    [ -x "${t}/kiki-plugin-$p" ] && install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
-  done
-  # one GIO plugin serves three schemes (plan 25)
-  for s in smb dav afp; do
-    [ -x "${t}/kiki-plugin-gio" ] && ln -sf kiki-plugin-gio "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$s"
-  done
-  true
+  # Device and GIO plugins (ptp mtp afc gio, and the smb/dav/afp symlinks onto gio) are not in
+  # the default build: add them back here together with plugin::LOCATION_KINDS.
   install -Dm755 "${_srcdir}/packaging/bin/kiki" "${pkgdir}/usr/bin/kiki"
 
   install -d "${pkgdir}/usr/share/kiki"

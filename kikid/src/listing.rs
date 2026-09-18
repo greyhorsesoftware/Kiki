@@ -595,16 +595,28 @@ impl Listing {
         let mut rows = Vec::new();
         let mut missing: Vec<(u32, u32)> = Vec::new(); // (distance from centre, pool idx)
         let centre = first + count / 2;
+        let mut want_thumbs: Vec<(u32, crate::kinds::Kind, u64, String)> = Vec::new();
         for p in first.min(n)..end {
             let idx = inner.view[p as usize];
             rows.push(inner.row_json(idx));
             if inner.meta[idx as usize].is_none() && !inner.queued[idx as usize] {
                 inner.queued[idx as usize] = true;
                 missing.push((p.abs_diff(centre), idx));
+                continue;
+            }
+            let kind = inner.pool.kind(idx);
+            if crate::thumbs::thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
+                inner.thumb_queued[idx as usize] = true;
+                let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+                let name = String::from_utf8_lossy(inner.pool.name(idx)).into_owned();
+                want_thumbs.push((idx, kind, mtime, name));
             }
         }
         let done = inner.scan_done;
         drop(inner);
+        for (idx, kind, mtime, name) in want_thumbs {
+            self.submit_thumb(idx, kind, mtime, &name);
+        }
         if !missing.is_empty() {
             missing.sort_unstable();
             let rows: Vec<u32> = missing.into_iter().map(|(_, i)| i).collect();
@@ -655,25 +667,9 @@ impl Listing {
             if visible && crate::thumbs::thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
                 inner.thumb_queued[idx as usize] = true;
                 let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
-                let uri = self.uri.join(&String::from_utf8_lossy(&name));
-                let me = Arc::clone(self);
+                let name = String::from_utf8_lossy(&name).into_owned();
                 drop(inner);
-                crate::thumbs::submit(crate::thumbs::ThumbJob {
-                    uri,
-                    kind,
-                    mtime_ms: mtime,
-                    size: crate::thumbs::Size::Normal,
-                    done: Box::new(move |path| {
-                        {
-                            let mut inner = me.inner.lock().unwrap();
-                            if (idx as usize) < inner.pool.len() {
-                                inner.thumb.insert(idx, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-                                inner.thumb_queued[idx as usize] = false;
-                            }
-                        }
-                        me.push_rows(&[idx]);
-                    }),
-                });
+                self.submit_thumb(idx, kind, mtime, &name);
                 continue;
             }
         }
@@ -681,6 +677,28 @@ impl Listing {
         if low_priority {
             self.enrich_progress();
         }
+    }
+
+    /// Queue one row's thumbnail. The caller sets `thumb_queued` while it holds the lock.
+    fn submit_thumb(self: &Arc<Self>, idx: u32, kind: crate::kinds::Kind, mtime_ms: u64, name: &str) {
+        let uri = self.uri.join(name);
+        let me = Arc::clone(self);
+        crate::thumbs::submit(crate::thumbs::ThumbJob {
+            uri,
+            kind,
+            mtime_ms,
+            size: crate::thumbs::Size::Normal,
+            done: Box::new(move |path| {
+                {
+                    let mut inner = me.inner.lock().unwrap();
+                    if (idx as usize) < inner.pool.len() {
+                        inner.thumb.insert(idx, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+                        inner.thumb_queued[idx as usize] = false;
+                    }
+                }
+                me.push_rows(&[idx]);
+            }),
+        });
     }
 
     /// Send `Rows` events for the given pool rows to every subscriber whose window covers them.

@@ -92,7 +92,8 @@ pub fn settings() -> Value {
             .s("order", "asc")
             .b("inspector", false)
             .b("showHidden", false)
-            .b("sidebar", false)
+            .b("sidebar", true)
+            .s("sidebarStyle", "rail")
             .b("relativeDates", true)
             .s("heatSource", "filesystem")
             .b("vimKeys", false)
@@ -165,16 +166,17 @@ pub fn keymap() -> Value {
         ("Alt+Up", "parent folder", "02"),
         ("Ctrl+H", "show hidden files", "02"),
         ("Ctrl+A, Esc", "select all, clear selection", "02"),
-        ("Ctrl+Shift+C", "copy path", "04"),
+        ("Super+Shift+C", "copy path", "04"),
         ("Enter", "open", "02"),
         ("Backspace, Alt+Left", "back", "02"),
         ("F5", "refresh", "02"),
         ("Ctrl+I", "inspector", "03"),
-        ("Ctrl+C / X / V", "copy, cut, paste", "04"),
+        ("Super+C / X / V", "copy, cut, paste (Ctrl too)", "04"),
         ("F2", "rename", "04"),
         ("Del", "move to trash", "04"),
         ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"),
         ("Ctrl+Shift+N", "new folder", "04"),
+        ("Ctrl+Shift+L", "add a location", "06"),
         ("Ctrl+4", "mirror view (two panes)", "24"),
         ("Tab", "switch pane (mirror view)", "24"),
         ("F6", "move across (mirror view)", "24"),

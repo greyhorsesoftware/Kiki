@@ -407,6 +407,7 @@ impl Client {
                 None => Err(("Protocol", "missing location".into())),
             },
             "AddLocation" | "UpdateLocation" => match b.get("location") {
+                Some(loc) if !crate::plugin::ships(loc.str_field("plugin").unwrap_or("")) => Err(("Unsupported", format!("{} locations are not part of this build", loc.str_field("plugin").unwrap_or("?")))),
                 Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null))
                     .map(|_| {
                         let _ = self.tx.send(proto::event("LocationsChanged").done());

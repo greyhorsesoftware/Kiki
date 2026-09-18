@@ -20,6 +20,9 @@ pub fn available() -> Vec<(String, PathBuf)> {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if let Some(id) = name.strip_prefix("kiki-plugin-share-") {
+                    if !crate::plugin::runnable(&e.path()) {
+                        continue;
+                    }
                     if !out.iter().any(|(i, _)| i == id) {
                         out.push((id.to_string(), e.path()));
                     }

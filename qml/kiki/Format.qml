@@ -30,7 +30,9 @@ QtObject {
         if (!ms) return Qt.rgba(0, 0, 0, 0)
         const hours = Math.max(1, (Date.now() - ms) / 3600000)
         const t = Math.max(0, 1 - Math.log(hours) / Math.log(24 * 365))   // 1 = now, 0 = a year
-        return Qt.rgba(accent.r, accent.g, accent.b, 0.05 + 0.45 * t * t)
+        // 1.5 rather than 2: plan 22 fixes three points — 0.5 at an hour, about 0.28 at a day,
+        // 0.05 at a year — and squaring undershoots the middle one (0.24).
+        return Qt.rgba(accent.r, accent.g, accent.b, 0.05 + 0.45 * Math.pow(t, 1.5))
     }
     // Modified column, friendly form: "just now", "12 min ago", "3 h ago", "yesterday 14:02",
     // "Tuesday 14:02" (this week), "12 Sep 14:02" (this year), "12 Sep 2024" (older).

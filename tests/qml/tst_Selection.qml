@@ -4,6 +4,8 @@ import "../../qml/kiki" as Kiki
 
 TestCase {
     name: "Selection"
+    when: windowShown
+    visible: true
     Kiki.Selection { id: sel }
     function test_set_toggle_range() {
         sel.set(3); compare(sel.count(), 1); verify(sel.has(3))

@@ -4,6 +4,8 @@ import "../../qml/kiki" as Kiki
 
 TestCase {
     name: "Format"
+    when: windowShown
+    visible: true
     function test_bytes() {
         compare(Kiki.Format.bytes(0), "0 B")
         compare(Kiki.Format.bytes(1126), "1.1 KB")

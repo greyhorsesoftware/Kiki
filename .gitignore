@@ -4,3 +4,4 @@ target/
 .DS_Store
 docs/design/kiki-file-manager.html
 tests/e2e/out/
+__pycache__/

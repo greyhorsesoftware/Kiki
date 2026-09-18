@@ -59,6 +59,23 @@ Rectangle {
         const location = { name: name, plugin: p.scheme, remoteUri: p.scheme + "://" + name + (values.remotePath || "/"), localUri: values.localPath ? "file://" + encodeURI(values.localPath.replace(/^~/, Quickshell.env("HOME"))) : "", config: config }
         return { location: location, secrets: secrets }
     }
+    /// Move to another kind, keeping it on screen. Locked while editing a saved location.
+    function selectKind(i) {
+        if (editingName || !plugins.length) return
+        const n = Math.max(0, Math.min(plugins.length - 1, i))
+        if (n === tab) return
+        tab = n; values = defaults(plugins[n]); errors = ({})
+        kinds.positionViewAtIndex(n, ListView.Contain)
+    }
+    /// The icon set has no per-protocol glyphs, so map the scheme onto the closest one.
+    function kindIcon(scheme) {
+        switch (scheme) {
+        case "sftp": case "ftps": return "server"
+        case "smb": case "dav": case "afp": return "cloud"
+        case "mtp": case "ptp": case "afc": return "usb"
+        }
+        return "hdd"
+    }
     function validate() {
         const e = {}
         if (!(values.name || "").trim()) e.name = "name is required"
@@ -79,36 +96,70 @@ Rectangle {
 
     MouseArea { anchors.fill: parent }
     Rectangle {
-        anchors.centerIn: parent; width: 520; height: 630; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        anchors.centerIn: parent
+        width: Math.min(520, parent.width - 32); height: Math.min(630, parent.height - 32)
+        color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        ToggleButton {
+            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
+            z: 2; icon: "x"; tip: "Close (Esc)"
+            onClicked: dlg.visible = false
+        }
         Column {
             anchors.fill: parent; anchors.margins: 24; anchors.topMargin: 20; spacing: 20
             Row {
+                id: header
                 width: parent.width
                 Text { text: dlg.editingName ? "Edit location" : "Add location"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
-                Item { width: parent.width - 200; height: 1 }
-                Icon { name: "x"; size: 14; color: Kiki.Theme.muted; MouseArea { anchors.fill: parent; onClicked: dlg.visible = false } }
             }
-            // Protocol tabs from the plugin registry
-            Rectangle {
-                width: parent.width; height: 34; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line
-                Row {
-                    anchors.fill: parent; anchors.margins: 2; spacing: 2
-                    Repeater {
-                        model: dlg.plugins
-                        delegate: Rectangle {
-                            required property var modelData
-                            required property int index
-                            width: (parent.width - 2 * (dlg.plugins.length - 1)) / Math.max(1, dlg.plugins.length); height: 28; radius: 2
-                            color: dlg.tab === index ? Kiki.Theme.surface : "transparent"
-                            Text { anchors.centerIn: parent; text: modelData.displayName; color: dlg.tab === index ? Kiki.Theme.fg : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: dlg.tab === index }
-                            MouseArea { anchors.fill: parent; enabled: !dlg.editingName; onClicked: { dlg.tab = index; dlg.values = dlg.defaults(modelData); dlg.errors = ({}) } }
+            // One tile per kind, scrolling sideways: the names are too long to share the width.
+            ListView {
+                id: kinds
+                width: parent.width; height: 78
+                orientation: ListView.Horizontal; spacing: 8; clip: true
+                model: dlg.plugins
+                delegate: Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: 92; height: 72; radius: 14
+                    color: dlg.tab === index ? Kiki.Theme.surface : Kiki.Theme.bgDark
+                    border.width: 1; border.color: dlg.tab === index ? Kiki.Theme.accent : Kiki.Theme.line
+                    opacity: dlg.editingName && dlg.tab !== index ? 0.4 : 1
+                    Column {
+                        anchors.centerIn: parent; spacing: 6; width: parent.width - 12
+                        Icon {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            name: dlg.kindIcon(modelData.scheme); size: 22
+                            color: dlg.tab === index ? Kiki.Theme.accent : Kiki.Theme.fgDim
                         }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                            text: modelData.displayName
+                            color: dlg.tab === index ? Kiki.Theme.fg : Kiki.Theme.muted
+                            font.family: Kiki.Theme.mono; font.pixelSize: 11
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent; enabled: !dlg.editingName
+                        onClicked: { dlg.tab = index; dlg.values = dlg.defaults(modelData); dlg.errors = ({}); kinds.positionViewAtIndex(index, ListView.Contain) }
+                    }
+                }
+                WheelHandler {
+                    target: null
+                    orientation: Qt.Horizontal
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: event => {
+                        const dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2
+                        if (dx === 0) { event.accepted = false; return }
+                        kinds.contentX = Math.max(0, Math.min(kinds.contentX + dx, Math.max(0, kinds.contentWidth - kinds.width)))
+                        event.accepted = true
                     }
                 }
             }
             Flickable {
                 NaturalScroll { }
-                width: parent.width; height: parent.height - 34 - 20 - 20 - 30 - 20 - 20; clip: true; contentHeight: fields.height
+                width: parent.width; height: Math.max(0, parent.height - header.height - kinds.height - footer.height - 3 * parent.spacing)
+                clip: true; contentHeight: fields.height
                 Column {
                     id: fields; width: parent.width; spacing: 14
                     Repeater {
@@ -125,6 +176,7 @@ Rectangle {
                 }
             }
             Row {
+                id: footer
                 width: parent.width; spacing: 8
                 Text { width: parent.width - 220; anchors.verticalCenter: parent.verticalCenter; text: dlg.status || "Secrets are kept in the Omarchy keyring."; color: dlg.status && !dlg.busy ? Kiki.Theme.red : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap }
                 Button { text: "Cancel"; onClicked: dlg.visible = false }
@@ -132,6 +184,15 @@ Rectangle {
             }
         }
     }
+    focus: visible
+    activeFocusOnTab: true
+    onVisibleChanged: if (visible) forceActiveFocus()
+    // Tab walks on from the kind strip into the fields and then the buttons.
+    Keys.onReturnPressed: dlg.connect()
+    Keys.onEnterPressed: dlg.connect()
+    // A text field takes Left/Right first, so these only fire when the strip has the keyboard.
+    Keys.onLeftPressed: dlg.selectKind(dlg.tab - 1)
+    Keys.onRightPressed: dlg.selectKind(dlg.tab + 1)
     Keys.onEscapePressed: visible = false
     ContextMenu { id: browseMenu; parent: dlg }
 }

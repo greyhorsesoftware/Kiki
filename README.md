@@ -20,14 +20,16 @@ index, git badges, project mode beside your editor and agent, sharing, and Jarvi
 ## Build and run (Omarchy)
 
 ```
-cargo build --release --workspace
+cargo build --release
 KIKI_PLUGIN_DIR=target/release target/release/kikid &
 qs -p qml/shell.qml
 ```
 
+The default build ships the `sftp` and `ftps` location plugins. Which protocols a build speaks is `plugin::LOCATION_KINDS` in `kikid/src/plugin.rs` plus the workspace's `default-members`; the device (`mtp`, `ptp`, `afc`) and GIO (`smb`, `dav`, `afp`) plugins stay in the tree and build with `cargo build --release -p kiki-plugin-<name>` once both lists name them. See `docs/0.1.0/06-remote-locations.md`.
+
 Benchmarks: `kikid bench gen all /tmp/kb && kikid bench run /tmp/kb --json out.json`, then `kikid bench compare bench/baseline-<os>-<arch>.json out.json` (plan 26).
 
-Tests: `cargo test --workspace`, `/usr/lib/qt6/bin/qmltestrunner -import tests/qml/stubs -input tests/qml`, `tests/e2e/run.sh` (needs `cage`).
+Tests: `make test` runs all three suites — `make test-rust`, `make test-qml` (leaf and interaction tests, no compositor) and `make test-e2e` (a real daemon and a real tree; the flows that drive the shell need `cage`, and are skipped by name without it).
 
 Packaging: `cd packaging && makepkg -f`. See `docs/0.1.0/10-polish-and-packaging.md`.
 

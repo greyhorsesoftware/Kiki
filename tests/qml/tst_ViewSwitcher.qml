@@ -4,6 +4,8 @@ import "../../qml/kiki/ui" as UI
 
 TestCase {
     name: "ViewSwitcher"
+    when: windowShown
+    visible: true
     width: 200; height: 60
     UI.ViewSwitcher { id: sw; view: "list" }
     SignalSpy { id: menuSpy; target: sw; signalName: "menu" }

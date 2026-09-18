@@ -37,6 +37,7 @@ Item {
                 delegate: Item {
                     required property var modelData
                     required property int index
+                    objectName: "header-" + modelData.role
                     width: modelData.w || root.nameWidth
                     height: root.headerHeight
                     Row {

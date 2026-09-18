@@ -5,6 +5,7 @@ import ".." as Kiki
 Column {
     id: f
     property var field: ({})            // { key, label, kind, required, default, options }
+    objectName: "field-" + (field.key || "")
     property string value: ""
     property string error: ""
     signal edited(string value)
@@ -19,6 +20,7 @@ Column {
             anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 8; spacing: 8
             Icon { visible: f.field.kind === "file" || f.field.kind === "path"; name: f.field.kind === "file" ? "key" : "folder"; size: 14; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
             TextInput {
+                activeFocusOnTab: true
                 id: input
                 visible: f.field.kind !== "select"
                 width: parent.width - 30 - (f.field.kind === "browse" ? 80 : 0); height: parent.height; verticalAlignment: TextInput.AlignVCenter

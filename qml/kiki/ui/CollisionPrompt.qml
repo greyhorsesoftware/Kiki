@@ -5,6 +5,9 @@ import ".." as Kiki
 Rectangle {
     id: dlg
     property var prompt: Kiki.Jobs.prompt
+    /// Cleared for every new prompt: "apply to all" must never carry over into the next job.
+    property bool all: false
+    onPromptChanged: dlg.all = false
     visible: prompt !== null
     anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.5); z: 90
     MouseArea { anchors.fill: parent }   // swallow clicks
@@ -26,13 +29,12 @@ Rectangle {
             }
             Row {
                 spacing: 8
-                property bool all: false
-                Rectangle { width: 16; height: 16; radius: 2; anchors.verticalCenter: parent.verticalCenter; color: parent.all ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: parent.all ? Kiki.Theme.accent : Kiki.Theme.gutter; MouseArea { anchors.fill: parent; onClicked: parent.parent.all = !parent.parent.all } }
+                Rectangle { objectName: "collision-all"; width: 16; height: 16; radius: 2; anchors.verticalCenter: parent.verticalCenter; color: dlg.all ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: dlg.all ? Kiki.Theme.accent : Kiki.Theme.gutter; MouseArea { anchors.fill: parent; onClicked: dlg.all = !dlg.all } }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "Apply to all"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 Item { width: 40; height: 1 }
-                Button { text: "Skip"; onClicked: Kiki.Jobs.reply("skip", parent.all) }
-                Button { text: "Keep both"; onClicked: Kiki.Jobs.reply("keepBoth", parent.all) }
-                Button { text: "Replace"; primary: true; onClicked: Kiki.Jobs.reply("replace", parent.all) }
+                Button { objectName: "collision-skip"; text: "Skip"; onClicked: Kiki.Jobs.reply("skip", dlg.all) }
+                Button { objectName: "collision-keepBoth"; text: "Keep both"; onClicked: Kiki.Jobs.reply("keepBoth", dlg.all) }
+                Button { objectName: "collision-replace"; text: "Replace"; primary: true; onClicked: Kiki.Jobs.reply("replace", dlg.all) }
             }
         }
     }

@@ -25,8 +25,23 @@ QtObject {
 
     signal navigated(string uri)
 
+    /// Coming back out of a folder, the folder we left is the one worth selecting. The shell
+    /// looks up its row once the listing has finished.
+    property var visited: ({})        // folder uri -> the row that was selected there
+    property string selectAfterLoad: ""
+    /// Set by the keyboard paths into a folder: land on its first row so the arrows carry on.
+    property bool selectFirstAfterLoad: false
     function open(target, push) {
         if (push === undefined) push = true
+        const leaving = trimUri(uri)
+        const dest = trimUri(target)
+        // Remember what was selected here, so coming back lands on it again.
+        const cur = selection.current
+        const curRow = cur >= 0 ? listing.row(cur) : null
+        if (leaving && curRow) { const v = Object.assign({}, visited); v[leaving] = curRow.name; visited = v }
+        const child = leaving && parentOf(leaving) === dest ? decodeURIComponent(leaving.split("/").pop()) : ""
+        selectAfterLoad = child || visited[dest] || ""
+        selectFirstAfterLoad = false
         if (push) {
             history = history.slice(0, historyIndex + 1).concat([target])
             historyIndex = history.length - 1
@@ -39,7 +54,11 @@ QtObject {
         hasPref = !!pref
         _applying = true
         if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc"; showHidden = pref.hidden !== undefined ? pref.hidden : (Kiki.Settings.view.showHidden === true) }
-        else showHidden = Kiki.Settings.view.showHidden === true
+        else {
+            showHidden = Kiki.Settings.view.showHidden === true
+            const d = Kiki.Settings.view["default"] || "list"
+            if (view !== d && view !== "mirror") view = d
+        }
         _applying = false
         listing.open(target)
         // Always state the order: the daemon caches listings, so this folder may still carry the
@@ -83,7 +102,17 @@ QtObject {
         path = path.replace(/\/+$/, ""); const k = path.lastIndexOf("/")
         return head + auth + (k <= 0 ? "/" : path.slice(0, k))
     }
-    function childUri(name) { return uri.replace(/\/+$/, "") + "/" + encodeURIComponent(name).replace(/%2F/g, "/") }
+    function childUri(name) {
+        const base = uri.endsWith("/") ? uri : uri + "/"
+        return base + encodeURIComponent(name).replace(/%2F/g, "/")
+    }
+    /// Drop trailing slashes but keep the authority's own, so "file:///" survives.
+    function trimUri(u) {
+        const m = u.match(/^([a-z0-9+.-]+:\/\/[^/]*)(\/.*)?$/i)
+        if (!m) return u.replace(/\/+$/, "")
+        const p = (m[2] || "/").replace(/\/+$/, "")
+        return m[1] + (p || "/")
+    }
     readonly property bool isTrash: uri.startsWith("trash://")
 
     // Drag and drop (plan 02). The dragged payload is text/uri-list so drops also work from and

@@ -4,6 +4,8 @@ import "../../qml/kiki/ui" as UI
 
 TestCase {
     name: "ContextMenu"
+    when: windowShown
+    visible: true
     width: 600; height: 400
     property int fired: 0
     UI.ContextMenu { id: menu }

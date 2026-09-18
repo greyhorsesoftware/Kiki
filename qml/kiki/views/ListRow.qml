@@ -6,6 +6,7 @@ Rectangle {
     id: r
     property Kiki.Pane pane
     property int rowIndex: -1
+    objectName: "row-" + rowIndex
     property var row: pane ? pane.listing.row(rowIndex) : null
     property bool selected: pane ? pane.selection.has(rowIndex) : false
     signal activate()
@@ -30,13 +31,18 @@ Rectangle {
     }
     height: Kiki.Theme.rowHeight
     clip: true
-    color: selected ? Kiki.Theme.accent : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
+    color: "transparent"
     Connections { target: r.pane ? r.pane.listing : null; function onRowsUpdated(first, n) { if (r.rowIndex >= first && r.rowIndex < first + n) r.row = r.pane.listing.row(r.rowIndex) } function onReset() { r.row = r.pane.listing.row(r.rowIndex) } }
     Connections { target: r.pane ? r.pane.selection : null; function onChanged() { r.selected = r.pane.selection.has(r.rowIndex) } }
     onRowIndexChanged: { row = pane.listing.row(rowIndex); selected = pane.selection.has(rowIndex) }
 
     property color fg: selected ? Kiki.Theme.bg : Kiki.Theme.fgDim
     property color dim: selected ? Kiki.Theme.bg : Kiki.Theme.muted
+    Rectangle {
+        anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6
+        radius: 6
+        color: r.selected ? Kiki.Theme.accent : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
+    }
     Row {
         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
         Row {
@@ -69,7 +75,7 @@ Rectangle {
         color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent; z: 2
         onVisibleChanged: if (visible) { edit.text = r.row ? r.row.name : ""; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
         TextInput {
-            id: edit; anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; verticalAlignment: TextInput.AlignVCenter
+            id: edit; objectName: "renameEditor"; anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; verticalAlignment: TextInput.AlignVCenter
             color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; clip: true
             onAccepted: { const name = text; r.pane.renamingIndex = -1; if (r.row && name && name !== r.row.name) r.pane.renameRequested(r.pane.childUri(r.row.name), name) }
             Keys.onEscapePressed: r.pane.renamingIndex = -1

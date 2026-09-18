@@ -149,7 +149,6 @@ Item {
             visible: root.inspectedUri !== ""
             x: root.columns.length * root.columnWidth; width: root.inspectorWidth; height: strip.height
             uri: root.inspectedUri; row: root.inspectedRow; home: root.home
-            onOpen: root.activate(root.inspectedUri)
             onEdit: (u, line) => root.edit(u, line)
         }
         Row {
@@ -159,6 +158,7 @@ Item {
                 delegate: Item {
                     required property var modelData
                     required property int index
+                    objectName: "column-" + index
                     width: root.columnWidth; height: strip.height
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
                     ListView {
@@ -192,8 +192,13 @@ Item {
                             // The focused column shows its selection in the accent; the others in grey.
                             property bool active: sel && list.colIndex === root.focusCol
                             width: list.width; height: Kiki.Theme.rowHeight
-                            color: sel ? (active ? Kiki.Theme.accent : Kiki.Theme.surface) : "transparent"
+                            color: "transparent"
                             property color fg: active ? Kiki.Theme.bg : Kiki.Theme.fgDim
+                            Rectangle {
+                                anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 5
+                                radius: 6
+                                color: cr.sel ? (cr.active ? Kiki.Theme.accent : Kiki.Theme.surface) : "transparent"
+                            }
                             Connections { target: modelData.cache; function onRowsUpdated(first, n) { if (cr.index >= first && cr.index < first + n) cr.r = modelData.cache.row(cr.index) } function onReset() { cr.r = modelData.cache.row(cr.index) } }
                             Row {
                                 anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 8

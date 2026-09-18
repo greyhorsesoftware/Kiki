@@ -5,6 +5,8 @@ import "../../qml/kiki" as Kiki
 // Drives WindowCache with a fake daemon: no socket, replies are scripted.
 TestCase {
     name: "WindowCache"
+    when: windowShown
+    visible: true
 
     property var sent: []
     property var fake: QtObject {

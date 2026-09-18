@@ -6,6 +6,8 @@ import "../../qml/kiki" as Kiki
 // the stubbed daemon and never answers, which is fine for these.
 TestCase {
     name: "Pane"
+    when: windowShown
+    visible: true
     Kiki.Pane { id: pane }
 
     function test_child_and_parent_uris() {

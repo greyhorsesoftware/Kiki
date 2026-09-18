@@ -30,6 +30,29 @@ pub fn find_binary(scheme: &str) -> Option<PathBuf> {
 
 const SERVICES: &[&str] = &["dbus", "highlight"];
 
+/// The location kinds this build ships. Discovery, `Describe`, the Add-location dialog and
+/// `AddLocation` never see anything else, so this list and the workspace's default members are
+/// together the whole answer to "which protocols does this kiki speak". The stub is the contract
+/// test's plugin, so it counts only under the `stub` feature.
+pub const LOCATION_KINDS: &[&str] = if cfg!(feature = "stub") { &["ftps", "sftp", "stub"] } else { &["ftps", "sftp"] };
+
+/// Whether this build can connect to a location kind at all.
+pub fn ships(scheme: &str) -> bool {
+    LOCATION_KINDS.contains(&scheme)
+}
+
+/// Whether a directory entry is something we could actually run. A development plugin directory
+/// is usually `target/release`, which is full of `kiki-plugin-<name>.d` dependency files.
+pub fn runnable(path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::metadata(path).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false);
+    }
+    #[cfg(not(unix))]
+    path.is_file()
+}
+
 /// Every plugin binary present: (name suffix, path). User directory wins, first seen wins.
 pub fn inventory() -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
@@ -38,6 +61,9 @@ pub fn inventory() -> Vec<(String, PathBuf)> {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if let Some(s) = name.strip_prefix("kiki-plugin-") {
+                    if !runnable(&e.path()) {
+                        continue;
+                    }
                     if !out.iter().any(|(x, _)| x == s) {
                         out.push((s.to_string(), e.path()));
                     }
@@ -72,7 +98,8 @@ pub fn status_json() -> Value {
     )
 }
 
-/// Location plugin schemes present (share and service plugins excluded).
+/// Location plugin schemes present: binaries in the plugin directories, minus everything this
+/// build does not ship (share and service plugins are never location kinds).
 pub fn available() -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for d in plugin_dirs() {
@@ -80,7 +107,7 @@ pub fn available() -> Vec<String> {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
                 if let Some(s) = name.strip_prefix("kiki-plugin-") {
-                    if s.starts_with("share-") || SERVICES.contains(&s) {
+                    if !ships(s) || !runnable(&e.path()) {
                         continue;
                     }
                     if !out.iter().any(|x| x == s) {
@@ -114,6 +141,9 @@ pub const IDLE_EXIT: Duration = Duration::from_secs(300);
 
 impl Plugin {
     pub fn spawn(scheme: &str) -> Result<Arc<Plugin>, VfsError> {
+        if !ships(scheme) {
+            return Err(VfsError::Io(format!("{scheme} locations are not part of this build")));
+        }
         let bin = find_binary(scheme).ok_or_else(|| VfsError::Io(format!("no plugin for scheme {scheme}")))?;
         let p = Self::spawn_path(&bin, scheme)?;
         let d = p.request(Value::obj().s("type", "Describe").done())?;

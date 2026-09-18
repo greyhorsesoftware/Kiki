@@ -4,6 +4,8 @@ import "../../qml/kiki/ui" as UI
 
 TestCase {
     name: "SidebarItem"
+    when: windowShown
+    visible: true
     width: 224; height: 60
     Item { id: host; width: 224; height: 60
         UI.SidebarItem { id: item; label: "Downloads"; icon: "download" } }

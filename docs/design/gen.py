@@ -32,6 +32,8 @@ def ico(name, size=16, color="currentColor", sw=1.5):
         "list": '<path d="M3 4h10"></path><path d="M3 8h10"></path><path d="M3 12h10"></path>',
         "columns": '<rect x="2" y="2.5" width="12" height="11" rx="1"></rect><path d="M6 2.5v11"></path><path d="M10 2.5v11"></path>',
         "sidebar": '<rect x="2" y="2.5" width="12" height="11" rx="1"></rect><path d="M6 2.5v11"></path>',
+        "music": '<path d="M6 12.5V3.5l7-1.5v9"></path><ellipse cx="4" cy="12.5" rx="2" ry="1.8"></ellipse><ellipse cx="11" cy="11" rx="2" ry="1.8"></ellipse>',
+        "video": '<rect x="2" y="3.5" width="12" height="9" rx="1"></rect><path d="m6.5 6.3 4 2.7-4 2.7z"></path>',
         "plus": '<path d="M8 3v10"></path><path d="M3 8h10"></path>',
         "x": '<path d="m4 4 8 8"></path><path d="m12 4-8 8"></path>',
         "key": '<circle cx="5.5" cy="8" r="3"></circle><path d="M8.5 8H14"></path><path d="M12 8v2.5"></path>',

@@ -4,6 +4,8 @@ import "../../qml/kiki/ui" as UI
 
 TestCase {
     name: "ConfirmDialog"
+    when: windowShown
+    visible: true
     width: 800; height: 600
     Item { id: host; width: 800; height: 600; UI.ConfirmDialog { id: dlg } }
     property var answers: []

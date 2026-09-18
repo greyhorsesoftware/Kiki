@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps", "plugins/kiki-plugin-dbus", "plugins/kiki-plugin-highlight", "plugins/kiki-plugin-share-mail", "plugins/kiki-plugin-share-messages", "plugins/kiki-plugin-share-tailscale", "plugins/kiki-plugin-share-airdrop", "plugins/kiki-plugin-share-localsend", "plugins/kiki-plugin-mtp", "plugins/kiki-plugin-ptp", "plugins/kiki-plugin-afc", "plugins/kiki-plugin-gio"]
+# What a plain `cargo build`/`cargo test` produces, and so what the package ships: the daemon,
+# the share and service plugins, and only the location kinds in `plugin::LOCATION_KINDS`. The
+# other location plugins stay members and build with `-p` (they also need system libraries:
+# libmtp, libgphoto2, libimobiledevice, gvfs).
+default-members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps", "plugins/kiki-plugin-dbus", "plugins/kiki-plugin-highlight", "plugins/kiki-plugin-share-mail", "plugins/kiki-plugin-share-messages", "plugins/kiki-plugin-share-tailscale", "plugins/kiki-plugin-share-airdrop", "plugins/kiki-plugin-share-localsend"]
 
 [workspace.package]
 version = "0.1.0"

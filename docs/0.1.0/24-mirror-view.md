@@ -14,7 +14,7 @@ Split mode and the mirror toggle were two toolbar buttons with four combinations
 - **Leaving**: pick any other view. The split toggle and `Ctrl+Shift+S` are gone.
 - **The mirror bar**: left path, a swap control between the paths, right path, "last mirrored 2 h ago" (from `settings mirror.last`, written when a run finishes) or "not mirrored yet", and the action: an accent split button **Mirror to \<location\>** with the direction arrow, a `⌃M` chip and a chevron. The main part starts an upload run (Configure → Review → Running from plan 08); the chevron opens Upload, Download, Swap sides and Open remote alone. `Ctrl+M` outside Mirror view enters it and starts the run.
 - **Swap** exchanges the two panes' URIs; the workspace always treats the `file://` side as local, whichever pane holds it.
-- **Transfers** between panes (drag, `Ctrl+C`/`Ctrl+V`, `F6`) and `Tab` to switch panes are unchanged from plan 07.
+- **Transfers** between panes (drag, `Super+C`/`Super+V`, `F6`) and `Tab` to switch panes are unchanged from plan 07.
 
 ## Default view by contents
 

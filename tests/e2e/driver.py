@@ -1,83 +1,92 @@
 #!/usr/bin/env python3
-"""Drives kiki: talks to kikid over the socket (newline-delimited JSON) and to the shell
-over `qs ipc`. Each check prints PASS/FAIL; exit code is the number of failures."""
-import json, os, socket, subprocess, sys, time
+"""Runs the end-to-end flows (plan 28).
 
-sock_path, out_dir = sys.argv[1], sys.argv[2]
-daemon_only = "--daemon-only" in sys.argv
-home = os.environ["HOME_FIXTURE"]
-fails = 0
+Each flow gets its own folder under the fixture root and its own listing ids, so one flow can
+never see another's files. A flow that needs something this run does not have — a shell, a
+virtual keyboard — is skipped by name rather than failed, and the summary says so.
 
-class Daemon:
-    def __init__(self, path):
-        self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); self.s.connect(path)
-        self.f = self.s.makefile("rwb", buffering=0); self.n = 1; self.events = []
-        self.call("Hello", version=1, client="e2e")
-    def call(self, type, **fields):
-        i = self.n; self.n += 1
-        self.f.write((json.dumps(dict(id=i, type=type, **fields)) + "\n").encode())
-        while True:
-            line = self.f.readline()
-            if not line: raise RuntimeError("daemon closed")
-            m = json.loads(line)
-            if m.get("id") == i: return m
-            self.events.append(m)
-    def drain(self, timeout=0.5):
-        self.s.settimeout(timeout)
+    driver.py <socket> <out-dir> [--daemon-only] [--flow NAME ...]
+"""
+import importlib, os, shutil, sys, traceback
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import Checks, Daemon, Shell, make_tree  # noqa: E402
+
+FLOWS = ["listing", "trash", "archive", "collisions", "edge_cases", "ops_menu", "ops_keyboard"]
+
+
+class Ctx:
+    """What a flow is handed: a daemon, a shell, a place to build fixtures, somewhere to record."""
+
+    def __init__(self, name, daemon, shell, root):
+        self.checks = Checks(name)
+        self.daemon = daemon
+        self.shell = shell
+        self.root = root
+        self._lids = []
+
+    def fixture(self, spec):
+        if os.path.exists(self.root):
+            shutil.rmtree(self.root)
+        return make_tree(self.root, spec)
+
+    def lid(self, back=None):
+        """A fresh listing id, or one already handed out (0 is the first)."""
+        if back is None:
+            self._lids.append(1000 * (len(self._lids) + 1) + len(self._lids))
+            return self._lids[-1]
+        return self._lids[back]
+
+
+def have(capability, args):
+    if capability == "daemon":
+        return True
+    if capability == "shell":
+        return "--daemon-only" not in args
+    if capability == "keyboard":
+        return "--daemon-only" not in args and shutil.which("wtype") is not None
+    return False
+
+
+def main():
+    args = sys.argv[1:]
+    sock_path, out_dir = args[0], args[1]
+    wanted = [args[i + 1] for i, a in enumerate(args) if a == "--flow"] or FLOWS
+    home = os.environ["HOME_FIXTURE"]
+    os.makedirs(out_dir, exist_ok=True)
+
+    daemon = Daemon(sock_path)
+    shell = Shell()
+    failures, skipped, passes = [], [], 0
+
+    for name in wanted:
+        mod = importlib.import_module("flows." + name)
+        missing = [n for n in getattr(mod, "NEEDS", set()) if not have(n, args)]
+        title = getattr(mod, "TITLE", name)
+        if missing:
+            skipped.append(f"{name} ({', '.join(missing)} not available)")
+            print(f"SKIP {title}: needs {', '.join(missing)}")
+            continue
+        print(f"\n{title} [{name}]")
+        if "shell" in getattr(mod, "NEEDS", set()):
+            shell.call("dismiss")      # no flow inherits an editor or a menu from the last one
+        ctx = Ctx(name, daemon, shell, os.path.join(home, name))
         try:
-            while True:
-                line = self.f.readline()
-                if not line: break
-                self.events.append(json.loads(line))
-        except socket.timeout: pass
-        self.s.settimeout(None)
+            mod.run(ctx)
+        except Exception:
+            ctx.checks.failures.append(f"{name} raised")
+            traceback.print_exc()
+        passes += ctx.checks.passes
+        failures += [f"{name}: {f}" for f in ctx.checks.failures]
 
-def check(name, cond, detail=""):
-    global fails
-    print(("PASS " if cond else "FAIL ") + name + ("" if cond else "  " + str(detail)))
-    if not cond: fails += 1
+    print("\n" + "-" * 60)
+    print(f"{passes} passed, {len(failures)} failed, {len(skipped)} skipped")
+    for f in failures:
+        print("  FAILED  " + f)
+    for s in skipped:
+        print("  skipped " + s)
+    return 1 if failures else 0
 
-def ipc(*args):
-    r = subprocess.run(["qs", "-p", os.environ.get("KIKI_SHELL_DIR", "qml") + "/shell.qml", "ipc", "call", "shell", *args], capture_output=True, text=True, timeout=10)
-    return r.stdout.strip()
 
-d = Daemon(sock_path)
-# Listing: 10k files, first window, natural order, metadata arrives
-t0 = time.time(); r = d.call("Open", lid=1, uri=f"file://{home}/big"); w = d.call("Window", lid=1, first=0, count=60); dt = (time.time() - t0) * 1000
-check("open+window under 100 ms", dt < 100, f"{dt:.1f} ms")
-rows = w["ok"]["rows"]; check("first row is file1.txt (natural order)", rows[0]["name"] == "file1.txt", rows[0]["name"])
-d.drain(1.0)
-check("count reached 10000", any(e.get("event") == "Count" and e.get("n") == 10000 for e in d.events))
-check("metadata pushed for the live window", any(e.get("event") == "Rows" for e in d.events))
-# Sort by size waits for enrichment
-r = d.call("Sort", lid=1, role="size", order="desc"); check("sort by size replies after enrichment", "ok" in r, r)
-# Jobs: trash and undo
-r = d.call("Submit", op={"op": "trash", "items": [f"file://{home}/archive.tar"]}); job = r["ok"]["job"]
-for _ in range(50):
-    d.drain(0.1)
-    if any(e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] == "done" for e in d.events): break
-check("trash job done", not os.path.exists(f"{home}/archive.tar"))
-r = d.call("Undo"); time.sleep(0.5); check("undo restored the file", os.path.exists(f"{home}/archive.tar"))
-# Preview of archive members
-r = d.call("Preview", uri=f"file://{home}/archive.tar"); check("archive members preview", r.get("ok", {}).get("n", 0) >= 1, r)
-# Search index
-d.call("IndexRebuild"); time.sleep(2)
-r = d.call("Search", lid=9, scope="everywhere", query="main.rs", mode="substring"); check("index finds main.rs", r.get("ok", {}).get("n", 0) >= 1, r)
-w = d.call("Window", lid=9, first=0, count=5); check("search row carries parent", "parent" in (w["ok"]["rows"][0] if w["ok"]["rows"] else {}))
-# Git status
-subprocess.run(["git", "-C", f"{home}/Projects/kiki", "init", "-q"], check=False)
-r = d.call("Repo", uri=f"file://{home}/Projects/kiki"); check("repo detected", r.get("ok") not in (None, {}), r)
-
-if not daemon_only:
-    ipc("open", f"file://{home}")
-    time.sleep(0.5)
-    st = json.loads(ipc("state") or "{}")
-    check("shell shows the fixture home", st.get("uri") == f"file://{home}", st)
-    ipc("setView", "icon"); time.sleep(0.3); check("icon view", json.loads(ipc("state")).get("view") == "icon")
-    ipc("setView", "columns"); time.sleep(0.3); check("columns view", json.loads(ipc("state")).get("view") == "columns")
-    ipc("search", "big"); time.sleep(0.5); check("folder filter", json.loads(ipc("state")).get("count") == 1)
-    ipc("search", ""); ipc("select", "big"); ipc("inspector", "on"); time.sleep(0.3); check("inspector on request", json.loads(ipc("state")).get("inspector") is True)
-    ws = json.loads(ipc("windowState", "left") or "{}"); check("window cache holds a bounded set", 0 < ws.get("held", 0) <= 1200, ws)
-
-print(f"{fails} failure(s)")
-sys.exit(fails)
+if __name__ == "__main__":
+    sys.exit(main())

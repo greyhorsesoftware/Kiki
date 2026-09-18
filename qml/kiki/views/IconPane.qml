@@ -53,6 +53,7 @@ Item {
         delegate: Item {
             id: cell
             required property int index
+            objectName: "tile-" + index
             property var row: root.pane.listing.row(index)
             property bool selected: root.pane.selection.has(index)
             width: grid.cellWidth; height: grid.cellHeight

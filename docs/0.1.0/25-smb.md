@@ -4,6 +4,8 @@ Builds on: `06-remote-locations.md` (plugin processes, the location plugin contr
 
 Mockup: the Add-location dialog gains an **SMB** tab; same layout as `AddLocationSFTP.dc.html`.
 
+> **Not in the default build.** `plugin::LOCATION_KINDS` and the workspace's `default-members` ship only `sftp` and `ftps` today; this plan's plugin builds with `-p` and needs its entry added back to both lists (see `06-remote-locations.md`).
+
 ## Goal
 
 Windows shares, NAS boxes and Samba servers (`smb://nas/media`) browse, transfer and mirror like SFTP and FTPS, through a location plugin built on GIO and the GVfs that Omarchy already runs, with nothing SMB-specific in the daemon or the shell. Shares on the LAN are discovered so adding one is mostly clicking, and the same plugin covers WebDAV and AFP with a smaller form each.

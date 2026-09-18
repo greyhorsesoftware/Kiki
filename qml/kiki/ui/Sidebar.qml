@@ -23,6 +23,9 @@ Rectangle {
     signal mountVolume(var volume)
     // Keyboard focus (plan 23): a highlighted row across every section; Enter opens it.
     property int keyIndex: -1
+    /// Rail style (Settings → General): a 44px column of icons that widens on hover.
+    property bool compact: false
+    readonly property bool hovered: railHover.hovered
     readonly property var entries: favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })).concat([{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }], locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
     function moveKey(delta) { if (!entries.length) return; keyIndex = keyIndex < 0 ? (delta > 0 ? 0 : entries.length - 1) : Math.max(0, Math.min(entries.length - 1, keyIndex + delta)) }
     function activateKey() {
@@ -31,6 +34,23 @@ Rectangle {
         else if (!(e.kind === "device" && e.item.busy)) sidebar.open(e.uri)
     }
     function keyOffset(kind, i) { let o = 0; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += 1; if (kind === "device") o += locations.length; return o + i }
+    /// A glyph for the well-known folders; anything else keeps the plain folder icon and
+    /// leans on its tooltip.
+    function favIcon(name) {
+        switch ((name || "").toLowerCase()) {
+        case "home": return "home"
+        case "documents": case "docs": return "doc"
+        case "downloads": return "download"
+        case "pictures": case "photos": case "screenshots": case "wallpapers": return "image"
+        case "videos": case "movies": return "video"
+        case "music": return "music"
+        case "projects": case "code": case "src": case "work": return "code"
+        case "desktop": return "grid"
+        case "trash": return "trash"
+        }
+        return "folder"
+    }
+    HoverHandler { id: railHover }
     width: Kiki.Theme.sidebarWidth
     color: Kiki.Theme.bgDark
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
@@ -56,13 +76,15 @@ Rectangle {
             }
         SidebarSection {
             id: favSection
+            compact: sidebar.compact
             title: "Favorites"
             Repeater {
                 model: sidebar.favorites
                 delegate: SidebarItem {
                     required property var modelData
                     required property int index
-                    icon: modelData.name === "Home" ? "home" : (modelData.name === "Downloads" ? "download" : (modelData.name === "Trash" ? "trash" : "folder"))
+                    compact: sidebar.compact
+                    icon: sidebar.favIcon(modelData.name)
                     iconColor: modelData.name === "Trash" ? Kiki.Theme.fgDim : Kiki.Theme.accent
                     label: modelData.name
                     keyed: sidebar.keyIndex === sidebar.keyOffset("favorite", index)
@@ -93,9 +115,11 @@ Rectangle {
             }
         }
         SidebarSection {
+            compact: sidebar.compact
             title: "Locations"; plus: true
             onPlusClicked: sidebar.addLocation()
             SidebarItem {
+                compact: sidebar.compact
                 icon: "trash"; iconColor: Kiki.Theme.fgDim; label: "Trash"
                 keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
                 active: sidebar.currentUri.startsWith("trash://")
@@ -108,6 +132,7 @@ Rectangle {
                 delegate: SidebarItem {
                     required property var modelData
                     required property int index
+                    compact: sidebar.compact
                     keyed: sidebar.keyIndex === sidebar.keyOffset("location", index)
                     icon: "server"; iconColor: modelData.plugin === "sftp" ? Kiki.Theme.green : Kiki.Theme.cyan
                     label: modelData.name + " · " + modelData.plugin
@@ -116,6 +141,13 @@ Rectangle {
                     onRightClicked: sidebar.editLocation(modelData)
                 }
             }
+            // The section header carries the +, and the rail has no headers.
+            SidebarItem {
+                visible: sidebar.compact
+                compact: true
+                icon: "plus"; iconColor: Kiki.Theme.muted; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
+                onClicked: sidebar.addLocation()
+            }
         }
     }
     // Devices (plan 17): present only while a phone or camera is plugged in.
@@ -123,6 +155,7 @@ Rectangle {
         anchors.top: sections.bottom; anchors.topMargin: 12; width: parent.width; spacing: 12
         visible: sidebar.devices.length > 0
         SidebarSection {
+            compact: sidebar.compact
             title: "Devices"
             Repeater {
                 model: sidebar.devices
@@ -149,8 +182,9 @@ Rectangle {
             }
         }
     }
-    // Free space for the volume holding the current pane.
+    // Free space for the volume holding the current pane; no room for it on the rail.
     Row {
+        visible: !sidebar.compact
         anchors.bottom: parent.bottom; anchors.bottomMargin: 12; x: 24; spacing: 10; width: parent.width - 48
         property var vol: sidebar.volumes.length ? sidebar.volumes[0] : null
         Rectangle {

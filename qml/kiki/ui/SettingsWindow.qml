@@ -114,7 +114,7 @@ Rectangle {
         spacing: 14; height: Math.max(32, implicitHeight)
         Text { width: labelWidth; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: label; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         HoverHandler { id: rowHover }
-        QC.ToolTip { visible: hint !== "" && rowHover.hovered; text: hint; delay: 350 }
+        Tip { visible: hint !== "" && rowHover.hovered; text: hint }
     }
     component Choice: Rectangle {
         id: choice
@@ -123,6 +123,12 @@ Rectangle {
         height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: drop.visible ? Kiki.Theme.accent : Kiki.Theme.gutter
         Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: choice.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
+        activeFocusOnTab: true
+        Keys.onSpacePressed: drop.open()
+        Keys.onReturnPressed: drop.open()
+        // Up and Down step through the options without opening the list.
+        Keys.onUpPressed: { const i = options.indexOf(value); if (i > 0) picked(options[i - 1]) }
+        Keys.onDownPressed: { const i = options.indexOf(value); if (i >= 0 && i < options.length - 1) picked(options[i + 1]) }
         MouseArea { anchors.fill: parent; onClicked: drop.open() }
         // The list drops below the field. A Popup sits in the window's overlay, so it is not
         // clipped by the page's Flickable.
@@ -147,6 +153,10 @@ Rectangle {
     }
     component Switch: Rectangle {
         property bool on: false; signal toggled()
+        activeFocusOnTab: true
+        border.width: activeFocus ? 2 : 0; border.color: Kiki.Theme.fg
+        Keys.onSpacePressed: toggled()
+        Keys.onReturnPressed: toggled()
         width: 36; height: 20; radius: 10; color: on ? Kiki.Theme.accent : Kiki.Theme.gutter
         Rectangle { width: 16; height: 16; radius: 8; y: 2; x: parent.on ? 18 : 2; color: Kiki.Theme.bg; Behavior on x { NumberAnimation { duration: 120 } } }
         MouseArea { anchors.fill: parent; onClicked: parent.toggled() }
@@ -154,7 +164,7 @@ Rectangle {
     component NumberBox: Rectangle {
         property int value: 0; property string error: ""; signal edited(int v)
         width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: error ? Kiki.Theme.red : Kiki.Theme.gutter
-        TextInput { anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: { const v = parseInt(text); if (isNaN(v) || v < 48 || v > 2000) parent.error = "48 to 2000"; else { parent.error = ""; parent.edited(v) } } }
+        TextInput { activeFocusOnTab: true; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: { const v = parseInt(text); if (isNaN(v) || v < 48 || v > 2000) parent.error = "48 to 2000"; else { parent.error = ""; parent.edited(v) } } }
         Text { anchors.left: parent.right; anchors.leftMargin: 8; anchors.verticalCenter: parent.verticalCenter; text: parent.error; color: Kiki.Theme.red; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     }
 
@@ -163,6 +173,8 @@ Rectangle {
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
         Row2 { hint: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }
         Row2 { hint: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } }
+        Row2 { hint: "Rail is a column of icons that widens when you point at it; Traditional is the full panel"; label: "Favorites panel"
+            Choice { options: ["rail", "traditional"]; value: Kiki.Settings.view.sidebarStyle || "rail"; onPicked: v => sw.set("view", "sidebarStyle", v) } }
         Row2 { hint: "off hides it until Ctrl+Shift+B"; label: "Show favorites panel"; Switch { on: Kiki.Settings.view.sidebar === true; onToggled: sw.set("view", "sidebar", !on) } }
         Row2 { hint: "default for new panes; Ctrl+H or the view menu toggles a pane"; label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } }
         Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
