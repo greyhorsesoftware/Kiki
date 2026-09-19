@@ -413,18 +413,32 @@ impl Client {
             "Plugins" => Ok(Some(Value::obj().v("plugins", Value::Arr(crate::plugin::describe_all())).done())),
             "Locations" => Ok(Some(Value::obj().v("locations", crate::locations::json_list()).done())),
             "TestLocation" => match b.get("location") {
-                Some(loc) => crate::locations::test(loc, b.get("secrets").unwrap_or(&Value::Null)).map(|_| Some(Value::obj().done())).map_err(vfs_err),
+                Some(loc) => crate::locations::test(loc, b.get("secrets").unwrap_or(&Value::Null)).map(|(fp, known)| Some(Value::obj().opt_s("fingerprint", fp.as_deref()).b("knownHost", known).done())).map_err(vfs_err),
                 None => Err(("Protocol", "missing location".into())),
             },
             "AddLocation" | "UpdateLocation" => match b.get("location") {
                 Some(loc) if !crate::plugin::ships(loc.str_field("plugin").unwrap_or("")) => Err(("Unsupported", format!("{} locations are not part of this build", loc.str_field("plugin").unwrap_or("?")))),
-                Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null))
+                // `verify` in the reply means the server offered a key nobody has accepted yet:
+                // the shell shows it and asks again with `trust` set to what it displayed.
+                Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null), b.str_field("trust"), b.get("check").and_then(Value::as_bool).unwrap_or(true))
+                    .map(|verify| match verify {
+                        Some(fp) => Some(Value::obj().s("verify", fp).s("host", loc.get("config").and_then(|c| c.str_field("host")).unwrap_or("")).done()),
+                        None => {
+                            let _ = self.tx.send(proto::event("LocationsChanged").done());
+                            Some(Value::obj().done())
+                        }
+                    })
+                    .map_err(vfs_err),
+                None => Err(("Protocol", "missing location".into())),
+            },
+            "SetLocationImage" => match b.str_field("name") {
+                Some(n) => crate::locations::set_image(n, b.str_field("image"))
                     .map(|_| {
                         let _ = self.tx.send(proto::event("LocationsChanged").done());
                         Some(Value::obj().done())
                     })
-                    .map_err(vfs_err),
-                None => Err(("Protocol", "missing location".into())),
+                    .map_err(|e| ("Io", e.to_string())),
+                None => Err(("Protocol", "missing name".into())),
             },
             "RemoveLocation" => match b.str_field("name") {
                 Some(n) => {

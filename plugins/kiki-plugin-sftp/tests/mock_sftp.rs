@@ -128,9 +128,29 @@ struct MockCfg {
     fail: ExecFail,
     /// entries per READDIR reply
     page: usize,
+    /// How this server lets people in.
+    auth: AuthMode,
 }
 
+/// The ways a server can be set up to take a sign-in. Real ones differ exactly like this: many
+/// refuse the plain `password` method and ask through PAM (keyboard-interactive) instead.
+#[derive(Clone, Default)]
+struct AuthMode {
+    /// Refuse the `password` method outright.
+    no_password_method: bool,
+    /// Accept keyboard-interactive, answered with the password.
+    interactive: bool,
+    /// Public keys (openssh form) that may sign in.
+    authorized: Vec<String>,
+}
+
+/// Public-key offers the server has seen, in order, by fingerprint — so a test can say which
+/// keys were tried and which were not.
+static OFFERED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 struct Mock {
+    /// The server's host key in `authorized_keys` form, for writing a known_hosts fixture.
+    host_key: String,
     port: u16,
     fs: Fs,
     counters: Arc<Counters>,
@@ -243,7 +263,29 @@ impl russh::server::Handler for SshSession {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        Ok(if user == "kiki" && password == "secret" { Auth::Accept } else { Auth::Reject { proceed_with_methods: None, partial_success: false } })
+        let ok = !self.cfg.auth.no_password_method && user == "kiki" && password == "secret";
+        Ok(if ok { Auth::Accept } else { Auth::Reject { proceed_with_methods: None, partial_success: false } })
+    }
+
+    async fn auth_publickey(&mut self, user: &str, key: &russh::keys::PublicKey) -> Result<Auth, Self::Error> {
+        let offered = key.to_openssh().unwrap_or_default();
+        OFFERED.lock().unwrap().push(offered.clone());
+        let blob = |k: &str| k.split_whitespace().nth(1).unwrap_or("").to_string();
+        let ok = user == "kiki" && self.cfg.auth.authorized.iter().any(|a| blob(a) == blob(&offered));
+        Ok(if ok { Auth::Accept } else { Auth::Reject { proceed_with_methods: None, partial_success: false } })
+    }
+
+    async fn auth_keyboard_interactive<'a>(&'a mut self, user: &str, _submethods: &str, response: Option<russh::server::Response<'a>>) -> Result<Auth, Self::Error> {
+        if !self.cfg.auth.interactive {
+            return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
+        }
+        match response {
+            None => Ok(Auth::Partial { name: "".into(), instructions: "".into(), prompts: vec![("Password: ".into(), false)].into() }),
+            Some(mut answers) => {
+                let first = answers.next().map(|b| String::from_utf8_lossy(&b).to_string()).unwrap_or_default();
+                Ok(if user == "kiki" && first == "secret" { Auth::Accept } else { Auth::Reject { proceed_with_methods: None, partial_success: false } })
+            }
+        }
     }
 
     async fn channel_open_session(&mut self, channel: Channel<Msg>, _session: &mut Session) -> Result<bool, Self::Error> {
@@ -498,12 +540,18 @@ impl russh_sftp::server::Handler for SftpFs {
 }
 
 fn start(exec: ExecMode, fail: ExecFail, page: usize) -> Mock {
+    start_auth(exec, fail, page, AuthMode::default())
+}
+
+fn start_auth(exec: ExecMode, fail: ExecFail, page: usize, auth: AuthMode) -> Mock {
     let fs = fixture();
     let counters = Arc::new(Counters::default());
     let std_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = std_listener.local_addr().unwrap().port();
     std_listener.set_nonblocking(true).unwrap();
-    let server = MockServer { fs: fs.clone(), cfg: Arc::new(MockCfg { exec, fail, page }), counters: counters.clone() };
+    let server = MockServer { fs: fs.clone(), cfg: Arc::new(MockCfg { exec, fail, page, auth }), counters: counters.clone() };
+    let host_private = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap();
+    let host_key = host_private.public_key().to_openssh().unwrap();
     let thread = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
@@ -511,7 +559,7 @@ fn start(exec: ExecMode, fail: ExecFail, page: usize) -> Mock {
             let config = Arc::new(russh::server::Config {
                 auth_rejection_time: Duration::from_millis(1),
                 auth_rejection_time_initial: Some(Duration::ZERO),
-                keys: vec![PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap()],
+                keys: vec![host_private],
                 ..Default::default()
             });
             let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
@@ -519,7 +567,7 @@ fn start(exec: ExecMode, fail: ExecFail, page: usize) -> Mock {
             let _ = server.run_on_socket(config, &listener).await;
         });
     });
-    Mock { port, fs, counters, _thread: thread }
+    Mock { host_key, port, fs, counters, _thread: thread }
 }
 
 // ---------------------------------------------------------------- plugin driver
@@ -533,7 +581,24 @@ struct Plugin {
 
 impl Plugin {
     fn spawn() -> Plugin {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kiki-plugin-sftp")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
+        Plugin::spawn_with(None)
+    }
+
+    /// `known_hosts` points the plugin at a fixture instead of the real `~/.ssh/known_hosts`.
+    fn spawn_with(known_hosts: Option<&std::path::Path>) -> Plugin {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kiki-plugin-sftp"));
+        match known_hosts {
+            Some(p) => {
+                cmd.env("KIKI_KNOWN_HOSTS", p);
+            }
+            None => {
+                cmd.env("KIKI_KNOWN_HOSTS", "/nonexistent/known_hosts");
+            }
+        }
+        // Never the developer's own ~/.ssh: with no key named the plugin offers every key it
+        // finds, and a test must neither depend on those nor hand them to anything.
+        cmd.env("KIKI_SSH_DIR", std::env::var("KIKI_TEST_SSH_DIR").unwrap_or_else(|_| "/nonexistent/ssh".into()));
+        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Plugin { child, stdin, stdout, next: 1 }
@@ -563,6 +628,16 @@ impl Plugin {
     fn ok(&mut self, v: Value) -> Value {
         let (_, r) = self.req(v);
         r.get("ok").unwrap_or_else(|| panic!("expected ok, got {}", json::to_string(&r))).clone()
+    }
+
+    /// Connect with extra config keys — a pinned fingerprint, say.
+    fn connect_cfg(&mut self, port: u16, password: &str, extra: &[(&str, &str)]) -> Value {
+        let mut cfg = Value::obj().s("host", "127.0.0.1").s("port", port.to_string()).s("username", "kiki");
+        for (k, v) in extra {
+            cfg = cfg.s(*k, *v);
+        }
+        let (_, r) = self.req(Value::obj().s("type", "Connect").s("location", "lab").s("role", "browse").v("config", cfg.done()).v("secrets", Value::obj().s("password", password).done()).done());
+        r
     }
 
     fn connect(&mut self, port: u16, password: &str) -> Value {
@@ -816,4 +891,253 @@ fn wrong_password_is_an_auth_error_and_validate_checks_fields() {
     let d = p.ok(Value::obj().s("type", "Describe").done());
     assert_eq!(d.str_field("scheme"), Some("sftp"));
     assert_eq!(d.get("features").unwrap().get("pipelining").and_then(Value::as_bool), Some(true));
+}
+
+// ---------------------------------------------------------------- host keys
+
+/// A known_hosts fixture: `[127.0.0.1]:port <key>`, which is how ssh records a non-22 port.
+fn known_hosts_file(name: &str, port: u16, key: &str) -> std::path::PathBuf {
+    let p = std::env::temp_dir().join(format!("kiki-known-hosts-{}-{name}", std::process::id()));
+    std::fs::write(&p, format!("[127.0.0.1]:{port} {key}\n")).unwrap();
+    p
+}
+
+/// ssh already knows this host and this key: that is a verification the user has done once, by
+/// hand, so kiki honours it and does not ask a second time.
+#[test]
+fn a_host_in_known_hosts_is_accepted_and_reported() {
+    let m = start(ExecMode::Refused, ExecFail::None, 0);
+    let kh = known_hosts_file("match", m.port, &m.host_key);
+    let mut p = Plugin::spawn_with(Some(&kh));
+    let r = p.connect(m.port, "secret");
+    let ok = r.get("ok").unwrap_or_else(|| panic!("connect failed: {}", json::to_string(&r)));
+    assert_eq!(ok.get("knownHost").and_then(Value::as_bool), Some(true), "known_hosts vouches for this key");
+    assert!(ok.str_field("fingerprint").is_some());
+    let _ = std::fs::remove_file(kh);
+}
+
+/// A host ssh has never seen is connected to, and the key is handed back: kiki asks the user
+/// before it saves anything.
+#[test]
+fn an_unknown_host_is_reported_for_the_user_to_verify() {
+    let m = start(ExecMode::Refused, ExecFail::None, 0);
+    let mut p = Plugin::spawn_with(None);
+    let ok = p.connect(m.port, "secret").get("ok").cloned().expect("connect");
+    assert_eq!(ok.get("knownHost").and_then(Value::as_bool), Some(false));
+    assert!(ok.str_field("fingerprint").unwrap().starts_with("SHA256:"));
+}
+
+/// known_hosts has a different key of the same kind for this host — ssh's "identification has
+/// changed". kiki refuses, and says which record disagrees.
+#[test]
+fn a_key_that_known_hosts_disagrees_with_is_refused() {
+    let m = start(ExecMode::Refused, ExecFail::None, 0);
+    let other = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap().public_key().to_openssh().unwrap();
+    let kh = known_hosts_file("changed", m.port, &other);
+    let mut p = Plugin::spawn_with(Some(&kh));
+    let r = p.connect(m.port, "secret");
+    let err = r.get("err").unwrap_or_else(|| panic!("expected a refusal, got {}", json::to_string(&r)));
+    assert_eq!(err.str_field("code"), Some("Auth"));
+    let msg = err.str_field("message").unwrap_or("");
+    assert!(msg.contains("known_hosts"), "{msg}");
+    assert!(msg.contains("has changed"), "{msg}");
+    let _ = std::fs::remove_file(kh);
+}
+
+/// Once the user has accepted a key it is pinned in the location, and only that key will do.
+#[test]
+fn a_pinned_key_must_match() {
+    let m = start(ExecMode::Refused, ExecFail::None, 0);
+    let mut p = Plugin::spawn_with(None);
+    let fp = p.connect(m.port, "secret").get("ok").cloned().expect("connect").str_field("fingerprint").unwrap().to_string();
+    p.ok(Value::obj().s("type", "Disconnect").s("location", "lab").s("role", "browse").done());
+
+    // The key it offers: accepted.
+    let mut good = Plugin::spawn_with(None);
+    let ok = good.connect_cfg(m.port, "secret", &[("trustedFingerprint", &fp)]).get("ok").cloned();
+    assert!(ok.is_some(), "the pinned key is the one the server has");
+
+    // Any other: refused, naming what this location trusts.
+    let mut bad = Plugin::spawn_with(None);
+    let r = bad.connect_cfg(m.port, "secret", &[("trustedFingerprint", "SHA256:not-this-one")]);
+    let err = r.get("err").unwrap_or_else(|| panic!("expected a refusal, got {}", json::to_string(&r)));
+    assert_eq!(err.str_field("code"), Some("Auth"));
+    assert!(err.str_field("message").unwrap_or("").contains("this location trusts SHA256:not-this-one"));
+}
+
+// ---------------------------------------------------------------- signing in
+
+/// A throwaway ~/.ssh with the named keys in it; returns the directory and each public key.
+fn ssh_dir_with(tag: &str, keys: &[(&str, &str)]) -> Option<(std::path::PathBuf, Vec<String>)> {
+    let d = std::env::temp_dir().join(format!("kiki-sftp-auth-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let mut publics = Vec::new();
+    for (name, passphrase) in keys {
+        let ok = Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", passphrase, "-C", name, "-f"]).arg(d.join(name)).status().map(|s| s.success()).unwrap_or(false);
+        if !ok {
+            eprintln!("ssh-keygen not available; skipped");
+            return None;
+        }
+        publics.push(std::fs::read_to_string(d.join(format!("{name}.pub"))).unwrap().trim().to_string());
+    }
+    Some((d, publics))
+}
+
+/// The plugin under a given ~/.ssh. Serialised: the directory is handed over in the environment.
+static SSH_ENV: Mutex<()> = Mutex::new(());
+fn plugin_with_ssh_dir(dir: &std::path::Path) -> Plugin {
+    std::env::set_var("KIKI_TEST_SSH_DIR", dir);
+    let p = Plugin::spawn();
+    std::env::remove_var("KIKI_TEST_SSH_DIR");
+    p
+}
+
+fn connect_with(p: &mut Plugin, port: u16, identity: Option<&str>, secrets: Value) -> Value {
+    let mut cfg = Value::obj().s("host", "127.0.0.1").s("port", port.to_string()).s("username", "kiki");
+    if let Some(i) = identity {
+        cfg = cfg.s("identityFile", i);
+    }
+    let (_, r) = p.req(Value::obj().s("type", "Connect").s("location", "lab").s("role", "browse").v("config", cfg.done()).v("secrets", secrets).done());
+    r
+}
+
+#[test]
+fn several_named_keys_are_offered_in_order_until_one_is_taken() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, publics)) = ssh_dir_with("several", &[("id_ed25519", ""), ("other", "")]) else { return };
+    // The server knows only the SECOND key named: the first is refused and the next one offered.
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { authorized: vec![publics[1].clone()], ..Default::default() });
+    let mut p = plugin_with_ssh_dir(&dir);
+    let both = format!("{}\n{}", dir.join("id_ed25519").to_string_lossy(), dir.join("other").to_string_lossy());
+    let r = connect_with(&mut p, m.port, Some(&both), Value::obj().done());
+    assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// No key named is no key offered, though one the server would take is sitting in ~/.ssh: which
+/// keys to use is chosen in the form, not found behind the user's back.
+#[test]
+fn no_key_named_offers_none_even_when_one_would_work() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, publics)) = ssh_dir_with("unnamed", &[("id_ed25519", "")]) else { return };
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { authorized: publics.clone(), ..Default::default() });
+    let mut p = plugin_with_ssh_dir(&dir);
+    OFFERED.lock().unwrap().clear();
+    let r = connect_with(&mut p, m.port, None, Value::obj().done());
+    assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("nothing to sign in with"), "{}", json::to_string(&r));
+    assert!(OFFERED.lock().unwrap().is_empty(), "no key was named, so none may be offered");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_named_key_is_the_only_one_offered() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, publics)) = ssh_dir_with("named", &[("id_ed25519", ""), ("work", "")]) else { return };
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { authorized: vec![publics[0].clone()], ..Default::default() });
+    let mut p = plugin_with_ssh_dir(&dir);
+    // `work` is named and the server does not know it: the key it DOES know is sitting right
+    // there in the directory and must not be tried, because it was not chosen.
+    OFFERED.lock().unwrap().clear();
+    let r = connect_with(&mut p, m.port, Some(&dir.join("work").to_string_lossy()), Value::obj().done());
+    let err = r.get("err").unwrap_or_else(|| panic!("expected a refusal, got {}", json::to_string(&r)));
+    assert_eq!(err.str_field("code"), Some("Auth"));
+    assert!(err.str_field("message").unwrap_or("").contains("the key work"), "{}", json::to_string(&r));
+    let blob = |k: &str| k.split_whitespace().nth(1).unwrap_or("").to_string();
+    let offered: Vec<String> = OFFERED.lock().unwrap().iter().map(|k| blob(k)).collect();
+    assert!(offered.contains(&blob(&publics[1])) && !offered.contains(&blob(&publics[0])), "offered {offered:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_encrypted_key_needs_its_passphrase_and_says_so() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, publics)) = ssh_dir_with("locked", &[("locked", "open sesame")]) else { return };
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { authorized: publics.clone(), ..Default::default() });
+    let mut p = plugin_with_ssh_dir(&dir);
+    let locked = dir.join("locked").to_string_lossy().to_string();
+    let r = connect_with(&mut p, m.port, Some(&locked), Value::obj().done());
+    assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("locked: needs its passphrase"), "{}", json::to_string(&r));
+    let r = connect_with(&mut p, m.port, Some(&locked), Value::obj().s("passphrase", "wrong").done());
+    assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("locked: wrong passphrase"), "{}", json::to_string(&r));
+    let r = connect_with(&mut p, m.port, Some(&locked), Value::obj().s("passphrase", "open sesame").done());
+    assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_password_signs_in_when_every_key_is_refused() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, _)) = ssh_dir_with("fallback", &[("id_ed25519", "")]) else { return };
+    let m = start(ExecMode::Gnu, ExecFail::None, 100);           // knows no keys at all
+    let mut p = plugin_with_ssh_dir(&dir);
+    let r = connect_with(&mut p, m.port, Some(&dir.join("id_ed25519").to_string_lossy()), Value::obj().s("password", "secret").done());
+    assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Plenty of servers refuse the `password` method and ask through PAM instead. The same
+/// password has to work there, or "username and password" is a promise the form cannot keep.
+#[test]
+fn a_password_answers_a_keyboard_interactive_server() {
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { no_password_method: true, interactive: true, ..Default::default() });
+    let mut p = Plugin::spawn();
+    let r = p.connect(m.port, "secret");
+    assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
+
+    let mut q = Plugin::spawn();
+    let r = q.connect(m.port, "nope");
+    let err = r.get("err").unwrap();
+    assert_eq!(err.str_field("code"), Some("Auth"));
+    assert!(err.str_field("message").unwrap_or("").contains("the password"), "{}", json::to_string(&r));
+}
+
+#[test]
+fn nothing_to_sign_in_with_says_so() {
+    let m = start(ExecMode::Gnu, ExecFail::None, 100);
+    let mut p = Plugin::spawn();                                  // no keys to find, no password
+    let r = connect_with(&mut p, m.port, None, Value::obj().done());
+    assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("nothing to sign in with"), "{}", json::to_string(&r));
+}
+
+#[test]
+fn browse_lists_the_keys_for_the_form() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, _)) = ssh_dir_with("browse", &[("id_ed25519", ""), ("work", "pw")]) else { return };
+    let mut p = plugin_with_ssh_dir(&dir);
+    let r = p.ok(Value::obj().s("type", "Browse").s("field", "identityFile").v("config", Value::obj().done()).v("secrets", Value::obj().done()).done());
+    let options = r.get("options").and_then(Value::as_arr).expect("options").to_vec();
+    let labels: Vec<&str> = options.iter().filter_map(|o| o.str_field("label")).collect();
+    assert_eq!(labels, vec!["id_ed25519 · ED25519 · id_ed25519", "work · ED25519 · work · passphrase"]);
+    assert_eq!(options[0].str_field("value"), Some(dir.join("id_ed25519").to_string_lossy().as_ref()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The Password tab: a key the server would take is named too (left over from the other tab),
+/// and must not be offered — the location says how it signs in.
+#[test]
+fn the_password_tab_offers_no_key_and_the_key_tab_sends_no_password() {
+    let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
+    let Some((dir, publics)) = ssh_dir_with("tabs", &[("id_ed25519", "")]) else { return };
+    let key = dir.join("id_ed25519").to_string_lossy().to_string();
+    let connect = |p: &mut Plugin, port: u16, auth: &str, secrets: Value| {
+        let cfg = Value::obj().s("host", "127.0.0.1").s("port", port.to_string()).s("username", "kiki").s("identityFile", &key).s("auth", auth).done();
+        let (_, r) = p.req(Value::obj().s("type", "Connect").s("location", "lab").s("role", "browse").v("config", cfg).v("secrets", secrets).done());
+        r
+    };
+    // A server that takes the key AND the password.
+    let m = start_auth(ExecMode::Gnu, ExecFail::None, 100, AuthMode { authorized: publics.clone(), ..Default::default() });
+    let mut p = plugin_with_ssh_dir(&dir);
+    OFFERED.lock().unwrap().clear();
+    let r = connect(&mut p, m.port, "password", Value::obj().s("password", "secret").done());
+    assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
+    assert!(OFFERED.lock().unwrap().is_empty(), "the Password tab offers no key");
+
+    // The Key tab with a wrong key for this server and the RIGHT password lying about: refused.
+    let m2 = start(ExecMode::Gnu, ExecFail::None, 100);          // knows no keys; would take "secret"
+    let mut q = plugin_with_ssh_dir(&dir);
+    let r = connect(&mut q, m2.port, "key", Value::obj().s("password", "secret").done());
+    let err = r.get("err").unwrap_or_else(|| panic!("the Key tab must not fall back to the password: {}", json::to_string(&r)));
+    assert!(!err.str_field("message").unwrap_or("").contains("password"), "{}", json::to_string(&r));
+    let _ = std::fs::remove_dir_all(&dir);
 }

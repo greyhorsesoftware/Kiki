@@ -16,6 +16,6 @@ TestCase {
         compare(menuSpy.count, 1)
     }
     function test_view_property_round_trips() {
-        for (const v of ["icon", "list", "columns", "mirror"]) { sw.view = v; compare(sw.view, v) }
+        for (const v of ["icon", "list", "columns", "gallery"]) { sw.view = v; compare(sw.view, v) }
     }
 }

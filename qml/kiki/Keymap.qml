@@ -21,7 +21,7 @@ QtObject {
         { id: "viewIcon",      group: "View",     label: "Icon view",              def: "Ctrl+1" },
         { id: "viewList",      group: "View",     label: "List view",              def: "Ctrl+2" },
         { id: "viewColumns",   group: "View",     label: "Columns view",           def: "Ctrl+3" },
-        { id: "viewMirror",    group: "View",     label: "Mirror view",            def: "Ctrl+4" },
+        { id: "viewMirror",    group: "View",     label: "Side by Side",           def: "Ctrl+4" },
         { id: "viewGallery",   group: "View",     label: "Gallery view",           def: "Ctrl+5" },
         { id: "hidden",        group: "View",     label: "Show hidden files",      def: "Ctrl+H" },
         { id: "inspector",     group: "View",     label: "Info panel",             def: "Ctrl+I" },

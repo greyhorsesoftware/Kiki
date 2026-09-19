@@ -148,7 +148,7 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
             let (session, rpath) = crate::locations::resolve(u)?;
             let dst = tmp.join(u.name());
             let mut f = std::fs::File::create(&dst)?;
-            session.plugin.request_stream(Value::obj().s("type", "Read").s("location", session.location.clone()).s("path", rpath).done(), |m| {
+            session.plugin.read_stream(Value::obj().s("type", "Read").s("location", session.location.clone()).s("path", rpath).done(), |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
                     let _ = f.write_all(&b);

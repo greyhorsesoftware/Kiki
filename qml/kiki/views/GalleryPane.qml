@@ -14,8 +14,10 @@ Item {
     property bool filmstrip: true
     property real zoom: 0                       // 0 = fit the stage
     readonly property int stripHeight: filmstrip ? 84 : 0
-    /// The bar under the picture: play, pause and how the slideshow runs.
-    readonly property int controlsHeight: 40
+    /// The slideshow controls float over the middle of the picture while the pointer is on it
+    /// (the same as the info panel's video buttons), so they take no room of their own: the
+    /// picture has the whole height above the filmstrip.
+    readonly property int controlsHeight: 0
     /// What the picture has to itself.
     readonly property int stageHeight: Math.max(0, height - stripHeight - controlsHeight)
 
@@ -24,16 +26,25 @@ Item {
     readonly property int slideDelay: Math.max(1, Kiki.Settings.view.slideshowDelay || 4)
     readonly property bool slideLoop: Kiki.Settings.view.slideshowLoop !== false
     function togglePlay() { playing = !playing }
-    function advance() {
-        if (!pane) return
-        // step() says false at the last picture; from there it either starts again or stops.
-        if (root.step(1)) return
-        if (!slideLoop) { playing = false; return }
-        for (let i = 0; i < pane.listing.count; i++) {
-            const r = pane.listing.row(i)
-            if (r && (r.kind === "image" || r.kind === "video")) { pane.selection.set(i); root.zoom = 0; return }
+    /// The next picture after `from`, wrapping past the end when `wrap`; -1 when there is none.
+    function nextPicture(from, wrap) {
+        const n = pane ? pane.listing.count : 0
+        for (let k = 1; k <= n; k++) {
+            const i = from + k
+            if (i >= n && !wrap) return -1
+            const j = ((i % n) + n) % n
+            const r = pane.listing.row(j)
+            if (r && (r.kind === "image" || r.kind === "video")) return j
         }
-        playing = false
+        return -1
+    }
+    function advance() {
+        if (!pane || pane.listing.count === 0) return
+        const i = nextPicture(root.current < 0 ? -1 : root.current, root.slideLoop)
+        if (i < 0) { playing = false; return }
+        pane.selection.set(i)
+        ensureVisible(i)
+        root.zoom = 0
     }
     property Timer slideshow: Timer {
         interval: root.slideDelay * 1000
@@ -72,7 +83,7 @@ Item {
         }
         if (pane.listing.done) pane.selection.set(0)
     }
-    Component.onCompleted: { selectFirst(); refreshRow() }
+    Component.onCompleted: { selectFirst(); refreshRow(); showSource() }
     Connections {
         target: root.pane ? root.pane.listing : null
         function onCountChanged() { root.selectFirst(); root.refreshRow(); root.syncStrip() }
@@ -99,72 +110,142 @@ Item {
     /// Air between the picture and the edges of the stage: a photograph looks better mounted
     /// than bled to the edge, and the gap is where the eye rests.
     readonly property int inset: 28
-    readonly property real fitScale: img.implicitWidth > 0
-        ? Math.min(1, Math.min(Math.max(1, stage.width - 2 * root.inset) / img.implicitWidth,
-                               Math.max(1, stage.height - 2 * root.inset) / img.implicitHeight))
-        : 1
+    readonly property real fitScale: front ? front.fit : 1
 
     // The stage is darker than the rest of the window, so the picture is the brightest thing on
     // screen whatever the theme.
     Rectangle {
-        width: parent.width; height: root.stageHeight
+        width: parent.width; height: root.stageHeight + root.controlsHeight
         color: Qt.darker(Kiki.Theme.bgDark, 1.25)
     }
 
-    /// The picture on screen before this one, kept while the new one loads so the change is a
-    /// fade rather than a blink. Paging quickly just replaces it; nothing queues up.
-    property string ghostSource: ""
-    onSourceChanged: {
-        if (img.status === Image.Ready && img.source != "") {
-            ghost.source = img.source
-            ghost.opacity = 1
-        }
-        img.opacity = 0
+    // ------------------------------------------------------------------ the fade
+    // Two frames, not one. The next picture decodes in the frame that is not showing and fades in
+    // over the one that is, which keeps its pixels the whole time — so there is something to fade
+    // from. Reloading the outgoing picture into a second Image would decode it twice and start
+    // the fade from an empty frame, which is no fade at all.
+    property bool bFront: false
+    readonly property Image front: bFront ? frameB : frameA
+    readonly property Image back: bFront ? frameA : frameB
+    /// Whether the row now current is something to draw. Worked out on the spot rather than read
+    /// off `isImage`: both come from `row`, and when a binding fires there is no saying which of
+    /// its siblings has caught up yet.
+    function wantPicture() {
+        return root.source !== "" && !!root.row && (root.row.kind === "image" || root.row.kind === "video")
     }
+
+    /// How long the pictures took to arrive. Kept always, not only under a test: the cost of
+    /// showing a photograph is the one number that says whether this view is quick, and the
+    /// perf flow reads it through `galleryStats`.
+    property int decodes: 0
+    property int decodeMs: 0
+    property int worstMs: 0
+    property int lastMs: 0
+    property double _asked: 0
+    function stats() {
+        return { decodes: root.decodes, avgMs: root.decodes ? Math.round(root.decodeMs / root.decodes) : 0,
+                 lastMs: root.lastMs, worstMs: root.worstMs, current: root.current,
+                 count: root.pane ? root.pane.listing.count : 0,
+                 ready: root.front.status === Image.Ready && root.front.opacity > 0 }
+    }
+
+    onSourceChanged: showSource()
+    function showSource() {
+        if (!wantPicture()) { frameA.opacity = 0; frameB.opacity = 0; return }
+        if (front.source == root.source && front.opacity === 1) return
+        root._asked = Date.now()
+        back.source = root.source
+        if (back.status === Image.Ready) arrived(back)
+    }
+    /// A frame finished decoding. If it is the one waiting to come in, it becomes the picture.
+    function arrived(f) {
+        if (f !== root.back || !wantPicture() || f.source != root.source) return
+        if (root._asked > 0) {
+            root.lastMs = Date.now() - root._asked
+            root.decodeMs += root.lastMs
+            root.decodes += 1
+            if (root.lastMs > root.worstMs) root.worstMs = root.lastMs
+            root._asked = 0
+        }
+        root.bFront = !root.bFront          // f is the front now, and sits above the old one
+        f.opacity = 1
+    }
+    /// The fade is over: the frame underneath has nothing left to show.
+    function faded() { if (root.front.opacity === 1) root.back.opacity = 0 }
 
     Flickable {
         id: stage
         width: parent.width; height: root.stageHeight
-        contentWidth: Math.max(width, img.width); contentHeight: Math.max(height, img.height)
+        contentWidth: Math.max(width, root.front.width); contentHeight: Math.max(height, root.front.height)
         clip: true; boundsBehavior: Flickable.StopAtBounds
 
         Image {
-            id: ghost
-            anchors.fill: parent
-            anchors.margins: root.inset
-            fillMode: Image.PreserveAspectFit
-            smooth: true; mipmap: true; cache: false; asynchronous: true
-            opacity: 0
+            id: frameA
+            z: root.bFront ? 0 : 1
             visible: opacity > 0
-            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.InOutQuad } }
-        }
-        // A hairline around the picture, so a dark photograph still has an edge against the mat.
-        Rectangle {
-            visible: img.visible && img.status === Image.Ready
-            x: img.x - 1; y: img.y - 1; width: img.width + 2; height: img.height + 2
-            color: "transparent"; radius: 3
-            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.10)
-        }
-        Image {
-            id: img
-            visible: root.isImage && root.source !== ""
-            source: root.source
             asynchronous: true; smooth: true; cache: false
             fillMode: Image.PreserveAspectFit
             // Decoded at the size it is shown at, not the size it was taken at.
             sourceSize: Qt.size(Math.max(64, stage.width * 2), Math.max(64, stage.height * 2))
-            width: root.zoom === 0 ? Math.round(implicitWidth * root.fitScale) : Math.round(implicitWidth * root.zoom)
-            height: root.zoom === 0 ? Math.round(implicitHeight * root.fitScale) : Math.round(implicitHeight * root.zoom)
+            /// How much this picture has to shrink to sit inside the stage; never blown up.
+            readonly property real fit: implicitWidth > 0
+                ? Math.min(1, Math.min(Math.max(1, stage.width - 2 * root.inset) / implicitWidth,
+                                       Math.max(1, stage.height - 2 * root.inset) / implicitHeight))
+                : 1
+            width: root.zoom === 0 ? Math.round(implicitWidth * fit) : Math.round(implicitWidth * root.zoom)
+            height: root.zoom === 0 ? Math.round(implicitHeight * fit) : Math.round(implicitHeight * root.zoom)
             x: Math.max(0, (stage.contentWidth - width) / 2)
             y: Math.max(0, (stage.contentHeight - height) / 2)
             opacity: 0
-            Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.InOutQuad } }
-            onStatusChanged: if (status === Image.Ready) { img.opacity = 1; ghost.opacity = 0 }
-            Component.onCompleted: if (status === Image.Ready) opacity = 1
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 260; easing.type: Easing.InOutQuad
+                    onRunningChanged: if (!running) root.faded()
+                }
+            }
+            onStatusChanged: if (status === Image.Ready) root.arrived(frameA)
+            // A hairline around the picture, so a dark photograph still has an edge against the mat.
+            Rectangle {
+                anchors.fill: parent; anchors.margins: -1
+                color: "transparent"; radius: 3
+                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.10)
+            }
+        }
+        Image {
+            id: frameB
+            z: root.bFront ? 1 : 0
+            visible: opacity > 0
+            asynchronous: true; smooth: true; cache: false
+            fillMode: Image.PreserveAspectFit
+            // Decoded at the size it is shown at, not the size it was taken at.
+            sourceSize: Qt.size(Math.max(64, stage.width * 2), Math.max(64, stage.height * 2))
+            /// How much this picture has to shrink to sit inside the stage; never blown up.
+            readonly property real fit: implicitWidth > 0
+                ? Math.min(1, Math.min(Math.max(1, stage.width - 2 * root.inset) / implicitWidth,
+                                       Math.max(1, stage.height - 2 * root.inset) / implicitHeight))
+                : 1
+            width: root.zoom === 0 ? Math.round(implicitWidth * fit) : Math.round(implicitWidth * root.zoom)
+            height: root.zoom === 0 ? Math.round(implicitHeight * fit) : Math.round(implicitHeight * root.zoom)
+            x: Math.max(0, (stage.contentWidth - width) / 2)
+            y: Math.max(0, (stage.contentHeight - height) / 2)
+            opacity: 0
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 260; easing.type: Easing.InOutQuad
+                    onRunningChanged: if (!running) root.faded()
+                }
+            }
+            onStatusChanged: if (status === Image.Ready) root.arrived(frameB)
+            // A hairline around the picture, so a dark photograph still has an edge against the mat.
+            Rectangle {
+                anchors.fill: parent; anchors.margins: -1
+                color: "transparent"; radius: 3
+                border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.10)
+            }
         }
         // Anything that is not a picture, or has not loaded, keeps its kind icon.
         Column {
-            visible: !img.visible || img.status !== Image.Ready
+            visible: !frameA.visible && !frameB.visible
             anchors.centerIn: parent; spacing: 12
             UI.Icon {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -174,7 +255,7 @@ Item {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: !root.pane || root.pane.listing.count === 0 ? "No pictures here"
-                    : (root.row ? (img.status === Image.Loading ? "loading…" : root.row.name) : "")
+                    : (root.row ? (root.back.status === Image.Loading ? "loading…" : root.row.name) : "")
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
         }
@@ -187,42 +268,55 @@ Item {
         UI.NaturalScroll { }
     }
 
-    // The bar under the picture: play, pause, and the two things a slideshow needs to know.
+    // Over the picture: play, pause, and the two things a slideshow needs to know. Shown while
+    // the pointer is on the picture, and while the options it opens are up.
     Item {
         id: controls
-        y: stage.height; width: parent.width; height: root.controlsHeight
+        objectName: "gallery-controls"
+        width: stage.width; height: stage.height
+        // A HoverHandler, not a MouseArea: it stays hovered over the buttons inside it (their
+        // own areas would take the pointer from a MouseArea and the pill would blink out), and
+        // it leaves the picture's clicks, drags and wheel to the stage underneath.
+        HoverHandler { id: overPicture }
+        readonly property bool shown: overPicture.hovered || slideOptions.visible
 
         // A pill under the buttons, so they read as one control over a picture of any colour.
         Rectangle {
-            anchors.centerIn: parent
-            width: buttons.width + 20; height: 34; radius: height / 2
-            color: Qt.rgba(Kiki.Theme.surface.r, Kiki.Theme.surface.g, Kiki.Theme.surface.b, 0.55)
-            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.06)
+            objectName: "gallery-pill"
+            visible: controls.shown
+            anchors.centerIn: buttons
+            width: buttons.width + 20; height: buttons.height + 2; radius: height / 2
+            color: Qt.rgba(0, 0, 0, 0.55)
+            border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.25)
         }
         Row {
             id: buttons
+            visible: controls.shown
             anchors.centerIn: parent
             spacing: 6
 
             UI.ToggleButton {
                 objectName: "gallery-play"
+                flat: true; iconSize: 24; restColor: "white"
                 icon: root.playing ? "pause" : "play"
                 tip: root.playing ? "Pause" : "Play"
                 onClicked: root.togglePlay()
             }
             UI.ToggleButton {
                 objectName: "gallery-settings"
+                flat: true; iconSize: 24; restColor: "white"
                 icon: "gear"
                 tip: "Slideshow"
                 onClicked: slideOptions.visible = !slideOptions.visible
             }
-        }
-
-        Text {
-            visible: root.playing
-            anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter
-            text: root.slideDelay + "s" + (root.slideLoop ? " · loop" : "")
-            color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
+            // How the slideshow is running, in the pill with the button that runs it.
+            Text {
+                visible: root.playing
+                anchors.verticalCenter: parent.verticalCenter
+                rightPadding: 6
+                text: root.slideDelay + "s" + (root.slideLoop ? " · loop" : "")
+                color: "white"; font.family: Kiki.Theme.mono; font.pixelSize: 11
+            }
         }
     }
 
@@ -233,7 +327,8 @@ Item {
         visible: false
         width: 260; height: opts.height + 24; radius: 8
         x: Math.round((root.width - width) / 2)
-        y: Math.max(8, controls.y - height - 8)
+        // Above the pill, which sits in the middle of the picture.
+        y: Math.max(8, Math.round(stage.height / 2) - 24 - height - 8)
         color: Kiki.Theme.bg
         border.width: 1; border.color: Kiki.Theme.line
         z: 5

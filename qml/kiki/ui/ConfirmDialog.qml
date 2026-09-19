@@ -16,7 +16,7 @@ Rectangle {
     MouseArea { anchors.fill: parent; onClicked: dlg.answer(false) }
     Rectangle {
         id: box
-        anchors.centerIn: parent; width: 460; height: col.height + 44; color: Kiki.Theme.bg; border.width: 2; border.color: dlg.danger ? Kiki.Theme.red : Kiki.Theme.accent
+        anchors.centerIn: parent; width: 460; height: col.height + 44; color: Kiki.Theme.bg; border.width: 2; border.color: dlg.danger ? Kiki.Theme.danger : Kiki.Theme.accent
         focus: true
         Keys.onEscapePressed: dlg.answer(false)
         Keys.onReturnPressed: dlg.answer(true)
@@ -30,7 +30,7 @@ Rectangle {
                 spacing: 8; anchors.right: parent.right
                 Button { text: "Cancel"; onClicked: dlg.answer(false) }
                 Rectangle {
-                    width: okText.width + 32; height: 30; radius: 2; color: dlg.danger ? Kiki.Theme.red : Kiki.Theme.accent
+                    width: okText.width + 32; height: 30; radius: 2; color: dlg.danger ? Kiki.Theme.danger : Kiki.Theme.accent
                     Text { id: okText; anchors.centerIn: parent; text: dlg.confirmLabel + "  ⏎"; color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                     MouseArea { anchors.fill: parent; onClicked: dlg.answer(true) }
                 }

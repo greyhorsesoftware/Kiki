@@ -1,7 +1,7 @@
 //! Benchmarks (plan 26): synthetic trees, one timed pass over the daemon's hot paths, JSON
 //! results, and a comparison that fails on regressions.
 //!
-//! `kikid bench gen <profile> <dir>`   flat10k | flat200k | deep100k | photos | all
+//! `kikid bench gen <profile> <dir>`   flat10k | flat200k | deep100k | photos | gallery1k | all
 //! `kikid bench run <dir> [--json out]` measure every profile found under <dir> (or one directory)
 //! `kikid bench compare <baseline.json> <results.json> [--tolerance 25]`
 
@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const PROFILES: [&str; 4] = ["flat10k", "flat200k", "deep100k", "photos"];
@@ -30,6 +31,9 @@ pub fn gen(profile: &str, dir: &Path) -> std::io::Result<()> {
         "flat200k" => flat(dir, 200_000),
         "deep100k" => deep(dir),
         "photos" => photos(dir, 200),
+        // What the gallery is asked to survive: a thousand full-size photographs, none of them
+        // thumbnailed yet. Sized and encoded like something off a camera, not a test pattern.
+        "gallery1k" => jpegs(dir, 1_000, 1_600, 1_200),
         other => Err(std::io::Error::other(format!("unknown profile {other}"))),
     }
 }
@@ -52,6 +56,53 @@ fn flat(dir: &Path, n: usize) -> std::io::Result<()> {
         std::fs::create_dir_all(dir.join(format!("folder {i:04}")))?;
     }
     Ok(())
+}
+
+/// A folder of full-size JPEGs, written on every core there is — a thousand of them takes long
+/// enough that doing it one at a time would dominate the run that measures them.
+fn jpegs(dir: &Path, n: usize, w: u32, h: u32) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let threads = std::thread::available_parallelism().map(|p| p.get()).unwrap_or(4).min(n.max(1));
+    let err = Mutex::new(None::<std::io::Error>);
+    std::thread::scope(|scope| {
+        for t in 0..threads {
+            let err = &err;
+            scope.spawn(move || {
+                for i in (t..n).step_by(threads) {
+                    let path = dir.join(format!("DSC_{i:05}.jpg"));
+                    // Skip what is already there: the fixture is expensive and worth reusing.
+                    if std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+                        continue;
+                    }
+                    let mut img = image::RgbImage::new(w, h);
+                    let seed = i as u32;
+                    for (x, y, p) in img.enumerate_pixels_mut() {
+                        // Broad shapes with a little grain on top: white noise would not compress
+                        // and would give every file the wrong size and the wrong decode cost.
+                        let fx = x as f32 / w as f32;
+                        let fy = y as f32 / h as f32;
+                        let phase = seed as f32 * 0.37;
+                        let a = ((fx * 6.0 + phase).sin() * (fy * 4.0 - phase).cos() + 1.0) * 96.0;
+                        let b = ((fx * 2.0 - fy * 3.0 + phase).sin() + 1.0) * 110.0;
+                        let grain = (((x * 31 + y * 17 + seed * 7) % 17) as f32) - 8.0;
+                        *p = image::Rgb([
+                            (a + grain + 40.0).clamp(0.0, 255.0) as u8,
+                            (b + grain * 0.5 + 20.0).clamp(0.0, 255.0) as u8,
+                            (255.0 - a * 0.7 + grain).clamp(0.0, 255.0) as u8,
+                        ]);
+                    }
+                    if let Err(e) = img.save(&path) {
+                        *err.lock().unwrap() = Some(std::io::Error::other(e));
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    match err.into_inner().unwrap() {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 fn deep(dir: &Path) -> std::io::Result<()> {
@@ -306,7 +357,45 @@ pub fn run(dir: &Path) -> Value {
         }
         results.insert(name, Value::Obj(measure(&path)));
     }
-    Value::obj().s("arch", std::env::consts::ARCH).s("os", std::env::consts::OS).u("at", crate::ops::unix_now()).s("version", env!("CARGO_PKG_VERSION")).v("results", Value::Obj(results)).done()
+    Value::obj()
+        .s("arch", std::env::consts::ARCH)
+        .s("os", std::env::consts::OS)
+        .u("at", crate::ops::unix_now())
+        .s("version", env!("CARGO_PKG_VERSION"))
+        .s("build", env!("KIKI_BUILD"))
+        .v("machine", machine(dir))
+        .v("results", Value::Obj(results))
+        .done()
+}
+
+/// Which machine produced these numbers. A baseline without it is a row of figures nobody can
+/// reproduce: a listing benchmark measures the filesystem underneath it as much as the code.
+fn machine(dir: &Path) -> Value {
+    let cpu = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|t| t.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string())))
+        .unwrap_or_default();
+    let mem_kb = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|t| t.lines().find(|l| l.starts_with("MemTotal:")).and_then(|l| l.split_whitespace().nth(1).and_then(|n| n.parse::<u64>().ok())))
+        .unwrap_or(0);
+    let kernel = std::process::Command::new("uname").arg("-r").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    // The filesystem the trees were generated on, which is half of what a listing benchmark measures.
+    let fs = std::process::Command::new("findmnt")
+        .args(["-no", "FSTYPE", "-T"])
+        .arg(dir)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    Value::obj()
+        .s("cpu", cpu)
+        .u("cores", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0) as u64)
+        .u("memMb", mem_kb / 1024)
+        .s("kernel", kernel)
+        .s("fs", fs)
+        .s("dir", dir.to_string_lossy())
+        .done()
 }
 
 fn run_child(path: &Path) -> Option<Value> {

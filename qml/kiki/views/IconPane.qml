@@ -41,6 +41,15 @@ Item {
         }
     }
 
+    // Right-clicking between the icons asks for the folder's menu, not nothing at all.
+    MouseArea {
+        anchors.fill: grid; z: -1
+        acceptedButtons: Qt.RightButton
+        onClicked: mouse => {
+            root.pane.selection.clear()
+            root.contextMenu(-1, mapToItem(null, mouse.x, mouse.y))
+        }
+    }
     GridView {
         id: grid
         UI.NaturalScroll { }
@@ -98,7 +107,7 @@ Item {
                     Item {
                         id: iconBox
                         anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
-                        UI.KindIcon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; kind: cell.row ? cell.row.kind : "file"; size: root.iconSize; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
+                        UI.KindIcon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; kind: cell.row ? cell.row.kind : ""; size: root.iconSize; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
                         Image { id: thumb; visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                         Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }

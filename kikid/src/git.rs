@@ -96,18 +96,27 @@ pub fn invalidate(dir: &Path) {
     status_cache().lock().unwrap().remove(dir);
 }
 
+/// Every git command kiki runs starts here, never with a bare `Command::new("git")`.
+///
+/// A repository's own `.git/config` can name programs that git then runs: `core.fsmonitor` is
+/// executed during `status`, and the `post-index-change` hook under `core.hooksPath` runs when
+/// status refreshes the index. `safe.directory` is no protection — it only refuses repositories
+/// owned by *another* user, and a repository the user downloaded and unpacked is owned by the
+/// user. Since kiki runs status for any folder it lists, walking into an unpacked repository
+/// would otherwise be enough to run whatever that repository asked for. Both keys are emptied
+/// here; `GIT_OPTIONAL_LOCKS=0` stops us taking `index.lock` in someone else's working tree,
+/// which also keeps status from refreshing the index at all.
+fn git(dir: &Path) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=", "-c", "core.hooksPath=/var/empty"]).env("GIT_OPTIONAL_LOCKS", "0").stdin(Stdio::null()).stderr(Stdio::null());
+    c
+}
+
 /// Runs status for `dir` (scoped with a pathspec) and caches it. Returns None outside a repository.
 pub fn status(dir: &Path) -> Option<()> {
     let root = repo_root(dir)?;
     let start = Instant::now();
-    let out = Command::new("git")
-        .args(["-C"])
-        .arg(dir)
-        .args(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--ignored=matching", "--", "."])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let out = git(dir).args(["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all", "--ignored=matching", "--", "."]).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -245,13 +254,9 @@ pub fn file_json(path: &Path) -> Value {
     let Some(root) = repo_root(dir) else { return Value::Null };
     let e = state_for(dir, &name, path.is_dir()).unwrap_or(Entry { state: State::Clean, staged: false });
     let branch = std::fs::read_to_string(root.join(".git/HEAD")).ok().and_then(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string));
-    let last = Command::new("git")
-        .arg("-C")
-        .arg(&root)
+    let last = git(&root)
         .args(["log", "-1", "--format=%H%x00%h%x00%an%x00%at%x00%s", "--"])
         .arg(path)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
         .output()
         .ok()
         .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { None })
@@ -277,6 +282,48 @@ mod tests {
     fn git(dir: &Path, args: &[&str]) {
         let st = Command::new("git").arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
         assert!(st.success(), "git {args:?}");
+    }
+
+    /// A repository can name programs in its own config, and git runs them: `core.fsmonitor`
+    /// during a status, and the `post-index-change` hook under `core.hooksPath` when the index is
+    /// refreshed. kiki runs status for every folder it lists, so without the flags in `git()`,
+    /// walking into an unpacked repository would run whatever it asked for.
+    #[test]
+    fn a_repository_cannot_run_its_own_config() {
+        if !crate::openin::on_path("git") {
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("kiki-git-hostile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("hooks")).unwrap();
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.email", "t@t"]);
+        git(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("a.txt"), b"a").unwrap();
+        git(&d, &["add", "a.txt"]);
+        git(&d, &["commit", "-qm", "one"]);
+
+        let fsmonitor = d.join("fsmonitor.sh");
+        let hook = d.join("hooks/post-index-change");
+        let marks = (d.join("ran-fsmonitor"), d.join("ran-hook"));
+        for (script, mark) in [(&fsmonitor, &marks.0), (&hook, &marks.1)] {
+            std::fs::write(script, format!("#!/bin/sh\ntouch {}\nexit 1\n", mark.display())).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        git(&d, &["config", "core.fsmonitor", &fsmonitor.to_string_lossy()]);
+        git(&d, &["config", "core.hooksPath", &d.join("hooks").to_string_lossy()]);
+
+        invalidate(&d);
+        let _ = status(&d);
+        assert!(!marks.0.exists(), "core.fsmonitor ran: listing a folder executed the repository's config");
+        assert!(!marks.1.exists(), "the post-index-change hook ran: listing a folder executed the repository's hooks");
+        // The status itself still worked — the guard must not cost us the overlay.
+        assert!(state_for(&d, "a.txt", false).is_some() || repo_root(&d).is_some());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

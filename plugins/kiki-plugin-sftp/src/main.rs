@@ -49,6 +49,8 @@ struct Session {
     raw: Arc<RawSftpSession>,
     fast: Mutex<FastScan>,
     fingerprint: Option<String>,
+    /// `~/.ssh/known_hosts` already vouches for this server's key.
+    known: bool,
 }
 
 impl Session {
@@ -60,6 +62,43 @@ impl Session {
 struct ClientHandler {
     pinned: Option<String>,
     seen: Arc<Mutex<Option<String>>>,
+    /// Why a key was refused, so the failure can say so rather than "connection closed".
+    refused: Arc<Mutex<Option<String>>>,
+    /// Set when `~/.ssh/known_hosts` already vouches for this key: the user has verified this
+    /// host with ssh, so kiki has no reason to ask them a second time.
+    known: Arc<Mutex<bool>>,
+    host: String,
+    port: u16,
+}
+
+/// What `~/.ssh/known_hosts` (or `KIKI_KNOWN_HOSTS`) says about a host key.
+enum KnownHosts {
+    /// Listed, and this is the key.
+    Matches,
+    /// Listed with a different key of the same kind — ssh's "identification has changed".
+    Changed(usize),
+    /// Not listed, unreadable, or listed only with other algorithms.
+    Unknown,
+}
+
+fn known_hosts_path() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("KIKI_KNOWN_HOSTS") {
+        return std::path::PathBuf::from(p);
+    }
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".ssh/known_hosts")
+}
+
+fn known_hosts_says(host: &str, port: u16, key: &russh::keys::PublicKey) -> KnownHosts {
+    let path = known_hosts_path();
+    if !path.exists() {
+        return KnownHosts::Unknown;
+    }
+    match russh::keys::known_hosts::check_known_hosts_path(host, port, key, &path) {
+        Ok(true) => KnownHosts::Matches,
+        Ok(false) => KnownHosts::Unknown,
+        Err(russh::keys::Error::KeyChanged { line }) => KnownHosts::Changed(line),
+        Err(_) => KnownHosts::Unknown,
+    }
 }
 
 impl client::Handler for ClientHandler {
@@ -68,10 +107,31 @@ impl client::Handler for ClientHandler {
     async fn check_server_key(&mut self, key: &russh::keys::PublicKey) -> std::result::Result<bool, Self::Error> {
         let fp = key.fingerprint(HashAlg::Sha256).to_string();
         *self.seen.lock().unwrap() = Some(fp.clone());
-        Ok(match &self.pinned {
-            Some(p) => p == &fp,
-            None => true, // trust on first use; the fingerprint is returned to kiki, which pins it in config
-        })
+        // A key the user has already accepted for this location: it must be that key and no other.
+        if let Some(p) = &self.pinned {
+            if p == &fp {
+                return Ok(true);
+            }
+            *self.refused.lock().unwrap() = Some(format!("this location trusts {p}"));
+            return Ok(false);
+        }
+        // Nothing pinned yet, so ask ssh. `known_hosts` is a verification the user has already
+        // done once, by hand, and it is the same file every other ssh client on this machine
+        // checks — kiki honouring it means no second question for a host ssh already knows, and
+        // a hard refusal when ssh itself would refuse.
+        match known_hosts_says(&self.host, self.port, key) {
+            KnownHosts::Matches => {
+                *self.known.lock().unwrap() = true;
+                Ok(true)
+            }
+            KnownHosts::Changed(line) => {
+                *self.refused.lock().unwrap() = Some(format!("~/.ssh/known_hosts records a different key for this host (line {line})"));
+                Ok(false)
+            }
+            // Unknown to ssh as well. The key is reported back with the reply; kiki shows it to
+            // the user, and once they accept it, saves it as `trustedFingerprint`.
+            KnownHosts::Unknown => Ok(true),
+        }
     }
 }
 
@@ -82,9 +142,140 @@ struct Sftp {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
 
+/// Answer every prompt of a keyboard-interactive exchange with the password. Bounded: a server
+/// that keeps asking is not going to be satisfied by the same answer.
+async fn keyboard_interactive(handle: &mut Handle<ClientHandler>, user: &str, password: &str) -> Result<bool> {
+    use russh::client::KeyboardInteractiveAuthResponse as R;
+    let mut reply = handle.authenticate_keyboard_interactive_start(user, None::<String>).await.map_err(net)?;
+    for _ in 0..4 {
+        match reply {
+            R::Success => return Ok(true),
+            R::Failure { .. } => return Ok(false),
+            R::InfoRequest { prompts, .. } => {
+                let answers = prompts.iter().map(|_| password.to_string()).collect();
+                reply = handle.authenticate_keyboard_interactive_respond(answers).await.map_err(net)?;
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Say what was offered and what could not be, so "authentication failed" is something to act on.
+fn auth_failure(tried: &[String], unusable: &[String], password_tried: bool) -> String {
+    let mut offered: Vec<String> = Vec::new();
+    match tried.len() {
+        0 => {}
+        1 => offered.push(format!("the key {}", tried[0])),
+        n => offered.push(format!("{n} keys ({})", tried.join(", "))),
+    }
+    if password_tried {
+        offered.push("the password".to_string());
+    }
+    let mut msg = if offered.is_empty() {
+        "nothing to sign in with: no usable key was found and no password was given".to_string()
+    } else {
+        format!("the server refused {}", offered.join(" and "))
+    };
+    if !unusable.is_empty() {
+        msg.push_str(&format!(" — could not use {}", unusable.join("; ")));
+    }
+    msg
+}
+
 fn key(location: &str, role: &str) -> String {
     format!("{location}\u{0}{role}")
 }
+
+// ---------------------------------------------------------------- keys on this machine
+
+/// A private key found in `~/.ssh`.
+#[derive(Debug, Clone, PartialEq)]
+struct FoundKey {
+    path: String,
+    /// "ED25519", "RSA", … from the `.pub` beside it when there is one.
+    algorithm: String,
+    comment: String,
+    /// Needs a passphrase before it can be used.
+    encrypted: bool,
+}
+
+impl FoundKey {
+    /// One line for the form: `id_ed25519 · ED25519 · gideon@omarchy · passphrase`.
+    fn label(&self) -> String {
+        let name = self.path.rsplit('/').next().unwrap_or(&self.path);
+        let mut parts = vec![name.to_string()];
+        if !self.algorithm.is_empty() {
+            parts.push(self.algorithm.clone());
+        }
+        if !self.comment.is_empty() {
+            parts.push(self.comment.clone());
+        }
+        if self.encrypted {
+            parts.push("passphrase".to_string());
+        }
+        parts.join(" · ")
+    }
+}
+
+/// `KIKI_SSH_DIR` stands in for `~/.ssh` under test.
+fn ssh_dir() -> std::path::PathBuf {
+    std::env::var("KIKI_SSH_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".ssh"))
+}
+
+/// Is this file a private key? By what is in it, not by its name: people call keys anything.
+fn looks_like_private_key(path: &std::path::Path) -> bool {
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut head = [0u8; 64];
+    let n = f.read(&mut head).unwrap_or(0);
+    let head = String::from_utf8_lossy(&head[..n]);
+    head.starts_with("-----BEGIN ") && head.contains("PRIVATE KEY-----")
+}
+
+/// Every private key in the ssh directory, the usual names first and in ssh's own order of
+/// preference, then the rest by name. Never follows into subdirectories, never reads a file
+/// larger than a key could be.
+fn discover_keys() -> Vec<FoundKey> {
+    let dir = ssh_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
+    let mut found: Vec<FoundKey> = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        let name = e.file_name().to_string_lossy().to_string();
+        let Ok(meta) = e.metadata() else { continue };
+        if !meta.is_file() || meta.len() > 64 * 1024 || name.ends_with(".pub") || !looks_like_private_key(&path) {
+            continue;
+        }
+        // `<algorithm> <base64> <comment…>`, read as text: russh's loader drops the comment, and
+        // the comment is how anyone tells their keys apart.
+        let (mut algorithm, mut comment) = (String::new(), String::new());
+        if let Ok(public) = std::fs::read_to_string(path.with_file_name(format!("{name}.pub"))) {
+            let mut parts = public.trim().splitn(3, char::is_whitespace);
+            algorithm = parts.next().unwrap_or("").trim_start_matches("ssh-").trim_start_matches("ecdsa-sha2-").to_uppercase();
+            let _blob = parts.next();
+            comment = parts.next().unwrap_or("").trim().to_string();
+        }
+        let encrypted = matches!(russh::keys::load_secret_key(&path, None), Err(russh::keys::Error::KeyIsEncrypted));
+        found.push(FoundKey { path: path.to_string_lossy().to_string(), algorithm, comment, encrypted });
+    }
+    const USUAL: [&str; 4] = ["id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"];
+    let rank = |k: &FoundKey| { let n = k.path.rsplit('/').next().unwrap_or(""); USUAL.iter().position(|u| *u == n).unwrap_or(USUAL.len()) };
+    found.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.path.cmp(&b.path)));
+    found
+}
+
+/// The keys to offer the server: exactly the ones the location names (one path per line, `~`
+/// allowed), and none when it names none — that is a password-only location. Which keys to use is
+/// the user's choice, made in the form (which ticks the first key found to begin with); the plugin
+/// does not go looking for others. A saved location from before this field was a list holds a
+/// single path, which is a list of one.
+fn keys_to_try(identity: &str) -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    identity.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| if let Some(rest) = l.strip_prefix('~') { format!("{home}{rest}") } else { l.to_string() }).collect()
+}
+
+/// sshd hangs up after `MaxAuthTries` failures (6 by default), and every key offered is one. Stop
+/// short of that so the password still gets its turn.
+const MAX_KEYS_OFFERED: usize = 4;
 
 fn cfg<'a>(config: &'a Value, k: &str) -> &'a str {
     config.str_field(k).unwrap_or("")
@@ -342,6 +533,15 @@ fn parse_stat_record(buf: &mut Vec<u8>, root: &str, recursive: bool) -> Option<E
 }
 
 impl Handler for Sftp {
+    /// The `keys` field: every private key in `~/.ssh`, found afresh each time the form asks,
+    /// so a key made a minute ago is there without restarting anything.
+    fn browse(&self, field: &str, _config: &Value, _secrets: &Value) -> Result<Vec<(String, String)>> {
+        if field != "identityFile" {
+            return Err(PluginError::unsupported());
+        }
+        Ok(discover_keys().into_iter().map(|k| { let label = k.label(); (k.path, label) }).collect())
+    }
+
     fn describe(&self) -> Describe {
         Describe {
             scheme: "sftp",
@@ -352,13 +552,19 @@ impl Handler for Sftp {
                 sdk::field("host", "Host", "text", true, None),
                 sdk::field("port", "Port", "port", true, Some("22")),
                 sdk::field("username", "Username", "text", true, None),
-                sdk::field("identityFile", "Identity file", "file", false, Some("~/.ssh/id_ed25519")),
-                sdk::field("passphrase", "Key passphrase", "password", false, None),
-                sdk::field("password", "Password (if no key)", "password", false, None),
-                sdk::field("remotePath", "Remote path", "path", true, Some("/")),
-                sdk::field("localPath", "Local path", "path", false, None),
+                // `keys`: the form lists what `browse` finds, ticks the first, and lets any
+                // number be ticked; none ticked is a password-only location. The password is an
+                // equal, not a fallback of last resort.
+                // Two tabs, one way in: the form sends only the chosen tab's fields, and says
+                // which it was in `auth`.
+                sdk::field_in("Password", "password", "Password", "password", false, None),
+                sdk::field_in("Key", "identityFile", "Keys", "keys", false, None),
+                sdk::field_in("Key", "passphrase", "Key passphrase", "password", false, None),
+                // Where it is, apart from how to get in.
+                sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", true, Some("/"))),
+                sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
             ],
-            defaults: Value::obj().s("port", "22").s("remotePath", "/").s("identityFile", "~/.ssh/id_ed25519").done(),
+            defaults: Value::obj().s("port", "22").s("remotePath", "/").done(),
             secret_fields: vec!["passphrase", "password"],
             detector_upload: "sizeMtime",
             detector_download: "sizeMtime",
@@ -384,43 +590,73 @@ impl Handler for Sftp {
     fn connect(&self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value> {
         let k = key(location, role);
         if let Some(s) = self.sessions.lock().unwrap().get(&k) {
-            return Ok(Value::obj().opt_s("fingerprint", s.fingerprint.as_deref()).v("banner", Value::Null).done());
+            return Ok(Value::obj().opt_s("fingerprint", s.fingerprint.as_deref()).b("knownHost", s.known).v("banner", Value::Null).done());
         }
         let host = cfg(config, "host").to_string();
         let port: u16 = cfg(config, "port").parse().unwrap_or(22);
         let user = cfg(config, "username").to_string();
-        let identity = cfg(config, "identityFile").replace('~', &std::env::var("HOME").unwrap_or_default());
+        // `auth` is the tab the location was saved from: "password" offers no key, "key" sends
+        // no password. A location from before there were tabs has neither, and gets both.
+        let auth = cfg(config, "auth").to_lowercase();
+        let candidates = if auth == "password" { Vec::new() } else { keys_to_try(cfg(config, "identityFile")) };
         let pinned = config.str_field("trustedFingerprint").map(str::to_string);
         let seen = Arc::new(Mutex::new(None));
-        let password = secrets.str_field("password").map(str::to_string);
+        let refused: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let known = Arc::new(Mutex::new(false));
+        let password = if auth == "key" { None } else { secrets.str_field("password").map(str::to_string) };
         let passphrase = secrets.str_field("passphrase").map(str::to_string);
-        let (handle, sftp, raw) = self.rt.block_on(async {
+        let result = self.rt.block_on(async {
             let config = Arc::new(client::Config { inactivity_timeout: Some(Duration::from_secs(300)), keepalive_interval: Some(Duration::from_secs(30)), ..Default::default() });
-            let handler = ClientHandler { pinned: pinned.clone(), seen: Arc::clone(&seen) };
+            let handler = ClientHandler { pinned: pinned.clone(), seen: Arc::clone(&seen), refused: Arc::clone(&refused), known: Arc::clone(&known), host: host.clone(), port };
             let mut handle = client::connect(config, (host.as_str(), port), handler).await.map_err(|e| PluginError::network(format!("{host}:{port}: {e}")))?;
+            // Keys first, then the password, then the password again as the answer to a
+            // keyboard-interactive prompt — which is how many servers ask for it (PAM) while
+            // refusing the plain `password` method outright.
             let mut authed = false;
-            if !identity.is_empty() && std::path::Path::new(&identity).exists() {
-                match russh::keys::load_secret_key(&identity, passphrase.as_deref()) {
-                    Ok(key) => {
-                        let hash = handle.best_supported_rsa_hash().await.map_err(net)?.flatten();
-                        let r = handle.authenticate_publickey(&user, PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await.map_err(net)?;
-                        authed = r.success();
-                    }
-                    Err(e) => {
-                        if password.is_none() {
-                            return Err(PluginError::invalid("identityFile", format!("cannot load key: {e}")));
-                        }
-                    }
+            let mut tried: Vec<String> = Vec::new();
+            let mut unusable: Vec<String> = Vec::new();
+            for path in candidates.iter() {
+                if authed || tried.len() >= MAX_KEYS_OFFERED {
+                    break;
                 }
+                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                if !std::path::Path::new(path).exists() {
+                    unusable.push(format!("{name}: no such file"));
+                    continue;
+                }
+                // Unencrypted keys load without the passphrase; only an encrypted one needs it,
+                // so one passphrase field serves a mix of both.
+                let key = match russh::keys::load_secret_key(path, None) {
+                    Ok(k) => k,
+                    Err(russh::keys::Error::KeyIsEncrypted) => match russh::keys::load_secret_key(path, passphrase.as_deref()) {
+                        Ok(k) => k,
+                        Err(_) => {
+                            unusable.push(format!("{name}: {}", if passphrase.is_some() { "wrong passphrase" } else { "needs its passphrase" }));
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        unusable.push(format!("{name}: {e}"));
+                        continue;
+                    }
+                };
+                let hash = handle.best_supported_rsa_hash().await.map_err(net)?.flatten();
+                let r = handle.authenticate_publickey(&user, PrivateKeyWithHashAlg::new(Arc::new(key), hash)).await.map_err(net)?;
+                authed = r.success();
+                tried.push(name);
             }
+            let mut password_tried = false;
             if !authed {
                 if let Some(pw) = &password {
-                    let r = handle.authenticate_password(&user, pw).await.map_err(net)?;
-                    authed = r.success();
+                    password_tried = true;
+                    authed = handle.authenticate_password(&user, pw).await.map_err(net)?.success();
+                    if !authed {
+                        authed = keyboard_interactive(&mut handle, &user, pw).await?;
+                    }
                 }
             }
             if !authed {
-                return Err(PluginError::auth("authentication failed"));
+                return Err(PluginError::auth(auth_failure(&tried, &unusable, password_tried)));
             }
             let ch = handle.channel_open_session().await.map_err(net)?;
             ch.request_subsystem(true, "sftp").await.map_err(net)?;
@@ -430,15 +666,31 @@ impl Handler for Sftp {
             let raw = RawSftpSession::new(ch2.into_stream());
             raw.init().await.map_err(sftp_err)?;
             Ok::<_, PluginError>((handle, sftp, Arc::new(raw)))
-        })?;
+        });
+        // A refused host key surfaces from russh as a closed connection; say what really happened.
+        let (handle, sftp, raw) = match result {
+            Ok(v) => v,
+            Err(e) => {
+                // A refused host key surfaces from russh as a closed connection; say what really happened.
+                let why = refused.lock().unwrap().clone();
+                return match why {
+                    Some(why) => {
+                        let got = seen.lock().unwrap().clone().unwrap_or_default();
+                        Err(PluginError::auth(format!("the host key of {host} has changed — it offered {got}, and {why}. Verify the server before connecting again.")))
+                    }
+                    None => Err(e),
+                };
+            }
+        };
         let fingerprint = seen.lock().unwrap().clone();
-        let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone() };
+        let vouched = *known.lock().unwrap();
+        let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone(), known: vouched };
         if role == "browse" {
             let f = self.probe(&sess);
             *sess.fast.lock().unwrap() = f;
         }
         self.sessions.lock().unwrap().insert(k, Arc::new(sess));
-        Ok(Value::obj().opt_s("fingerprint", fingerprint.as_deref()).v("banner", Value::Null).done())
+        Ok(Value::obj().opt_s("fingerprint", fingerprint.as_deref()).b("knownHost", vouched).v("banner", Value::Null).done())
     }
 
     fn disconnect(&self, location: &str, role: &str) {
@@ -581,5 +833,113 @@ fn main() {
     let h = Sftp { rt, sessions: Mutex::new(HashMap::new()) };
     if let Err(e) = sdk::run(&h) {
         eprintln!("kiki-plugin-sftp: {e}");
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+    use std::process::Command;
+
+    /// `KIKI_SSH_DIR` and `HOME` are process-wide: one test at a time.
+    static ENV: Mutex<()> = Mutex::new(());
+
+    fn keygen(dir: &std::path::Path, name: &str, kind: &str, passphrase: &str, comment: &str) -> bool {
+        Command::new("ssh-keygen").args(["-q", "-t", kind, "-N", passphrase, "-C", comment, "-f"]).arg(dir.join(name)).status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    fn temp_ssh_dir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("kiki-sftp-keys-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn finds_every_private_key_and_nothing_else() {
+        let _g = ENV.lock().unwrap_or_else(|p| p.into_inner());
+        let d = temp_ssh_dir("find");
+        if !keygen(&d, "id_ed25519", "ed25519", "", "me@here") {
+            eprintln!("ssh-keygen not available; skipped");
+            return;
+        }
+        assert!(keygen(&d, "work-laptop", "ed25519", "hunter2", "work"));
+        assert!(keygen(&d, "id_rsa", "rsa", "", ""));
+        std::fs::write(d.join("known_hosts"), "example.com ssh-ed25519 AAAA\n").unwrap();
+        std::fs::write(d.join("config"), "Host *\n").unwrap();
+        std::fs::create_dir(d.join("sockets")).unwrap();
+        std::env::set_var("KIKI_SSH_DIR", &d);
+        let found = discover_keys();
+        std::env::remove_var("KIKI_SSH_DIR");
+
+        let names: Vec<&str> = found.iter().map(|k| k.path.rsplit('/').next().unwrap()).collect();
+        // The usual names first, in ssh's order of preference; the rest after, by name. No
+        // `.pub`, no known_hosts, no config, no directory.
+        assert_eq!(names, vec!["id_ed25519", "id_rsa", "work-laptop"]);
+        assert_eq!((found[0].algorithm.as_str(), found[0].comment.as_str(), found[0].encrypted), ("ED25519", "me@here", false));
+        assert!(found[2].encrypted, "a key with a passphrase says so");
+        assert_eq!(found[2].label(), "work-laptop · ED25519 · work · passphrase");
+        assert_eq!(found[1].label(), "id_rsa · RSA");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_ssh_directory_is_no_keys_not_an_error() {
+        let _g = ENV.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("KIKI_SSH_DIR", "/nonexistent/kiki/ssh");
+        assert!(discover_keys().is_empty());
+        std::env::remove_var("KIKI_SSH_DIR");
+    }
+
+    #[test]
+    fn only_named_keys_are_offered_and_none_named_is_none() {
+        let _g = ENV.lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var("HOME").unwrap_or_default();
+        // One path per line; `~` expands; blank lines are nothing; a saved location from before
+        // the field was a list holds one path, which is a list of one.
+        assert_eq!(keys_to_try("~/.ssh/a\n\n  /etc/keys/b  \n"), vec![format!("{home}/.ssh/a"), "/etc/keys/b".to_string()]);
+        assert_eq!(keys_to_try("~/.ssh/id_ed25519"), vec![format!("{home}/.ssh/id_ed25519")]);
+
+        // None named is none offered — a password-only location — however many keys there are
+        // to be found: choosing is the form's job, not something done behind the user's back.
+        let d = temp_ssh_dir("none");
+        if keygen(&d, "id_ed25519", "ed25519", "", "") {
+            std::env::set_var("KIKI_SSH_DIR", &d);
+            assert!(keys_to_try("").is_empty());
+            std::env::remove_var("KIKI_SSH_DIR");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_failure_says_what_was_offered_and_what_could_not_be() {
+        assert_eq!(auth_failure(&[], &[], false), "nothing to sign in with: no usable key was found and no password was given");
+        assert_eq!(auth_failure(&["id_ed25519".into()], &[], false), "the server refused the key id_ed25519");
+        assert_eq!(auth_failure(&[], &[], true), "the server refused the password");
+        assert_eq!(
+            auth_failure(&["id_ed25519".into(), "id_rsa".into()], &["work: needs its passphrase".into()], true),
+            "the server refused 2 keys (id_ed25519, id_rsa) and the password — could not use work: needs its passphrase"
+        );
+    }
+
+    #[test]
+    fn the_form_offers_keys_and_a_password_as_equals() {
+        let sftp = Sftp { rt: tokio::runtime::Builder::new_current_thread().build().unwrap(), sessions: Mutex::new(HashMap::new()) };
+        let form = sftp.describe().form;
+        let field = |k: &str| form.iter().find(|f| f.str_field("key") == Some(k)).unwrap_or_else(|| panic!("no {k} field")).clone();
+        assert_eq!(field("identityFile").str_field("kind"), Some("keys"));
+        assert_eq!(field("password").str_field("label"), Some("Password"));
+        assert_eq!(field("password").str_field("kind"), Some("password"));
+        // Password on one tab, everything about keys on the other; the username on neither — a
+        // key needs a username as much as a password does.
+        assert_eq!(field("password").str_field("group"), Some("Password"));
+        assert_eq!(field("identityFile").str_field("group"), Some("Key"));
+        assert_eq!(field("passphrase").str_field("group"), Some("Key"));
+        assert_eq!(field("username").str_field("group"), None);
+        // The two paths are a page of their own; everything about connecting is on the first.
+        assert_eq!(field("remotePath").str_field("page"), Some("Locations"));
+        assert_eq!(field("localPath").str_field("page"), Some("Locations"));
+        assert_eq!(field("host").str_field("page"), None);
+        assert!(sftp.describe().defaults.str_field("identityFile").is_none(), "no key is assumed by the plugin: the form ticks the first one found");
     }
 }

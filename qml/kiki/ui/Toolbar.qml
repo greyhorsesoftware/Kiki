@@ -4,6 +4,12 @@ import ".." as Kiki
 Rectangle {
     id: bar
     property Kiki.Pane pane
+    /// The pane the PATH shows and drives; the focused one unless the window says otherwise.
+    property Kiki.Pane crumbPane: pane
+    /// Side by side each pane carries its own path, over its own listing, so there are two and
+    /// neither is "the window's". The one up here steps aside — it keeps its room, so the
+    /// buttons do not slide about when the layout is toggled.
+    readonly property bool pathShown: !split
     property string home: ""
     property bool inspector: false
     property bool split: false
@@ -15,10 +21,14 @@ Rectangle {
     property var locations: []
     property var repo: null
     signal viewMenu()
+    /// A path chosen in the breadcrumb. The window decides which pane takes it.
+    signal navigate(string uri)
     signal pathMenu()
     signal settings()
     property alias breadcrumb: crumb
     property alias viewButton: viewButton
+    property alias sideBySideButton: sideBySideBtn
+    property alias mirrorButton: mirrorBtn
     property alias gearButton: gearBtn
     property alias searchButton: searchBtn
     // Favorites panel toggle (far left).
@@ -29,15 +39,40 @@ Rectangle {
     clip: true
     Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
 
+
+    // Side by side the path has stepped aside, and its room is where the one thing the layout is
+    // for goes: the line with an arrow pointing each way starts a mirror run. It stands over the
+    // line between the two panes — `mirrorCenterX`, which the window knows and the bar does not:
+    // the sidebar pushes the panes right and the line can be dragged, so the middle of the BAR is
+    // not where it is. (Tried standing it over the middle of the panes instead, so it would stay
+    // put during a drag: with a remembered ratio of 0.48 it sat 22 px off the line and simply
+    // looked wrong.) Kept inside the path's room so it can never land on the buttons either side.
+    property real mirrorCenterX: width / 2
+    ToggleButton {
+        id: mirrorBtn
+        objectName: "toolbar-mirror"
+        visible: bar.split
+        z: 2
+        anchors.verticalCenter: parent.verticalCenter
+        x: {
+            const want = bar.mirrorCenterX - width / 2
+            const lo = row.x + crumb.x, hi = row.x + crumb.x + crumb.width - width
+            return hi >= lo ? Math.max(lo, Math.min(hi, want)) : want
+        }
+        flat: true; iconSize: 20
+        icon: "mirror"; active: bar.mirror
+        tip: "Mirror… (Ctrl+M)"
+        onClicked: bar.toggleMirror()
+    }
     Row {
         id: row
         anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8; spacing: 4
         // The buttons keep their natural size and the path takes the rest, so the toolbar fits
         // the window instead of spilling over the sidebar. The view button is the first to go
         // when the window is too narrow for it.
-        readonly property int fixedCount: 3 + (viewButton.visible ? 1 : 0)
+        readonly property int fixedCount: 3 + (viewButton.visible ? 1 : 0) + (sideBySideBtn.visible ? 1 : 0)
         readonly property int fixedWidth: sidebarBtn.width + (viewButton.visible ? viewButton.width : 0)
-            + searchBtn.width + gearBtn.width
+            + (sideBySideBtn.visible ? sideBySideBtn.width : 0) + searchBtn.width + gearBtn.width
         readonly property int freeWidth: Math.max(0, width - fixedWidth - spacing * fixedCount)
         // Open, the field grows out of the glass and the path gives up the room; it never takes
         // the path's place entirely.
@@ -53,9 +88,11 @@ Rectangle {
             repo: bar.repo
             anchors.verticalCenter: parent.verticalCenter
             visible: row.crumbWidth >= 80
+            opacity: bar.pathShown ? 1 : 0
+            enabled: bar.pathShown
             width: row.crumbWidth
-            uri: bar.pane.uri; home: bar.home
-            onNavigate: uri => bar.pane.open(uri)
+            uri: bar.crumbPane ? bar.crumbPane.uri : ""; home: bar.home
+            onNavigate: uri => bar.navigate(uri)
             onPathMenu: bar.pathMenu()
         }
         ToggleButton {
@@ -63,6 +100,18 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             icon: "search"; tip: "Search everywhere (Ctrl+Shift+F)"
             onClicked: bar.toggleSearch()
+        }
+        // How many folders the window shows is a different question from how one folder is
+        // drawn, so it is a toggle of its own rather than a fifth entry in the view menu. Goes
+        // with the view button when the window is too narrow; Ctrl+4 still works.
+        ToggleButton {
+            id: sideBySideBtn
+            objectName: "side-by-side"
+            visible: bar.width >= 360
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "split"; active: bar.split
+            tip: (bar.split ? "Back to one pane" : "Side by Side") + " (Ctrl+4)"
+            onClicked: bar.toggleSplit()
         }
         ViewSwitcher { id: viewButton; visible: bar.width >= 360; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
         // A menu, not a button: the chevron says so, the way the view switcher does.

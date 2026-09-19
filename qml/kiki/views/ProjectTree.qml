@@ -51,7 +51,7 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             Row { anchors.fill: parent; anchors.leftMargin: 8; spacing: 8
                 UI.Icon { name: "search"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
-                TextInput { id: filterInput; width: parent.width - 30; height: parent.height; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12; selectionColor: Kiki.Theme.accent; onTextChanged: root.filter(text)
+                TextInput { id: filterInput; width: parent.width - 30; height: parent.height; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12; selectionColor: Kiki.Theme.accent; onTextChanged: root.filter(text)
                     Text { visible: !parent.text.length && !parent.activeFocus; text: "Filter tree"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } }
         }
         Item { width: 1; height: 6 }

@@ -20,7 +20,16 @@ Rectangle {
         nameInput.text = r.currentName || ""
         if (r.mode !== "open") nameInput.forceActiveFocus()
     }
-    function finish(uris) { visible = false; Kiki.Daemon.request("ChooserResult", { token: req.token, uris: uris }) }
+    /// The same chooser, asked by kiki itself rather than by another app through the portal:
+    /// `cb(uris)` gets the answer (null when cancelled) and nothing goes to the daemon.
+    ///     portal.pick({ mode: "open", directory: true, title: "Local folder", currentFolder: "/home/me" }, uris => …)
+    property var _local: null
+    function pick(r, cb) { _local = cb; open(r) }
+    function finish(uris) {
+        visible = false
+        if (_local) { const cb = _local; _local = null; cb(uris); return }
+        Kiki.Daemon.request("ChooserResult", { token: req.token, uris: uris })
+    }
     function accept() {
         if (req.mode === "saveFiles") { finish((req.files || []).map(n => pane.childUri(n))); return }
         if (req.mode === "open") {
@@ -74,7 +83,7 @@ Rectangle {
                     Text { visible: dlg.req && dlg.req.mode === "saveFiles"; anchors.verticalCenter: parent.verticalCenter; text: (dlg.req ? (dlg.req.files || []).length : 0) + " files will be saved here"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                     Rectangle {
                         visible: dlg.req && dlg.req.mode === "save"; anchors.verticalCenter: parent.verticalCenter; width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
-                        TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }
+                        TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }
                     }
                     Rectangle {
                         visible: dlg.req && dlg.req.filters && dlg.req.filters.length > 0; anchors.verticalCenter: parent.verticalCenter; height: 30; width: filterRow.width + 20; radius: 2; border.width: 1; border.color: Kiki.Theme.gutter; color: "transparent"

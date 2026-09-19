@@ -52,9 +52,46 @@ Every `_ms` and `_us` metric in the baseline is compared to the new run; a value
 
 ## Baselines and CI
 
-- `bench/baseline-<os>-<arch>.json` is checked in per machine class. The first is this planning Mac (`macos-aarch64`), useful only for relative comparison of daemon changes; the Omarchy x86_64 baseline is taken on the real machine during the plan-10 performance pass and is the one that matters.
+- `bench/baseline-<os>-<arch>.json` is checked in per machine class. `macos-aarch64` is the planning Mac, useful only for relative comparison of daemon changes. **`linux-x86_64` is the one that matters** and is now recorded (below); every baseline carries a `machine` object — CPU, cores, memory, kernel, filesystem and the directory the trees were generated in — because a listing benchmark measures the filesystem as much as the code.
 - The CI `bench` job (x86_64, after the test job) generates `all`, runs the suite on a release build, uploads the JSON as an artifact, and compares against `bench/baseline-linux-x86_64.json` with a 40 percent tolerance when that file exists. Runner speed varies between GitHub hosts, so the tolerance is loose and the point is catching order-of-magnitude regressions, not tuning.
 - Docs-only commits (`docs/**`, any `*.md`) do not run CI at all.
+
+## The Linux baseline (2026-09-19)
+
+`kikid bench gen all /home/gideon/kiki-bench && kikid bench run … --json`, build `6a6fc71+`, on
+12th Gen Intel Core i5-1245U, 12 cores, 15.3 GB, kernel 7.2.5-3-omarchy, **btrfs** (not tmpfs —
+the numbers are what a real home directory gives).
+
+| Metric | flat10k | flat200k | deep100k | photos |
+|---|---|---|---|---|
+| `phase1_first_chunk_ms` | 1.59 | 3.52 | 0.27 | 0.29 |
+| `phase1_done_ms` | 4.69 | **56.31** | 0.28 | 0.30 |
+| `window_ms` | 0.34 | 0.34 | 0.33 | 0.32 |
+| `window_meta_ms` | 1.30 | 1.27 | 1.35 | 0.98 |
+| `enrich_ms` | 4.15 | 93.57 | 0 | 0.19 |
+| `sort_name_ms` | 1.20 | 15.88 | 0 | 0.01 |
+| `rescan_ms` | 4.55 | 100.18 | 0.06 | 0.10 |
+| `patch_ms` | 0.09 | 0.62 | 0.04 | 0.06 |
+| `index_build_ms` | 2.07 | 38.27 | 22.36 | 0.06 |
+| `index_query_us` | 34.9 | 693.6 | 355.3 | 1.3 |
+| `mirror_scan_ms` | 9.69 | 213.77 | 88.09 | 0.21 |
+| `copy_mb_s` | 3140.9 | 3202.8 | 2985.1 | 2859.1 |
+| `rss_start_mb` | 3.4 | 3.5 | 3.4 | 3.6 |
+| `rss_listing_mb` | 7.1 | 27.0 | 5.9 | 7.9 |
+| `rss_peak_mb` | 10.2 | 87.4 | 35.7 | 9.2 |
+| `rss_after_release_mb` | 8.2 | **14.2** | 6.5 | 8.4 |
+
+Against the plan-01 acceptance:
+
+- **200,000 entries, phase 1 under 1 s** — 56 ms, eighteen times inside the budget. The macOS
+  baseline reads 1211 ms for the same profile; that gap is `getdents64` against macOS's readdir,
+  not a regression, and it is why a macOS-only baseline could not answer this.
+- **First chunk within a frame** — 3.52 ms at 200k.
+- **A `Window` at any offset under 5 ms** — 0.34 ms, flat across every profile.
+- **The `mallopt` question** (`rss_after_release_mb` within 5 MB of `rss_start_mb`): answered at
+  last, and the answer is *nearly*. Peak 87.4 MB for 200k entries comes back to 14.2 MB against a
+  3.5 MB start — about 84% of the peak returned to the kernel, with ~11 MB retained rather than
+  the 5 MB the plan hoped for. Good enough to keep the settings; not good enough to call closed.
 
 ## Shell half (Omarchy, plan 11 harness)
 

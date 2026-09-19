@@ -25,15 +25,17 @@ Item {
     readonly property bool useTheme: Kiki.Settings.view.icons === "system" && Kiki.Theme.iconTheme !== ""
 
     property string path: ""
-    /// One request per kind, size and theme; the daemon remembers the answer.
+    /// The theme's file for this kind. Answered from `Theme.iconPath` on the spot when that name
+    /// has been resolved before, so a rebuilt delegate draws the right icon in its first frame
+    /// rather than changing under the pointer a moment later.
     function resolve() {
         if (!useTheme) { path = ""; return }
         const want = themeNames[kind] || "text-x-generic"
-        const theme = Kiki.Theme.iconTheme
-        Kiki.Daemon.request("Icon", { name: want, theme: theme, size: Math.max(16, ki.size) }, (ok, err) => {
-            // A late answer for a theme we have already left is not ours to show.
-            if (theme !== Kiki.Theme.iconTheme) return
-            ki.path = ok && ok.path ? "file://" + ok.path : ""
+        ki.path = Kiki.Theme.iconPath(want, Math.max(16, ki.size), p => {
+            // The delegate may have been destroyed, or handed a different row, while the answer
+            // was in flight.
+            if (!ki) return
+            if (want === (ki.themeNames[ki.kind] || "text-x-generic")) ki.path = p
         })
     }
     Component.onCompleted: resolve()
@@ -50,12 +52,14 @@ Item {
 
     Icon {
         anchors.fill: parent
-        visible: ki.path === ""
+        // An unbound delegate (the row it will show has not arrived) draws nothing: guessing a
+        // kind here means every rebuilt row changes picture a frame later.
+        visible: ki.kind !== "" && ki.path === ""
         name: ki.kind; size: ki.size; color: ki.color
     }
     Image {
         anchors.fill: parent
-        visible: ki.path !== ""
+        visible: ki.kind !== "" && ki.path !== ""
         source: ki.path
         sourceSize: Qt.size(ki.size * 2, ki.size * 2)
         fillMode: Image.PreserveAspectFit

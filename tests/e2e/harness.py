@@ -107,12 +107,12 @@ class Shell:
         self.pid = pid
 
     def call(self, *args):
-        cmd = ["qs"]
+        # `--pid` belongs to `ipc`, not to `qs`: put it before the subcommand and every call
+        # quietly returns nothing.
+        cmd = ["qs", "ipc"] if self.pid else ["qs", "-p", self.config + "/shell.qml", "ipc"]
         if self.pid:
             cmd += ["--pid", str(self.pid)]
-        else:
-            cmd += ["-p", self.config + "/shell.qml"]
-        cmd += ["ipc", "call", "shell", *[str(a) for a in args]]
+        cmd += ["call", "shell", *[str(a) for a in args]]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         return r.stdout.strip()
 

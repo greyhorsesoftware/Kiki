@@ -42,7 +42,8 @@ QtObject {
         _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1
         // Open and the first Window leave in one write.
         d().request("Open", { lid: lid, uri: uri }, (ok, err) => {
-            if (err) { error = err.message; return }
+            // Nothing more is coming: say so, or the pane waits on a folder that never opened.
+            if (err) { error = err.message; done = true; return }
             cached = ok.cached
         })
         _request(0, Math.min(viewportCount + padAhead, maxRequest))
@@ -75,7 +76,8 @@ QtObject {
         if (!lid || n <= 0) return
         _reqFirst = first; _reqEnd = first + n
         d().request("Window", { lid: lid, first: first, count: n }, (ok, err) => {
-            if (err) { error = err.message; return }
+            // The Window that left with a failed Open only reports "no listing": keep the reason.
+            if (err) { if (!error) error = err.message; return }
             _apply(ok.first, ok.rows)
             count = ok.n; done = ok.done
         })

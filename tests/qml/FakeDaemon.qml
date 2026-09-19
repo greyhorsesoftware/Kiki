@@ -12,6 +12,13 @@ QtObject {
     property var tree: ({})
     /// Every request, in order: { type, fields }.
     property var sent: []
+    /// Icon name -> path. A name not listed gets a path made up from the theme, which is enough
+    /// for a test that only cares that the answer changes with the theme.
+    property var icons: ({})
+    /// With `defer` set, replies queue instead of firing, and `flush()` delivers them — the only
+    /// way to test what happens while an answer is still in flight.
+    property bool defer: false
+    property var _queued: []
 
     property int _nextLid: 1
     property var _open: ({})         // lid -> { uri, filter, hidden, role, order }
@@ -38,7 +45,10 @@ QtObject {
 
     // ---------------------------------------------------------------- assertions
 
-    function reset() { sent = [] }
+    function reset() { sent = []; _queued = [] }
+    /// Deliver every reply that `defer` held back.
+    function flush() { const q = _queued; _queued = []; for (const f of q) f() }
+    function pending() { return _queued.length }
     function requests(type) { return sent.filter(r => r.type === type) }
     function last(type) { const r = requests(type); return r.length ? r[r.length - 1] : null }
     function count(type) { return requests(type).length }
@@ -104,6 +114,12 @@ QtObject {
             if (cb) cb({}, undefined)
             _resetListing(f.lid)
             break
+        case "Icon": {
+            const known = icons[f.name]
+            const path = known === undefined ? "/icons/" + f.theme + "/" + f.size + "/" + f.name + ".png" : known
+            _answer(cb, { path: path })
+            break
+        }
         case "SeekName": {
             const rows = rowsOf(f.lid)
             let at = -1
@@ -124,6 +140,13 @@ QtObject {
             // a test that cares asserts on `sent`.
             if (cb) cb({}, undefined)
         }
+    }
+
+    /// One reply, now or when `flush()` says so.
+    function _answer(cb, ok) {
+        if (!cb) return
+        if (defer) _queued = _queued.concat([() => cb(ok, undefined)])
+        else cb(ok, undefined)
     }
 
     /// What the daemon sends after a sort, filter or refresh: the window is invalid, refetch.

@@ -135,6 +135,7 @@ Rectangle {
                     compact: sidebar.compact
                     keyed: sidebar.keyIndex === sidebar.keyOffset("location", index)
                     icon: "server"
+                    image: modelData.image || ""
                     label: modelData.name + " · " + modelData.plugin
                     active: sidebar.currentUri.startsWith(modelData.plugin + "://" + modelData.name)
                     onClicked: sidebar.openLocation(modelData)

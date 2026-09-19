@@ -101,6 +101,26 @@ pub fn field(key: &str, label: &str, kind: &str, required: bool, default: Option
     Value::obj().s("key", key).s("label", label).s("kind", kind).b("required", required).opt_s("default", default).v("options", Value::Null).v("group", Value::Null).done()
 }
 
+/// A field that belongs to one of the form's tabs. Fields sharing a `group` are shown together
+/// under a tab of that name, and only the chosen tab's fields are sent; which tab was chosen
+/// arrives in the config as `auth` (the group's name, lower-cased).
+pub fn field_in(group: &str, key: &str, label: &str, kind: &str, required: bool, default: Option<&str>) -> Value {
+    Value::obj().s("key", key).s("label", label).s("kind", kind).b("required", required).opt_s("default", default).v("options", Value::Null).s("group", group).done()
+}
+
+/// Put a field on one of the form's pages. Pages are sections of one form — "Connection",
+/// "Locations" — shown one at a time but ALL sent; they are not alternatives the way a `group`'s
+/// tabs are. A field with no page is on the first one.
+pub fn on_page(page: &str, field: Value) -> Value {
+    match field {
+        Value::Obj(mut m) => {
+            m.insert("page".to_string(), Value::Str(page.to_string()));
+            Value::Obj(m)
+        }
+        other => other,
+    }
+}
+
 pub fn select_field(key: &str, label: &str, options: &[&str], default: &str) -> Value {
     Value::obj()
         .s("key", key)

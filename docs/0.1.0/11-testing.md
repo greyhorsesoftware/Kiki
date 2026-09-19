@@ -125,6 +125,46 @@ Quickshell timestamps the events; the driver reads them over IPC.
 - e2e, visual, layout and performance in one job under `cage`, on every PR, about ten minutes.
 - The manual checklist is a PR template item on release branches only.
 
+## Coverage
+
+`make coverage` instruments the daemon (`-C instrument-coverage`) and runs every Rust test —
+including the plugin contract test — through `llvm-profdata`/`llvm-cov`, which the system LLVM
+provides; no `cargo-llvm-cov` needed. It prints per-file lines and leaves `target/coverage` for
+`llvm-cov show` on a file.
+
+Measured 2026-09-19, after `listing.rs` and `mirror.rs` were split: **62.1% of lines** across
+kikid. That number is a floor rather than the truth: `server.rs` (806 lines) reads as 0% because
+nothing in the Rust suite dials the socket — the e2e flows do, against a real daemon that is not
+instrumented — and the same goes for `share.rs`, `dbus.rs` and `helpers.rs`.
+
+Where the two split modules stand, and what each number means:
+
+| Module | Lines | What is not covered |
+|---|---|---|
+| `mirror/store.rs` | 100% | — |
+| `mirror/filters.rs` | 97% | — |
+| `mirror/detect.rs` | 87% | `pick_detector` asking a plugin's `Describe` |
+| `mirror/diff.rs` | 85% | — |
+| `mirror/report.rs` | 83% | the download-direction wording |
+| `mirror/mod.rs` | 72% | `Spec` JSON round trips for options the UI rarely sets |
+| `mirror/scan.rs` | 63% | the per-directory remote fallback's error paths |
+| `mirror/execute.rs` | 57% | remote→remote transfers (two plugin processes) |
+| `listing/rows.rs` | 93% | — |
+| `listing/scan.rs` | 81% | remote scans and the watcher's large-batch rescan |
+| `listing/mod.rs` | 78% | — |
+| `listing/stats.rs` | 75% | thumbnail submission and the low-priority queue |
+| `listing/cache.rs` | 75% | eviction under memory pressure |
+| `listing/view.rs` | 74% | `atime` sort, and the parallel sort above 50k rows |
+
+Writing those tests found two real faults, which is the point of doing it:
+
+- **A sort that never answered.** `enrich_all` queued only the rows the *view* was showing while
+  `enrich_progress` waited for *every* row to have metadata, so with a filter typed, a sort by
+  size left the listing permanently mid-enrichment and the `Sort` reply never came.
+- **A stub plugin that lied about `Scan`.** It answered `recursive: true` with the top level
+  only, instead of `Unsupported` as API-PLUGIN requires, which would make a mirror re-copy every
+  file it never saw. The contract test now asserts the refusal.
+
 ## Verification for this plan
 
 - The harness runs green on a fresh Omarchy VM from a single `make test`.

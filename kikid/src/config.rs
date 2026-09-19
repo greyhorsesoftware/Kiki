@@ -41,8 +41,21 @@ fn read_toml(name: &str) -> Value {
 
 fn write_toml(name: &str, v: &Value) -> std::io::Result<()> {
     let dir = config_dir();
-    std::fs::create_dir_all(&dir)?;
     let path = dir.join(name);
+    // Never write over a file we could not read. `read_toml` answers an unparsable file with the
+    // defaults and an error on stderr, which is right for settings — the app still starts — but
+    // writing that back would persist the emptiness: one edited location, and `locations.toml`
+    // holds nothing but the new one. The same goes for favourites and for the integration backup
+    // of the files kiki replaced. Refusing costs the user an error message and keeps their file.
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if toml::parse(&text).is_err() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{} could not be read; fix or move it, and kiki will write here again", path.display()),
+            ));
+        }
+    }
+    std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!(".{name}.tmp"));
     std::fs::write(&tmp, toml::write(v))?;
     std::fs::rename(tmp, path)
@@ -94,6 +107,7 @@ pub fn settings() -> Value {
             .b("showHidden", false)
             .b("sidebar", true)
             .s("sidebarStyle", "rail")
+            .b("railHover", true)
             .b("relativeDates", true)
             .s("heatSource", "filesystem")
             .b("vimKeys", false)
@@ -401,6 +415,35 @@ mod tests {
         assert_eq!(s.get("view").unwrap().str_field("default"), Some("icon"));
         assert_eq!(s.get("view").unwrap().str_field("sort"), Some("name")); // default kept
         assert!(volumes().as_arr().unwrap().iter().any(|v| v.u64_field("total").unwrap_or(0) > 0));
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::env::remove_var("KIKI_CONFIG_DIR");
+    }
+
+    /// A file that does not parse reads as the defaults, which is right — the app still starts.
+    /// Writing those defaults back would be data loss: one saved location edited, and the file
+    /// holds nothing but that one. So a write over an unreadable file is refused instead.
+    #[test]
+    fn an_unreadable_file_is_never_overwritten() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kiki-config-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("KIKI_CONFIG_DIR", &dir);
+
+        let broken = "[[location]]\nname = \"homelab\"\nthis line is not toml";
+        std::fs::write(dir.join("locations.toml"), broken).unwrap();
+        // It reads as empty …
+        assert!(matches!(read_named("locations.toml"), Value::Obj(ref m) if m.is_empty()));
+        // … and writing that emptiness back is refused, with the file left exactly as it was.
+        let err = write_named("locations.toml", &Value::obj().done()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read_to_string(dir.join("locations.toml")).unwrap(), broken);
+
+        // A file that parses is written as usual, and so is one that does not exist yet.
+        std::fs::write(dir.join("locations.toml"), "[[location]]\nname = \"homelab\"\n").unwrap();
+        write_named("locations.toml", &Value::obj().v("location", Value::Arr(vec![])).done()).unwrap();
+        write_named("favorites.toml", &Value::obj().v("favorite", Value::Arr(vec![])).done()).unwrap();
+
         std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }

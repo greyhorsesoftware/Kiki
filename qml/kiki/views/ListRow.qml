@@ -49,7 +49,7 @@ Rectangle {
             width: r.nameWidth; height: parent.height; spacing: 8
             Item {
                 width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
-                UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : "file"; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
+                UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
             Text { anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (r.row && r.row.git && r.row.git.state !== "clean" ? 20 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (r.row.git && r.row.git.state === "ignored" && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

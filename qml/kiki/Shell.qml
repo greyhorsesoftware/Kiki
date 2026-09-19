@@ -33,38 +33,109 @@ FloatingWindow {
     // The rail reserves only its own width; widening on hover floats over the files rather than
     // shoving them sideways every time the pointer passes.
     readonly property int sidebarSpace: sidebarPanel.visible ? (sidebarRail ? 44 : sidebarFull) : 0
-    // Mirror view (plan 24): "mirror" is the left pane's view; the right pane appears with it.
-    readonly property bool split: left.view === "mirror"
-    property Kiki.Pane left: Kiki.Pane { view: Kiki.Settings.view["default"]; focused: true }
-    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false }
+    // Side by side is how many folders the WINDOW shows; `Pane.view` is only how one pane draws
+    // its folder. (It used to be a view — `left.view === "mirror"` — which left the left pane
+    // without a view of its own and wrote "mirror" into views.toml as the folder's preference.)
+    property bool sideBySide: false
+    readonly property bool split: sideBySide
+    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide }
+    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide }
+    function defaultView() { const d = Kiki.Settings.view["default"]; return !d || d === "mirror" ? "list" : d }
+    // `[view] default = "mirror"` in an old settings.toml still means: start side by side.
+    Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.view["default"] === "mirror") win.enterMirror() } }
+    /// The pane put away when side by side was turned off from the right: it went to `right`,
+    /// and goes back to the left when the layout returns, so both folders are where they were.
+    property bool _swappedOnLeave: false
+    function _swapPaneObjects() { const l = left; left = right; right = l }
     property Kiki.Pane pane: left
     property var lastLocation: null
+    /// Side by side: how much of the width the left pane takes. A ratio, not a width, so resizing
+    /// the window keeps the proportion. `sideRatioLive` is the drag in progress (0 = none); the
+    /// setting is written once, when the drag ends — like `inspectorWidth`.
+    property real sideRatioLive: 0
+    readonly property real sideRatio: sideRatioLive > 0 ? sideRatioLive : (Kiki.Settings.view.sideBySideRatio > 0 ? Kiki.Settings.view.sideBySideRatio : 0.5)
+    /// Neither side can be dragged shut: closing one is what the toolbar button is for.
+    readonly property int sideMin: 280
+    function leftPaneWidth(total) {
+        const room = Math.max(0, total - 1)
+        const min = Math.min(sideMin, Math.floor(room / 2))
+        return Math.max(min, Math.min(room - min, Math.round(room * sideRatio)))
+    }
+    function dragDivider(total, leftWidth) {
+        const room = Math.max(1, total - 1)
+        const min = Math.min(sideMin, Math.floor(room / 2))
+        sideRatioLive = Math.max(min, Math.min(room - min, leftWidth)) / room
+    }
+    function endDividerDrag() { if (sideRatioLive > 0) { const r = sideRatioLive; Kiki.Settings.set("view", "sideBySideRatio", Math.round(r * 1000) / 1000); sideRatioLive = 0 } }
+    function resetDivider() { sideRatioLive = 0; Kiki.Settings.set("view", "sideBySideRatio", 0.5) }
+
+    /// Side by side, "the local pane": the `file://` one — the
+    /// left by default, the right after Swap — and the left when both (or neither) are local.
+    readonly property var localPane: !split ? pane : (left.uri.indexOf("file://") === 0 || right.uri.indexOf("file://") !== 0 ? left : right)
+    /// …and the other one, which is navigated from its own header.
+    readonly property var otherPane: localPane === left ? right : left
+    /// A path from the title bar, which only shows when there is one pane.
+    function navigateFromTitle(uri) { pane.open(uri) }
+    /// The breadcrumb that is on screen for the focused pane: the title bar's with one pane,
+    /// that pane's own header side by side. Ctrl+L and the path menu go to it.
+    function activeCrumb() { return !split ? toolbar.breadcrumb : (pane === right ? rightHeader.breadcrumb : leftHeader.breadcrumb) }
     function focusPane(p) { left.focused = p === left; right.focused = p === right; pane = p }
     // Selecting a location opens Mirror view: local_uri on the left, remote_uri on the right.
     function openLocation(loc) {
         lastLocation = loc
+        _enterSplit()
         if (loc.localUri) left.open(loc.localUri)
         right.open(loc.remoteUri)
-        left.view = "mirror"
         focusPane(right)
+    }
+    /// A location that was added without being checked: the daemon will not connect until its
+    /// server's key has been seen, and says so. Offer exactly that, rather than a bare error.
+    function offerVerification(p) {
+        if (!p || p.listing.error.indexOf("has not been verified yet") < 0 || locationDialog.visible) return
+        const m = p.uri.match(/^([a-z0-9]+):\/\/([^/]+)/); if (!m) return
+        const loc = locations.find(l => l.plugin === m[1] && l.name === decodeURIComponent(m[2]))
+        if (loc) locationDialog.verify(loc)
+    }
+    Connections { target: win.left.listing; function onErrorChanged() { win.offerVerification(win.left) } }
+    Connections { target: win.right.listing; function onErrorChanged() { win.offerVerification(win.right) } }
+
+    /// Both panes start in List, and from here on neither reads nor writes view memory (their
+    /// `rememberViews` follows `sideBySide`, which is set FIRST so the change to List is not
+    /// itself remembered).
+    function _enterSplit() {
+        if (sideBySide) return
+        if (_swappedOnLeave) { _swapPaneObjects(); _swappedOnLeave = false; pane = left.focused ? left : right }
+        sideBySide = true
+        left.view = "list"; right.view = "list"
     }
     // Entering Mirror view from a local folder: the right pane gets the last location, else home.
     function enterMirror() {
-        if (left.view === "mirror") return
+        if (sideBySide) return
+        _enterSplit()
         if (!right.uri) right.open(lastLocation && lastLocation.remoteUri ? lastLocation.remoteUri : "file://" + home)
-        left.view = "mirror"
     }
-    function leaveMirror() { if (left.view === "mirror") left.view = Kiki.Settings.view["default"] === "mirror" ? "list" : (Kiki.Settings.view["default"] || "list") }
-    /// Switching views while mirrored means leaving it: the left pane owns the view, and the
-    /// focused pane may well be the right one, which cannot leave on its own.
-    function setView(v) { if (win.split) win.left.view = v; else win.pane.view = v }
+    /// Back to one pane — the one you were in. The single layout draws `left`, so when the focus
+    /// was on the right the two Pane objects change places: its folder, selection and history
+    /// come across whole (copying the URI over would lose all three and re-list a remote folder
+    /// for nothing), and the other folder waits in `right` for the layout to return.
+    function leaveMirror() {
+        if (!sideBySide) return
+        const keepRight = pane === right
+        if (keepRight) _swapPaneObjects()
+        _swappedOnLeave = keepRight
+        sideBySide = false
+        focusPane(left)
+        left.applyPref()          // the folder opens the way it is remembered, not the way it was split
+    }
+    /// The view menu and Ctrl+1/2/3 change the focused pane, side by side or not.
+    function setView(v) { win.pane.view = v }
     function toggleMirrorView() { if (win.split) win.leaveMirror(); else win.enterMirror() }
     function swapPanes() { const l = left.uri, r = right.uri; if (!l || !r) return; left.open(r); right.open(l) }
     // A remote URI opened directly (breadcrumb, IPC, Show in folder) opens in Mirror view with its location's local path beside it.
-    Connections { target: win.left; function onNavigated(uri) { const m = uri.match(/^([a-z]+):\/\/([^/]+)/); if (!m || m[1] === "file" || m[1] === "trash" || win.left.view === "mirror" || win.left.hasPref) return
+    Connections { target: win.left; function onNavigated(uri) { const m = uri.match(/^([a-z]+):\/\/([^/]+)/); if (!m || m[1] === "file" || m[1] === "trash" || win.sideBySide || win.left.hasPref) return
         if (Kiki.Settings.view.smartView === false) return
         const loc = win.locations.find(l => l.plugin === m[1] && l.name === m[2]); if (!loc) return
-        win.lastLocation = loc; win.right.open(uri); if (loc.localUri) win.left.open(loc.localUri); win.left.view = "mirror"; win.focusPane(win.right) } }
+        win.lastLocation = loc; win._enterSplit(); win.right.open(uri); if (loc.localUri) win.left.open(loc.localUri); win.focusPane(win.right) } }
     // Last mirror time per remote root, kept in settings so the bar can say "last mirrored 2 h ago".
     property var lastMirror: Kiki.Settings.mirror && Kiki.Settings.mirror.last ? Kiki.Settings.mirror.last : ({})
     function remoteUri() { return left.uri.startsWith("file://") ? right.uri : left.uri }
@@ -81,7 +152,7 @@ FloatingWindow {
     function startMirror(upload) { if (!split) enterMirror(); mirrorWs.upload = upload; mirrorOpen = true }
     function otherPane() { return pane === left ? right : left }
     function transfer(move) { if (split) ops.transferTo(otherPane().uri, move) }
-    onSplitChanged: if (!split) { focusPane(left); mirrorOpen = false }
+    onSplitChanged: if (!split) mirrorOpen = false
     property bool mirrorOpen: false
     function toggleMirror() { if (!split) { startMirror(true); return } mirrorOpen = !mirrorOpen }
     property string toast: ""
@@ -242,9 +313,16 @@ FloatingWindow {
     }
     // Clicking the path offers the folders above this one, and the way into typing one.
     function pathMenu() {
-        const items = toolbar.breadcrumb.ancestors().map(a => ({ label: a.label, action: () => win.pane.open(a.uri) }))
-        items.push({ label: "Type a path…", key: "Ctrl+L", sep: items.length > 0, action: () => toolbar.breadcrumb.edit() })
-        menuUnder(toolbar.breadcrumb, items)
+        const crumb = activeCrumb()
+        const items = crumb.ancestors().map(a => ({ label: a.label, action: () => win.pane.open(a.uri) }))
+        items.push({ label: "Type a path…", key: "Ctrl+L", sep: items.length > 0, action: () => crumb.edit() })
+        menuUnder(crumb, items)
+    }
+    /// The same menu for a pane's own header: the folders above, and typing a path.
+    function paneHeaderPathMenu(target, crumb) {
+        const items = crumb.ancestors().map(a => ({ label: a.label, action: () => target.open(a.uri) }))
+        items.push({ label: "Type a path…", sep: items.length > 0, action: () => crumb.edit() })
+        menuUnder(crumb, items)
     }
     /// The gear: settings, the keymap, and who made this.
     function gearMenu() {
@@ -259,7 +337,6 @@ FloatingWindow {
             { label: "Icon", key: "Ctrl+1", checked: !win.split && pane.view === "icon", action: () => win.setView("icon") },
             { label: "List", key: "Ctrl+2", checked: !win.split && pane.view === "list", action: () => win.setView("list") },
             { label: "Columns", key: "Ctrl+3", checked: !win.split && pane.view === "columns", action: () => win.setView("columns") },
-            { label: "Mirror", key: "Ctrl+4", checked: win.split, action: () => win.toggleMirrorView() },
             { label: "Gallery", key: "Ctrl+5", checked: pane.view === "gallery", action: () => win.enterGallery() },
             { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
         ]
@@ -329,16 +406,32 @@ FloatingWindow {
             { label: "Copy", key: "Super+C", sep: true, action: () => ops.copySelection(false, uris) },
             { label: "Cut", key: "Super+X", action: () => ops.copySelection(true, uris) },
             { label: "Compress…", sep: true, action: () => compressDialog.open(uris, folder) },
-            { label: "Extract here", enabled: row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
+            { label: "Extract here", enabled: !!row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
             { label: "Copy path", action: () => ops.copyPath(uris) },
             { label: "Move to Trash", key: "Del", danger: true, sep: true, action: () => ops.trashSelection(uris) },
         ]
+    }
+    /// The menu for the background of a folder — nothing under the pointer. The same list as a
+    /// row's, so nothing moves about, with everything that needs a file already greyed out by
+    /// `contextItems`; only the two actions that need somewhere to put things are re-aimed, since
+    /// in columns view the folder clicked need not be the one the pane is on.
+    function folderItems(folderUri) {
+        pane.selection.clear()
+        const items = win.contextItems(-1)
+        if (folderUri && folderUri !== pane.uri) {
+            for (const it of items) {
+                if (it.label === "Paste") it.action = () => ops.paste(folderUri)
+                else if (it.label === "New folder") it.action = () => ops.newFolder(folderUri)
+            }
+        }
+        return items
     }
     function contextItems(index) {
         // A placeholder goes in at once so the submenu is never empty; the applications land a
         // moment later and replace it, even if the submenu is already showing.
         win.openWithSub = win.openWithItems()
-        win.loadOpenWith(win.selectedUris(), list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
+        const chosen = win.selectedUris()
+        if (chosen.length) win.loadOpenWith(chosen, list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
         const r = index >= 0 ? pane.listing.row(index) : null
         const sel = pane.selection.count() > 0
         if (pane.isTrash) {
@@ -359,8 +452,8 @@ FloatingWindow {
             { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
             { label: "Rename", key: "F2", enabled: sel && pane.selection.count() === 1, action: () => win.renameSelected() },
             { label: "Compress…", enabled: sel, action: () => compressDialog.open(win.selectedUris(), pane.uri) },
-            { label: "Extract here", enabled: r && r.kind === "archive", action: () => ops.extractHere(r.name) },
-            { label: "Extract to…", enabled: r && r.kind === "archive", action: () => ops.extractTo(r.name) },
+            { label: "Extract here", enabled: !!r && r.kind === "archive", action: () => ops.extractHere(r.name) },
+            { label: "Extract to…", enabled: !!r && r.kind === "archive", action: () => ops.extractTo(r.name) },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
             { label: "Share", key: keymap.chordFor("share"), enabled: sel && win.sharePlugins.length > 0, items: win.shareItems() },
             { label: win.aiStatus.configured ? "Jarvis: Query…" : "Jarvis: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
@@ -424,6 +517,13 @@ FloatingWindow {
         if (r && r.isDir) win.openFolder(pane.childUri(r.name))
         else if (r && (r.kind === "image" || r.kind === "video")) win.enterGallery()
     }
+    /// Ask the daemon which row a name is on and go there. The listing is virtual, so a name
+    /// outside the loaded window cannot be found by looking.
+    function seekName(name) {
+        Kiki.Daemon.request("SeekName", { lid: pane.listing.lid, prefix: name }, ok => {
+            if (ok && ok.index !== null && ok.index !== undefined) win.selectAt(ok.index, false)
+        })
+    }
     /// Put the cursor back on the folder we just came out of, once its row exists.
     function selectCameFrom() {
         const name = pane.selectAfterLoad
@@ -451,7 +551,7 @@ FloatingWindow {
         switch (id) {
         case "filter": case "filterAlt": win.openFilter(); return true
         case "search": win.openSearch(leftFilter.text); return true
-        case "typePath": toolbar.breadcrumb.edit(); return true
+        case "typePath": win.activeCrumb().edit(); return true
         case "addLocation": locationDialog.open(null); return true
         case "viewIcon": win.setView("icon"); return true
         case "viewList": win.setView("list"); return true
@@ -535,7 +635,7 @@ FloatingWindow {
     Item {
         id: keys
         anchors.fill: parent
-        focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !menu.visible && !settingsWin.visible
+        focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
             && !shareSheet.visible && !compressDialog.visible && !win.aiOpen && !win.projectMode
             && !keysWin.visible && !aboutDlg.visible
@@ -598,13 +698,28 @@ FloatingWindow {
             if (action === "prev") { if (!g.step(-1)) win.pane.up() }
             else if (action === "next") g.step(1)
             else if (action === "open") g.activateKey()
+            else if (action === "play") g.togglePlay()
+        }
+        /// What the gallery cost: how many pictures it has decoded and how long they took. The
+        /// perf flow reads this; nothing in the window depends on it.
+        function galleryStats(): string {
+            const g = win.galleryPane()
+            return JSON.stringify(g ? g.stats() : {})
         }
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }
         function search(text: string): void { if (text) win.openFilter(); const bar = win.pane === win.right ? rightFilter : leftFilter; bar.text = text; win.pane.setFilter(text) }
         function searchEverywhere(text: string): void { if (searchOverlay.visible && !text) searchOverlay.close(); else win.openSearch(text) }
-        function select(name: string): void { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); return } } }
+        function select(name: string): void {
+            for (let i = 0; i < win.pane.listing.count; i++) {
+                const r = win.pane.listing.row(i)
+                if (r && r.name === name) { win.pane.selection.set(i); return }
+            }
+            // Past the rows the window happens to hold — it keeps a few hundred either side of
+            // the viewport, not the whole folder — only the daemon knows where a name sits.
+            if (win.pane.listing.lid) win.seekName(name)
+        }
         function selection(): string { return JSON.stringify(win.selectedUris()) }
         function uri(pane: string): string { return win.pane.uri }
         function split(on: string): void { if (on === "on") win.enterMirror(); else win.leaveMirror() }
@@ -634,6 +749,18 @@ FloatingWindow {
                 daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
                 dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, shortcuts: shortcuts_.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }
+        /// Side by side, for scripts and tests: `toggle`; `drag <px>` is what dragging the line
+        /// between the panes to that x does, `end` lets go, `reset` is the double click.
+        function sideBySide(action: string): string {
+            if (action === "toggle") win.toggleMirrorView()
+            else if (action.indexOf("drag ") === 0) win.dragDivider(paneRow.width, parseInt(action.slice(5)) || 0)
+            else if (action === "end") win.endDividerDrag()
+            else if (action === "reset") win.resetDivider()
+            return JSON.stringify({ split: win.split, total: paneRow.width, left: win.split ? win.leftPaneWidth(paneRow.width) : paneRow.width,
+                ratio: win.sideRatio, dragging: win.sideRatioLive > 0, min: win.sideMin,
+                leftView: win.left.view, rightView: win.right.view, remembering: win.left.rememberViews,
+                titlePathShown: toolbar.pathShown, leftPath: leftHeader.breadcrumb.visible ? leftHeader.breadcrumb.uri : "", rightPath: rightHeader.breadcrumb.visible ? rightHeader.breadcrumb.uri : "", focused: win.pane === win.right ? "right" : "left", leftUri: win.left.uri, rightUri: win.right.uri })
+        }
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
         function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
         function toggleSearch(): void { win.toggleSearch() }
@@ -657,6 +784,14 @@ FloatingWindow {
         function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
         function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
+        /// The Add-location form, for scripts and tests: pick a kind by scheme, a page or a
+        /// credentials tab by name.
+        function locationForm(what: string, name: string): string {
+            if (what === "kind") locationDialog.selectKind(locationDialog.plugins.findIndex(p => p.scheme === name))
+            else if (what === "page") locationDialog.page = name
+            else if (what === "auth") locationDialog.chooseGroup(name)
+            return JSON.stringify({ kind: locationDialog.current() ? locationDialog.current().scheme : "", page: locationDialog.page, auth: locationDialog.authGroup, pages: locationDialog.pages(), groups: locationDialog.groups() })
+        }
         function about(): void { if (aboutDlg.visible) aboutDlg.close(); else aboutDlg.open() }
         /// The palette in force, for scripts and for checking a theme change landed.
         function theme(): string {
@@ -713,8 +848,16 @@ FloatingWindow {
         anchors.fill: parent
         UI.Toolbar {
             id: toolbar
+            objectName: "toolbar"
             width: parent.width
             pane: win.pane; home: win.home
+            onToggleSplit: win.toggleMirrorView()
+            // Over the line between the two panes, wherever that line is: the panes start after
+            // the sidebar, and the line goes where it is dragged (and is remembered there), so
+            // neither the middle of the bar nor the middle of the panes is where it is.
+            mirrorCenterX: win.sidebarSpace + win.leftPaneWidth(paneRow.width) + 0.5
+            onToggleMirror: win.toggleMirror()
+            onNavigate: uri => win.navigateFromTitle(uri)
             split: win.split; mirror: win.mirrorOpen
             locations: win.locations
             repo: win.repo
@@ -740,9 +883,15 @@ FloatingWindow {
                 onClosed: win.mirrorOpen = false
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
             }
+            // Off for now: the strip above the two panes is gone, and "Mirror to …", Swap and
+            // "last mirrored" will be given a place of their own later. Kept wired so that is a
+            // matter of showing it somewhere, not of rebuilding it. The way into a mirror run is
+            // the button in the middle of the toolbar, and Ctrl+M; Swap has no other way in yet
+            // and waits for that place.
             UI.MirrorBar {
                 id: mirrorBar
-                visible: win.split && !win.mirrorOpen
+                objectName: "mirror-bar"
+                visible: false
                 width: parent.width
                 leftPane: win.left; rightPane: win.right; home: win.home
                 lastMirrored: win.lastMirror[win.remoteUri()] || null
@@ -751,12 +900,16 @@ FloatingWindow {
                 onOptions: pos => { const p = mirrorBar.mapToItem(menu.parent, pos.x, pos.y); win.mirrorOptions(Qt.point(p.x, p.y)) }
             }
             Row {
+                id: paneRow
+                objectName: "pane-row"
                 visible: !win.mirrorOpen
                 width: parent.width; height: parent.height - (mirrorBar.visible ? mirrorBar.height : 0)
                 // Left pane (the only pane when not split)
                 Column {
-                    width: Math.max(0, (win.split ? Math.floor((parent.width - 1) / 2) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0)); height: parent.height
-                    UI.PaneHeader { visible: win.split; width: parent.width; pane: win.left; home: win.home; onClicked: win.focusPane(win.left) }
+                    id: leftCol
+                    objectName: "pane-left"
+                    width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0)); height: parent.height
+                    UI.PaneHeader { objectName: "pane-header-left"; visible: win.split; width: parent.width; pane: win.left; home: win.home; id: leftHeader; onClicked: win.focusPane(win.left); onPathMenu: c => win.paneHeaderPathMenu(win.left, c) }
                     UI.FilterBar {
                         id: leftFilter
                         visible: win.filterOpen && win.pane === win.left
@@ -767,15 +920,48 @@ FloatingWindow {
                     Loader {
                         id: viewLoader
                         width: parent.width; height: parent.height - (win.split ? 34 : 0) - (leftFilter.visible ? leftFilter.height : 0)
-                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : (win.left.view === "gallery" ? galleryView : listView))   // "mirror" renders as a list
+                        sourceComponent: win.left.view === "icon" ? iconView : (win.left.view === "columns" ? columnsView : (win.left.view === "gallery" ? galleryView : listView))
                         onLoaded: item.pane = win.left
+                        // A different Pane object (the two change places when side by side is
+                        // left from the right): build the view again rather than re-point one
+                        // whose rows and caches were made for the other pane.
+                        readonly property var shownPane: win.left
+                        onShownPaneChanged: if (status === Loader.Ready) { active = false; active = true }
+                        // Side by side a press anywhere in the view — a file or white space — gives
+                        // its pane the focus; the pointer passing over does not (see PaneFocus). It
+                        // lies over the view as the view's sibling. (It used to hang from a holder
+                        // of no size at the top of the pane's Column, and in the running app its
+                        // handler was never asked: a press outside the holder's own 0×0 is not
+                        // offered to what the holder contains.)
+                        UI.PaneFocus { objectName: "pane-focus-left"; anchors.fill: parent; z: 100; active: win.split; onWanted: if (win.pane !== win.left) win.focusPane(win.left) }
+                        UI.PaneError { anchors.fill: parent; z: 50; pane: win.left; onRetry: win.left.listing.open(win.left.uri) }
                     }
                 }
-                Rectangle { visible: win.split; width: 1; height: parent.height; color: Kiki.Theme.line }
+                // The line between the panes is a grip: drag it to give one side more room,
+                // double-click for half and half. The same grip the info panel has.
+                Rectangle {
+                    id: divider
+                    objectName: "pane-divider"
+                    visible: win.split; width: 1; height: parent.height; z: 10
+                    color: dividerGrip.containsMouse || dividerGrip.pressed ? Kiki.Theme.accent : Kiki.Theme.line
+                    MouseArea {
+                        id: dividerGrip
+                        objectName: "pane-divider-grip"
+                        x: -3; width: 7; height: parent.height
+                        cursorShape: Qt.SplitHCursor
+                        hoverEnabled: true
+                        preventStealing: true
+                        onPositionChanged: mouse => { if (pressed) win.dragDivider(paneRow.width, mapToItem(paneRow, mouse.x, 0).x) }
+                        onReleased: win.endDividerDrag()
+                        onDoubleClicked: win.resetDivider()
+                    }
+                }
                 Column {
+                    id: rightCol
+                    objectName: "pane-right"
                     visible: win.split
-                    width: win.split ? parent.width - Math.floor((parent.width - 1) / 2) - 1 : 0; height: parent.height
-                    UI.PaneHeader { width: parent.width; pane: win.right; home: win.home; onClicked: win.focusPane(win.right) }
+                    width: win.split ? parent.width - win.leftPaneWidth(parent.width) - 1 : 0; height: parent.height
+                    UI.PaneHeader { objectName: "pane-header-right"; width: parent.width; pane: win.right; home: win.home; id: rightHeader; onClicked: win.focusPane(win.right); onPathMenu: c => win.paneHeaderPathMenu(win.right, c) }
                     UI.FilterBar {
                         id: rightFilter
                         visible: win.filterOpen && win.pane === win.right
@@ -789,6 +975,16 @@ FloatingWindow {
                         width: parent.width; height: parent.height - 34 - (rightFilter.visible ? rightFilter.height : 0)
                         sourceComponent: win.right.view === "icon" ? iconView : (win.right.view === "columns" ? columnsView : (win.right.view === "gallery" ? galleryView : listView))
                         onLoaded: item.pane = win.right
+                        readonly property var shownPane: win.right
+                        onShownPaneChanged: if (status === Loader.Ready) { active = false; active = true }
+                        // Side by side a press anywhere in the view — a file or white space — gives
+                        // its pane the focus; the pointer passing over does not (see PaneFocus). It
+                        // lies over the view as the view's sibling. (It used to hang from a holder
+                        // of no size at the top of the pane's Column, and in the running app its
+                        // handler was never asked: a press outside the holder's own 0×0 is not
+                        // offered to what the holder contains.)
+                        UI.PaneFocus { objectName: "pane-focus-right"; anchors.fill: parent; z: 100; active: win.split; onWanted: if (win.pane !== win.right) win.focusPane(win.right) }
+                        UI.PaneError { anchors.fill: parent; z: 50; pane: win.right; onRetry: win.right.listing.open(win.right.uri) }
                     }
                 }
                 UI.AiPanel { id: aiPanel; visible: win.aiOpen; width: Math.min(420, Math.floor(parent.width * 0.6)); height: parent.height; home: win.home; onClose: win.aiOpen = false }
@@ -803,6 +999,7 @@ FloatingWindow {
                     onResized: dx => win.setInspectorWidth(win.inspectorW - dx, parent.width)
                     onResizeEnded: Kiki.Settings.set("view", "inspectorWidth", win.inspectorW)
                     onEdit: (u, line) => win.editAt(u, line)
+                    onOpen: u => win.openExternal(u)
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
                 }
             }
@@ -811,7 +1008,8 @@ FloatingWindow {
         UI.ShortcutBar {
             id: bar
             width: parent.width
-            keys: (win.vimKeys ? [{ key: "h j k l", label: "move" }] : []).concat([
+            // Side by side, Ctrl+M is the thing the layout is for, so it leads the hints.
+            keys: (win.split ? [{ key: "^M", label: "mirror" }] : []).concat(win.vimKeys ? [{ key: "h j k l", label: "move" }] : []).concat([
                 { key: "Enter", label: "open" }, { key: "←", label: "up" }, { key: "→", label: "into" },
                 { key: "^I", label: "info" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" },
                 { key: "❖C", label: "copy" }, { key: "❖V", label: "paste" }, { key: "/", label: "filter" },
@@ -862,7 +1060,7 @@ FloatingWindow {
             { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
             { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
         ], Qt.point(40, 200))
-        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }], Qt.point(40, 200))
+        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
     }
 
     // Mousing into the left edge brings the hidden favorites panel back.
@@ -892,7 +1090,37 @@ FloatingWindow {
     UI.ContextMenu { id: menu; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
-    UI.LocationDialog { id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar(); onVisibleChanged: if (!visible) keys.forceActiveFocus() }
+    UI.LocationDialog {
+        id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar(); onVisibleChanged: if (!visible) keys.forceActiveFocus()
+        // "Add and Connect": the list of locations is asked for afresh (the one just saved is
+        // not in ours yet), and the new one is opened from the answer.
+        onOpenRequested: name => Kiki.Daemon.request("Locations", {}, ok => {
+            if (!ok) return
+            win.locations = ok.locations
+            const loc = ok.locations.find(l => l.name === name)
+            if (loc) win.openLocation(loc)
+        })
+        // kiki's own folder chooser — the one it gives other apps through the portal — over the
+        // form, starting where the field points (or at home), answering with a plain path.
+        onChooseImage: (start, reply) => win.pickLocationImage(start, path => { reply(path); locationDialog.forceActiveFocus() })
+        onChooseFolder: (start, reply) => portal.pick(
+            { mode: "open", directory: true, title: "Choose the local folder", currentFolder: (start || "").replace(/^~/, win.home) || win.home },
+            uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, "")).replace(/\/+$/, "") || "/"); locationDialog.forceActiveFocus() })
+    }
+    /// kiki's own chooser, asked for one picture; answers with a plain path.
+    function pickLocationImage(start, reply) {
+        const dir = start ? start.replace(/\/[^\/]*$/, "") : ""
+        portal.pick({ mode: "open", title: "Choose an image", currentFolder: dir || win.home,
+                      filters: [{ name: "Images", patterns: ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.svg", "*.gif", "*.bmp"] }] },
+            uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, ""))) })
+    }
+    /// The sidebar menu's part for a location's picture: set one, and take it off again.
+    function locationImageItems(loc) {
+        const set = image => Kiki.Daemon.request("SetLocationImage", { name: loc.name, image: image }, () => win.loadSidebar())
+        const items = [{ label: loc.image ? "Change Image…" : "Set Image…", sep: true, action: () => win.pickLocationImage(loc.image || "", set) }]
+        if (loc.image) items.push({ label: "Remove Image", action: () => set("") })
+        return items
+    }
     UI.PortalDialog { id: portal; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
     UI.SettingsWindow { id: settingsWin; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
@@ -902,5 +1130,6 @@ FloatingWindow {
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => ops.compress(items, archive, format) }
     UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
     Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri); onEdit: (u, line) => win.editAt(u, line)
-        onContextMenu: (uri, row, pos) => { win.focusPane(win.left); menu.open(win.contextItemsForUri(uri, row), pos) } } }
+        onContextMenu: (uri, row, pos) => { win.focusPane(pane); menu.open(win.contextItemsForUri(uri, row), pos) }
+        onContextMenuFolder: (uri, pos) => { win.focusPane(pane); menu.open(win.folderItems(uri), pos) } } }
 }

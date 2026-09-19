@@ -52,7 +52,7 @@ Rectangle {
                         width: parent.width - 26; spacing: 2
                         Text { width: parent.width; wrapMode: Text.WordWrap; text: modelData.label + (dlg.status[modelData.id] ? "  ·  already set" : ""); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                         Text { width: parent.width; wrapMode: Text.WordWrap; text: modelData.detail; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-                        Text { visible: !!(dlg.results.find(r => r.part === modelData.id && !r.ok)); width: parent.width; wrapMode: Text.WordWrap; text: (dlg.results.find(r => r.part === modelData.id) || {}).message || ""; color: Kiki.Theme.red; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                        Text { visible: !!(dlg.results.find(r => r.part === modelData.id && !r.ok)); width: parent.width; wrapMode: Text.WordWrap; text: (dlg.results.find(r => r.part === modelData.id) || {}).message || ""; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                     }
                 }
             }

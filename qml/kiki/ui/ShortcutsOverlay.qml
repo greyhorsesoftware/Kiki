@@ -23,7 +23,7 @@ Rectangle {
             ["Alt+←  Alt+→", "back / forward"],
             ["Home  End", "first / last"],
             ["PgUp  PgDn", "page"],
-            ["Tab", "other pane (mirror view)"],
+            ["Tab", "other pane (side by side)"],
             ["Ctrl+B", "focus favorites"],
             ["Ctrl+Shift+B", "show / hide favorites"],
             ["Ctrl+Shift+L", "add a location"],
@@ -35,7 +35,7 @@ Rectangle {
             ["type a name", "jump to it (off with Vim keys)"],
         ] },
         { title: "View", keys: [
-            ["Ctrl+1 .. Ctrl+5", "icon / list / columns / mirror / gallery"],
+            ["Ctrl+1 .. Ctrl+5", "icon / list / columns / side by side / gallery"],
             ["Ctrl+H", "hidden files"],
             ["Ctrl+I", "info panel"],
             ["Ctrl+,", "settings"],

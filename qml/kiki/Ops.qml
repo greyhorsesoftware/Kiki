@@ -33,9 +33,11 @@ QtObject {
     /// Each of these acts on the pane's selection, or on `uris` when a view has its own idea of
     /// what was clicked — columns view, where the row may belong to a folder the pane is not in.
     function copySelection(cut, uris) { const u = uris || selectedUris(); if (u.length) clipboard = { uris: u, cut: !!cut } }
-    function paste() {
+    /// Into the folder on show, or into `dest` when one is named — columns view can ask about a
+    /// folder the pane is not standing in.
+    function paste(dest) {
         if (!clipboard.uris.length) return
-        Kiki.Jobs.submit({ op: clipboard.cut ? "move" : "copy", items: clipboard.uris, dest: pane.uri })
+        Kiki.Jobs.submit({ op: clipboard.cut ? "move" : "copy", items: clipboard.uris, dest: dest || pane.uri })
         if (clipboard.cut) clipboard = { uris: [], cut: false }
     }
     function copyPath(uris) {
@@ -45,15 +47,22 @@ QtObject {
 
     // ---------------------------------------------------------------- create, rename, remove
 
-    function newFolder() {
+    function newFolder(dest) {
+        const into = dest || pane.uri
         let name = "New folder", n = 2
         const names = new Set()
-        for (let i = 0; i < pane.listing.count; i++) { const r = pane.listing.row(i); if (r) names.add(r.name) }
+        // Only the folder on show has a listing to check the name against; elsewhere the daemon
+        // answers with a collision and the prompt handles it.
+        if (into === pane.uri) {
+            for (let i = 0; i < pane.listing.count; i++) { const r = pane.listing.row(i); if (r) names.add(r.name) }
+        }
         while (names.has(name)) name = "New folder " + n++
         // Set before submitting, not in the reply: on a fast filesystem the watcher's Reset can
-        // arrive first, and the row would land with nothing waiting to rename it.
-        renameSoon = name
-        Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(name) }, ok => { if (!ok) ops.renameSoon = "" })
+        // arrive first, and the row would land with nothing waiting to rename it. Only the folder
+        // on show has a row to rename, so a folder made elsewhere is left alone.
+        renameSoon = into === pane.uri ? name : ""
+        const uri = into === pane.uri ? pane.childUri(name) : into.replace(/\/+$/, "") + "/" + encodeURIComponent(name)
+        Kiki.Jobs.submit({ op: "mkdir", uri: uri }, ok => { if (!ok) ops.renameSoon = "" })
     }
 
     /// Put the current row into the inline editor; only list view has one.

@@ -15,7 +15,10 @@ Rectangle {
     function open(uris, folder) {
         items = uris; dest = folder; visible = true
         const base = uris.length === 1 ? decodeURIComponent(uris[0].split("/").pop()).replace(/\.[^.]+$/, "") : "archive"
-        nameInput.text = base; nameInput.forceActiveFocus(); nameInput.selectAll()
+        nameInput.text = base; nameInput.forceActiveFocus()
+        // Selected all, but with the cursor at the front, so a long name shows its beginning
+        // rather than scrolling to the tail. Typing still replaces the lot.
+        nameInput.select(nameInput.length, 0)
     }
     MouseArea { anchors.fill: parent }
     Rectangle {
@@ -26,8 +29,11 @@ Rectangle {
             Row {
                 spacing: 8; width: parent.width
                 Rectangle {
-                    width: parent.width - 150; height: 32; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
-                    TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.go() }
+                    // A long name has to stay in its box: an unclipped TextInput draws the whole
+                    // string, straight out through the side of the dialog.
+                    width: parent.width - 150; height: 32; radius: 2; clip: true
+                    color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+                    TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.go() }
                 }
                 Rectangle {
                     width: 142; height: 32; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
@@ -36,7 +42,13 @@ Rectangle {
                     MouseArea { anchors.fill: parent; onClicked: dlg.formatIndex = (dlg.formatIndex + 1) % dlg.formats.length }
                 }
             }
-            Text { text: "Into " + Kiki.Format.display(dlg.dest, Quickshell.env("HOME")); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+            // A deep folder is elided in the middle: the start and the leaf are what tell you where
+            // the archive is going.
+            Text {
+                width: parent.width; elide: Text.ElideMiddle
+                text: "Into " + Kiki.Format.display(dlg.dest, Quickshell.env("HOME"))
+                color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
+            }
             Row {
                 spacing: 8; anchors.right: parent.right
                 Button { text: "Cancel"; onClicked: dlg.visible = false }

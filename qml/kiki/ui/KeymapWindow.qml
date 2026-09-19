@@ -75,7 +75,7 @@ Rectangle {
                                  : "Press the keys for " + win.keymap.find(win.recording).label.toLowerCase() + ", or Esc to stop.")
                     : "Click a shortcut to change it. Arrow keys, Enter and Backspace belong to whichever view is open and are not listed."
                 wrapMode: Text.WordWrap
-                color: win.clash ? Kiki.Theme.red : (win.recording ? Kiki.Theme.accent : Kiki.Theme.muted)
+                color: win.clash ? Kiki.Theme.danger : (win.recording ? Kiki.Theme.accent : Kiki.Theme.muted)
                 font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }

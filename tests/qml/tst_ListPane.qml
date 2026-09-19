@@ -76,6 +76,16 @@ TestCase {
         compare(menued.signalArguments[0][0], 1)
     }
 
+    // Three rows in a 400px pane leaves empty space below them; a right click there is still a
+    // menu, asked for with no row — the shell greys out everything that needs a file.
+    function test_right_click_on_empty_space_asks_for_the_folder_menu() {
+        pane.selection.set(1)
+        mouseClick(list, 200, tc.height - 20, Qt.RightButton)
+        compare(menued.count, 1)
+        compare(menued.signalArguments[0][0], -1)
+        compare(pane.selection.count(), 0)
+    }
+
     // F2 puts the row into the inline editor; typing and Enter asks for the rename.
     function test_inline_rename_emits_the_request() {
         pane.selection.set(1)

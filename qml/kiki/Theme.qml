@@ -32,12 +32,63 @@ Singleton {
     property color green: "#9ece6a"
     property color yellow: "#e0af68"
     property color red: "#f7768e"
+    /// What "this is destructive" and "this went wrong" are drawn in. The theme's red — unless
+    /// the theme's red is not red: a monochrome theme (hackerman: `red = "#50f872"`) names a
+    /// green there, and "Move to Trash" in green reads as the safe choice. A palette slot is a
+    /// colour; danger is a meaning, and it does not get to be green.
+    readonly property color danger: isReddish(red) ? red : "#f7768e"
+    function isReddish(c) {
+        // Within ~30° of pure red on the wheel, and saturated enough to have a hue at all.
+        const h = c.hslHue
+        return c.hslSaturation >= 0.3 && (h < 0 ? false : (h <= 0.083 || h >= 0.917))
+    }
 
     /// The theme Omarchy says is current, for the settings page and for tests.
     property string name: ""
     /// The desktop's icon theme: Omarchy names one per theme, and elsewhere GTK's setting is the
     /// nearest thing to a system answer. Empty means nobody said, so kiki draws its own.
     property string iconTheme: ""
+    /// Theme-icon paths already resolved, keyed `name|size`, dropped when the theme changes.
+    ///
+    /// The daemon caches these too, but a round trip is a frame or three — long enough that every
+    /// list rebuild (a file appears in the folder, a delegate is recycled) showed the placeholder
+    /// icon first and the real one after, which reads as a flicker. Answered from here, a name
+    /// resolved once is resolved instantly for the rest of the session.
+    property var _iconPaths: ({})
+    property var _iconWaiting: ({})
+    /// Resolved lazily so a test can hand in a fake; the real singleton owns a socket.
+    property var daemon: null
+    function d() { return daemon || Kiki.Daemon }
+    onIconThemeChanged: { _iconPaths = ({}); _iconWaiting = ({}) }
+
+    /// The file for an icon name at a size: the path if it is known, "" if it is not. When it is
+    /// not, `cb` is called with the path once the daemon answers — one request per key however
+    /// many delegates ask at once.
+    function iconPath(name, size, cb) {
+        if (!iconTheme) return ""
+        const key = name + "|" + size
+        const hit = _iconPaths[key]
+        if (hit !== undefined) return hit
+        if (_iconWaiting[key]) { _iconWaiting[key].push(cb); return "" }
+        _iconWaiting[key] = [cb]
+        const asked = iconTheme
+        d().request("Icon", { name: name, theme: asked, size: size }, ok => {
+            if (asked !== theme.iconTheme) return          // a theme we have already left
+            const p = ok && ok.path ? "file://" + ok.path : ""
+            const m = Object.assign({}, theme._iconPaths); m[key] = p; theme._iconPaths = m
+            const waiting = theme._iconWaiting[key] || []
+            delete theme._iconWaiting[key]
+            // One caller failing must not cost the others their answer: a delegate destroyed
+            // while the request was in flight throws here, and at first launch (the list is
+            // built, then rebuilt as the listing lands) that left every live row behind it on
+            // kiki's own icon until the next rebuild.
+            for (const f of waiting) {
+                if (!f) continue
+                try { f(p) } catch (e) { console.warn("Theme.iconPath: a waiting caller failed:", e) }
+            }
+        })
+        return ""
+    }
     property string mono: "Cascadia Mono"
     property int fontSize: 13
     property int rowHeight: 28

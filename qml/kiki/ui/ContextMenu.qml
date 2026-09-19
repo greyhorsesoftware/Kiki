@@ -7,6 +7,10 @@ import ".." as Kiki
 Item {
     id: menu
     property var items: []
+    /// Whether an item is greyed out. Not `enabled === false`: a condition like `row && row.isDir`
+    /// hands back null when there is no row, and null is not false — the item would come out
+    /// looking live. Absent still means enabled.
+    function off(it) { return it.enabled !== undefined && !it.enabled }
     property point at: Qt.point(0, 0)
     signal closed()
     // The menu box itself: the scrim fills the parent, so its geometry is the box's.
@@ -15,10 +19,16 @@ Item {
     anchors.fill: parent
     z: 100
 
+    /// Keep the box inside the window. Called again when its height settles: the items were only
+    /// assigned a moment ago, so on the first pass the box is still the height of the last menu
+    /// and a long one opened near the bottom would hang off it.
+    function place() {
+        box.x = Math.max(0, Math.min(menu.at.x, menu.width - box.width - 4))
+        box.y = Math.max(0, Math.min(menu.at.y, menu.height - box.height - 4))
+    }
     function open(itemList, pos) {
         items = itemList; at = pos; visible = true
-        box.x = Math.max(0, Math.min(pos.x, menu.width - box.width - 4))
-        box.y = Math.max(0, Math.min(pos.y, menu.height - box.height - 4))
+        place()
         box.forceActiveFocus()
     }
     function close() { visible = false; subItems = []; subLabel = ""; closed() }
@@ -41,6 +51,7 @@ Item {
         id: box
         width: 232; height: col.height + 8; radius: 2
         color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        onHeightChanged: if (menu.visible) menu.place()
         focus: true
         Keys.onEscapePressed: menu.close()
         MouseArea { anchors.fill: parent }          // clicks in the box never reach the scrim
@@ -60,20 +71,22 @@ Item {
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
                     Rectangle {
                         y: parent.sep ? 5 : 0; width: parent.width; height: 26
-                        color: h.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
+                        color: h.containsMouse && !menu.off(modelData) ? Kiki.Theme.surface : "transparent"
                         Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                        Icon { visible: modelData.icon !== undefined; x: 12; anchors.verticalCenter: parent.verticalCenter; name: modelData.icon || "file"; size: 14; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.accent }
-                        Text { x: modelData.icon !== undefined ? 34 : (modelData.checked !== undefined ? 26 : 12); anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.red : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Icon { visible: modelData.icon !== undefined; x: 12; anchors.verticalCenter: parent.verticalCenter; name: modelData.icon || "file"; size: 14; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.accent }
+                        Text { x: modelData.icon !== undefined ? 34 : (modelData.checked !== undefined ? 26 : 12); anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: menu.off(modelData) ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.danger : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Text { visible: !parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                         Icon { visible: parent.parent.hasSub; anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: Kiki.Theme.muted }
                         MouseArea {
                             id: h; anchors.fill: parent; hoverEnabled: true
                             onEntered: {
-                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y }
+                                // A greyed-out row has nothing to show: hovering "Share" with
+                                // nothing selected must not fly a submenu out of it.
+                                if (parent.parent.hasSub && !menu.off(modelData)) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y }
                                 else { menu.subItems = []; menu.subLabel = "" }
                             }
                             onClicked: {
-                                if (modelData.enabled === false) return
+                                if (menu.off(modelData)) return
                                 if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y; return }
                                 const act = modelData.action
                                 menu.close()
@@ -103,15 +116,15 @@ Item {
                     objectName: "menu-" + modelData.label
                     readonly property bool sep: modelData.sep === true
                     width: subCol.width; height: (sep ? 5 : 0) + 26
-                    color: sh.containsMouse && modelData.enabled !== false ? Kiki.Theme.surface : "transparent"
+                    color: sh.containsMouse && !menu.off(modelData) ? Kiki.Theme.surface : "transparent"
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
-                    Icon { visible: modelData.icon !== undefined; x: 12; y: (parent.sep ? 5 : 0) + 6; name: modelData.icon || "file"; size: 14; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.accent }
-                    Text { x: modelData.icon !== undefined ? 34 : 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - (modelData.icon !== undefined ? 46 : 24); elide: Text.ElideRight; text: modelData.label; color: modelData.enabled === false ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    Icon { visible: modelData.icon !== undefined; x: 12; y: (parent.sep ? 5 : 0) + 6; name: modelData.icon || "file"; size: 14; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.accent }
+                    Text { x: modelData.icon !== undefined ? 34 : 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - (modelData.icon !== undefined ? 46 : 24); elide: Text.ElideRight; text: modelData.label; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     MouseArea {
                         id: sh
                         anchors.fill: parent; hoverEnabled: true
                         onClicked: {
-                            if (modelData.enabled === false) return
+                            if (menu.off(modelData)) return
                             const act = modelData.action
                             menu.close()
                             if (act) act()

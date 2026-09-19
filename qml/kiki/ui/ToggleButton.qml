@@ -7,10 +7,20 @@ Rectangle {
     property string icon: "info"
     property bool active: false
     property string tip: ""
+    property int iconSize: 16
+    /// Over a picture: no box behind the icon — the icon itself lights under the pointer.
+    property bool flat: false
+    /// The icon's colour at rest when `flat` (white reads on a picture; chrome does not).
+    property color restColor: Kiki.Theme.chrome
+    readonly property bool hovered: hover.containsMouse
     signal clicked()
-    width: 34; height: 34; radius: 2
-    color: active || hover.containsMouse ? Kiki.Theme.surface : "transparent"
-    Icon { anchors.centerIn: parent; name: btn.icon; color: btn.active ? Kiki.Theme.accent : Kiki.Theme.chrome }
+    width: Math.max(34, iconSize + 18); height: width; radius: 2
+    color: !flat && (active || hover.containsMouse) ? Kiki.Theme.surface : "transparent"
+    Icon {
+        objectName: "icon"
+        anchors.centerIn: parent; name: btn.icon; size: btn.iconSize
+        color: btn.active || (btn.flat && hover.containsMouse) ? Kiki.Theme.accent : (btn.flat ? btn.restColor : Kiki.Theme.chrome)
+    }
     Tip { visible: btn.tip !== "" && hover.containsMouse; text: btn.tip }
     MouseArea { id: hover; anchors.fill: parent; onClicked: btn.clicked(); hoverEnabled: true }
 }

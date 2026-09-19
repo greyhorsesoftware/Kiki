@@ -158,7 +158,7 @@ Rectangle {
                 Row { spacing: 8
                     Check { on: ws.windowOn; label: "Only mirror files modified in the last"; onToggled: ws.windowOn = !ws.windowOn }
                     Rectangle { width: 70; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter; opacity: ws.windowOn ? 1 : 0.5
-                        TextInput { anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: ws.windowValue; enabled: ws.windowOn; inputMethodHints: Qt.ImhDigitsOnly; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onTextChanged: ws.windowValue = parseInt(text) || 1 } }
+                        TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: ws.windowValue; enabled: ws.windowOn; inputMethodHints: Qt.ImhDigitsOnly; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onTextChanged: ws.windowValue = parseInt(text) || 1 } }
                     Rectangle { width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter; opacity: ws.windowOn ? 1 : 0.5
                         Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: ws.windowUnit; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         MouseArea { anchors.fill: parent; enabled: ws.windowOn; onClicked: { const o = ["hours", "days", "weeks"]; ws.windowUnit = o[(o.indexOf(ws.windowUnit) + 1) % o.length] } } }
@@ -170,9 +170,9 @@ Rectangle {
                     Column { anchors.fill: parent; anchors.margins: 14; spacing: 6
                         Text { text: "PLAN"; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1 }
                         Text { id: planText; width: parent.width; wrapMode: Text.WordWrap; lineHeight: 1.4; textFormat: Text.RichText; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
-                            text: "Mirror the <b style='color:" + Kiki.Theme.fg + "'>" + (ws.upload ? "local" : "remote") + "</b> folder to the <b style='color:" + Kiki.Theme.fg + "'>" + (ws.upload ? "remote" : "local") + "</b> folder. New and changed files are copied; " + (ws.deleteExtras ? "<b style='color:" + Kiki.Theme.red + "'>files missing on the source are deleted</b>." : "nothing is deleted.") + (ws.applyFilters ? " Files matching your filter rules are ignored." : "") } }
+                            text: "Mirror the <b style='color:" + Kiki.Theme.fg + "'>" + (ws.upload ? "local" : "remote") + "</b> folder to the <b style='color:" + Kiki.Theme.fg + "'>" + (ws.upload ? "remote" : "local") + "</b> folder. New and changed files are copied; " + (ws.deleteExtras ? "<b style='color:" + Kiki.Theme.danger + "'>files missing on the source are deleted</b>." : "nothing is deleted.") + (ws.applyFilters ? " Files matching your filter rules are ignored." : "") } }
                 }
-                Text { visible: ws.status !== ""; text: ws.status; color: Kiki.Theme.red; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                Text { visible: ws.status !== ""; text: ws.status; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
         }
     }
@@ -202,8 +202,8 @@ Rectangle {
                 Icon { visible: r && r.checked; anchors.centerIn: parent; name: "check"; size: 10; strokeWidth: 2.5; color: Kiki.Theme.bg }
                 MouseArea { anchors.fill: parent; enabled: r && r.action !== "skip"; onClicked: ws.toggleRow(index, !r.checked) } }
             Row { width: Math.min(150, Math.floor(parent.width * 0.3)); spacing: 6; anchors.verticalCenter: parent.verticalCenter; clip: true
-                Icon { anchors.verticalCenter: parent.verticalCenter; size: 12; name: r ? (r.action === "delete" || r.action === "rmdir" ? "x" : (r.action === "skip" ? "equals" : (ws.upload ? "arr-u" : "arr-dn"))) : "equals"; color: r ? (r.action === "delete" || r.action === "rmdir" ? Kiki.Theme.red : (r.reason === "changed" ? Kiki.Theme.yellow : (r.action === "skip" ? Kiki.Theme.gutter : Kiki.Theme.accent))) : Kiki.Theme.gutter }
-                Text { text: r ? (r.action === "copy" ? "copy (" + r.reason + ")" : (r.action === "skip" ? "unchanged" : r.action)) : ""; color: r && (r.action === "delete" || r.action === "rmdir") ? Kiki.Theme.red : (r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fgDim); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
+                Icon { anchors.verticalCenter: parent.verticalCenter; size: 12; name: r ? (r.action === "delete" || r.action === "rmdir" ? "x" : (r.action === "skip" ? "equals" : (ws.upload ? "arr-u" : "arr-dn"))) : "equals"; color: r ? (r.action === "delete" || r.action === "rmdir" ? Kiki.Theme.danger : (r.reason === "changed" ? Kiki.Theme.yellow : (r.action === "skip" ? Kiki.Theme.gutter : Kiki.Theme.accent))) : Kiki.Theme.gutter }
+                Text { text: r ? (r.action === "copy" ? "copy (" + r.reason + ")" : (r.action === "skip" ? "unchanged" : r.action)) : ""; color: r && (r.action === "delete" || r.action === "rmdir") ? Kiki.Theme.danger : (r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fgDim); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
             Text { width: Math.max(60, parent.width - 16 - 12 - Math.min(150, Math.floor(parent.width * 0.3)) - 12 - 90 - (running ? 232 : 0)); anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideMiddle; text: r ? r.rel : ""; color: r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { width: 90; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; text: r && r.bytes ? Kiki.Format.bytes(r.bytes) : "—"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Row { visible: running; width: 220; spacing: 6; anchors.verticalCenter: parent.verticalCenter
@@ -266,9 +266,9 @@ Rectangle {
         id: confirmBox
         visible: false; anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.5); z: 20
         MouseArea { anchors.fill: parent }
-        Rectangle { anchors.centerIn: parent; width: 460; height: 160; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.red
+        Rectangle { anchors.centerIn: parent; width: 460; height: 160; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.danger
             Column { anchors.fill: parent; anchors.margins: 20; spacing: 14
-                Text { text: "Large delete"; color: Kiki.Theme.red; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+                Text { text: "Large delete"; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
                 Text { width: parent.width; wrapMode: Text.WordWrap; text: "This will delete " + (ws.counts.deletes || 0) + " of " + (ws.counts.replicaEntries || 0) + " items (" + Math.round(100 * (ws.counts.deletes || 0) / Math.max(1, ws.counts.replicaEntries || 1)) + "%) on the destination. Proceed?"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                 Row { spacing: 8; anchors.right: parent.right
                     Button { text: "Cancel"; onClicked: confirmBox.visible = false }

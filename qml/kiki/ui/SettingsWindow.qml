@@ -163,19 +163,20 @@ Rectangle {
     }
     component NumberBox: Rectangle {
         property int value: 0; property string error: ""; signal edited(int v)
-        width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: error ? Kiki.Theme.red : Kiki.Theme.gutter
-        TextInput { activeFocusOnTab: true; anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: { const v = parseInt(text); if (isNaN(v) || v < 48 || v > 2000) parent.error = "48 to 2000"; else { parent.error = ""; parent.edited(v) } } }
-        Text { anchors.left: parent.right; anchors.leftMargin: 8; anchors.verticalCenter: parent.verticalCenter; text: parent.error; color: Kiki.Theme.red; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: error ? Kiki.Theme.danger : Kiki.Theme.gutter
+        TextInput { activeFocusOnTab: true; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: { const v = parseInt(text); if (isNaN(v) || v < 48 || v > 2000) parent.error = "48 to 2000"; else { parent.error = ""; parent.edited(v) } } }
+        Text { anchors.left: parent.right; anchors.leftMargin: 8; anchors.verticalCenter: parent.verticalCenter; text: parent.error; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     }
 
     Component { id: general; Column { spacing: 12
         Row2 { label: "File icons"; Choice { options: ["kiki", "system"]; value: Kiki.Settings.view.icons || "kiki"; onPicked: v => sw.set("view", "icons", v) } }
-        Row2 { label: "Default view"; Choice { options: ["list", "icon", "columns", "gallery", "mirror"]; value: Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
+        Row2 { label: "Default view"; Choice { objectName: "default-view"; options: ["list", "icon", "columns", "gallery"]; value: Kiki.Settings.view["default"] === "mirror" ? "list" : Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: "Sort by"; Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
         Row2 { hint: "h j k l move and e edits; off: typing jumps to a name (type-ahead), F4 edits"; label: "Vim keys"; Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }
         Row2 { hint: "Modified as \"yesterday 14:02\", \"3 h ago\"; off shows the full date"; label: "Relative dates"; Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } }
         Row2 { hint: "Rail is a column of icons that widens when you point at it; Traditional is the full panel"; label: "Favorites panel"
             Choice { options: ["rail", "traditional"]; value: Kiki.Settings.view.sidebarStyle || "rail"; onPicked: v => sw.set("view", "sidebarStyle", v) } }
+        Row2 { hint: "the rail's icon comes forward under the pointer"; label: "Rail icons grow"; Switch { objectName: "rail-hover"; on: Kiki.Settings.view.railHover !== false; onToggled: sw.set("view", "railHover", !on) } }
         Row2 { hint: "off hides it until Ctrl+Shift+B"; label: "Show favorites panel"; Switch { on: Kiki.Settings.view.sidebar === true; onToggled: sw.set("view", "sidebar", !on) } }
         Row2 { hint: "default for new panes; Ctrl+H or the view menu toggles a pane"; label: "Show hidden files"; Switch { on: Kiki.Settings.view.showHidden === true; onToggled: sw.set("view", "showHidden", !on) } }
         Row2 { label: "Remember view per folder"; Switch { on: Kiki.Settings.view.rememberPerFolder !== false; onToggled: sw.set("view", "rememberPerFolder", !on) }
@@ -242,7 +243,7 @@ Rectangle {
         Row2 { label: "AI"; Choice { options: ["omarchy", "anthropic", "openai", "gemini", "xai", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } }
         Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each in print mode."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
         Row2 { label: "Custom command"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
-            TextInput { anchors.fill: parent; anchors.margins: 8; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.cliCommand || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { cliCommand: text }, () => { Kiki.Settings.load(); refresh(); sw.saved() })
+            TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.cliCommand || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { cliCommand: text }, () => { Kiki.Settings.load(); refresh(); sw.saved() })
                 Text { visible: !parent.text.length && !parent.activeFocus; text: "e.g. mytool --ask {prompt}"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } } }
         Text { text: "The command runs in the file's folder with {prompt} (the question, naming the files) and {files} substituted; its output streams into the Jarvis panel."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
     } }

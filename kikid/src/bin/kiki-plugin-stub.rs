@@ -30,6 +30,8 @@ fn seed() -> Node {
     root.children.insert("docs".into(), docs);
     root.children.insert("empty".into(), Node::dir());
     root.children.insert("data.bin".into(), Node::file(&[0u8; 4096]));
+    // Read slowly, so a test can have a second transfer begin while this one is still streaming.
+    root.children.insert("slow.bin".into(), Node::file(&[7u8; 3072]));
     root
 }
 
@@ -155,7 +157,10 @@ fn main() {
             }
             "Connect" => {
                 connected.insert(loc.clone(), true);
-                ok(id, Value::obj().v("fingerprint", Value::Null).v("banner", Value::Null).done())
+                // A server that identifies itself with a key says so here; the stub does it when
+                // its config asks, which is how the contract test drives kiki's verify flow.
+                let fp = v.get("config").and_then(|c| c.str_field("fingerprint")).map(str::to_string);
+                ok(id, Value::obj().opt_s("fingerprint", fp.as_deref()).v("banner", Value::Null).done())
             }
             "Disconnect" => {
                 connected.remove(&loc);
@@ -169,6 +174,10 @@ fn main() {
                 let _ = write_json(&mut stdout, &ok(id, Value::obj().done()));
                 return;
             }
+            // API-PLUGIN: a plugin that cannot walk a whole tree in one request says so, and the
+            // daemon lists directory by directory. Answering the top level and calling it
+            // recursive would leave every mirror re-copying the files it never saw.
+            "Scan" if v.get("recursive").and_then(Value::as_bool).unwrap_or(false) => err(id, "Unsupported", "the stub lists one directory at a time"),
             "Scan" => match lookup(&mut root, &path) {
                 Some(d) if d.is_dir => {
                     let entries: Vec<Value> = d.children.iter().map(|(n, c)| Value::obj().s("name", n.clone()).s("kind", if c.is_dir { "dir" } else { "file" }).v("meta", meta(c)).done()).collect();
@@ -186,7 +195,11 @@ fn main() {
             "Read" => match lookup(&mut root, &path) {
                 Some(n) if !n.is_dir => {
                     let data = n.data.clone();
+                    let slow = path.ends_with("slow.bin");
                     for chunk in data.chunks(1024) {
+                        if slow {
+                            std::thread::sleep(std::time::Duration::from_millis(60));
+                        }
                         let _ = write_binary(&mut stdout, chunk);
                     }
                     let _ = write_binary(&mut stdout, &[]);

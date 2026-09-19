@@ -45,6 +45,16 @@ TestCase {
         verify(findChild(icons, "tile-2") !== null)
     }
 
+    // Between the icons there is no tile to click, and that has to give the folder's menu rather
+    // than nothing at all.
+    function test_right_click_between_the_icons_asks_for_the_folder_menu() {
+        pane.selection.set(2)
+        mouseClick(icons, tc.width / 2, tc.height - 20, Qt.RightButton)
+        compare(menued.count, 1)
+        compare(menued.signalArguments[0][0], -1)
+        compare(pane.selection.count(), 0)
+    }
+
     function test_click_selects_that_tile() {
         const tile = findChild(icons, "tile-1")
         mouseClick(tile, tile.width / 2, tile.height / 2)

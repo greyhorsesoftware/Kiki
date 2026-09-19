@@ -40,12 +40,50 @@ Rectangle {
         return uri.slice(0, i + 3) + auth + (path || "/")
     }
 
+    // A path too long for the field slides left so the folder you are in stays visible — and the
+    // wheel, or two fingers on a touchpad, slides it back and forth to reach the rest. `scroll`
+    // is how far it has been pulled back towards its start: 0 at rest, `overflow` with the first
+    // crumb against the left edge.
+    readonly property real overflow: Math.max(0, crumbRow.width + 10 - crumbSpace)
+    property real scroll: 0
+    onUriChanged: scroll = 0                     // a new folder shows its own end
+    onOverflowChanged: scroll = Math.max(0, Math.min(scroll, overflow))
+    function scrollBy(d) { scroll = Math.max(0, Math.min(overflow, scroll + d)) }
+    // A WheelHandler hears one axis, so there are two. A touchpad gives pixels; a mouse wheel
+    // gives notches, and only turns one way — so its vertical turn is taken as sideways here,
+    // there being nothing vertical to scroll.
+    function wheeled(event, horizontal) {
+        const px = horizontal ? event.pixelDelta.x : event.pixelDelta.y
+        const d = px !== 0 ? px : (horizontal ? event.angleDelta.x : event.angleDelta.y) / 2
+        if (d === 0) { event.accepted = false; return }
+        bc.scrollBy(d)
+        event.accepted = true
+    }
+    WheelHandler {
+        enabled: !bc.editing && bc.overflow > 0
+        orientation: Qt.Vertical
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: event => bc.wheeled(event, false)
+    }
+    WheelHandler {
+        enabled: !bc.editing && bc.overflow > 0
+        orientation: Qt.Horizontal
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: event => bc.wheeled(event, true)
+    }
+    // The crumbs have the field less the branch chip, and are clipped to it: scrolled back, the
+    // row must slide under the chip's edge rather than over the chip.
+    Item {
+        id: crumbView
+        objectName: "crumb-view"
+        visible: !bc.editing
+        width: Math.max(0, bc.crumbSpace + 10); height: parent.height
+        clip: true
     Row {
         id: crumbRow
-        visible: !bc.editing
+        objectName: "crumb-row"
         anchors.verticalCenter: parent.verticalCenter; spacing: 6
-        // A path too long for the field slides left so the folder you are in stays visible.
-        x: Math.min(10, bc.crumbSpace - width)
+        x: Math.min(10, bc.crumbSpace - width) + bc.scroll
         Repeater {
             model: Kiki.Format.crumbs(bc.uri, bc.home)
             delegate: Row {
@@ -75,6 +113,7 @@ Rectangle {
                 }
             }
         }
+    }
     }
     // Branch chip (plan 15)
     Rectangle {

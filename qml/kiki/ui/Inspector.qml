@@ -10,10 +10,15 @@ Rectangle {
     property var row: null           // the listing row when known (name, kind, meta)
     property string tab: "general"   // general | permissions
     signal edit(string uri, int line)
+    /// Open this file in the application that owns its type.
+    signal open(string uri)
     property string home: ""
     property var preview: null
     property var meta: row ? row.meta : null
     property bool standalone: false
+    /// False where the panel is part of the view rather than something you opened: the info
+    /// column in Miller columns follows the selection and has nothing to close to.
+    property bool closable: true
     signal closed()
     signal chmod(int mode, bool recursive)
     /// Dragging the leading edge: `dx` is the movement, positive to the right.
@@ -39,10 +44,14 @@ Rectangle {
         Rectangle { anchors.fill: parent; color: grip.containsMouse || grip.pressed ? Kiki.Theme.accent : "transparent"; opacity: 0.5 }
     }
 
-    onUriChanged: { preview = null; if (uri) reload() }
+    /// The daemon has been asked what this file looks like and has not said yet. Until it does
+    /// the preview box stays empty: "no preview" is an answer, and drawing the kind icon before
+    /// it arrives meant every file showed its icon for a moment and then its preview.
+    property bool previewPending: false
+    onUriChanged: { preview = null; previewPending = uri !== ""; if (uri) reload() }
     function reload() {
         const u = uri
-        Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) preview = ok || null })
+        Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) { preview = ok || null; previewPending = false } })
         if (!meta) Kiki.Daemon.request("Stat", { uri: u }, (ok, err) => { if (u === insp.uri && ok) insp.meta = ok })
     }
     function kind() { return row ? row.kind : "file" }
@@ -63,6 +72,8 @@ Rectangle {
     // A panel you asked for needs a visible way out; Ctrl+I toggles it too.
     ToggleButton {
         anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
+        objectName: "inspector-close"
+        visible: insp.closable
         z: 2; icon: "x"; tip: "Close (Ctrl+I)"
         onClicked: insp.closed()
     }
@@ -71,8 +82,11 @@ Rectangle {
         // Header: icon, name, path
         Row {
             width: parent.width; spacing: 12
-            Icon { name: insp.kind(); size: 40; strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
+            Icon { objectName: "inspector-title-icon"; name: insp.kind(); size: 40; strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
             Column {
+                objectName: "inspector-title"
+                // Level with the icon beside it, not hung from the top of the row.
+                anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 52; spacing: 4
                 // The name alone: the folder it is in is a field under General, and repeating the
                 // whole path here only crowded the header.
@@ -83,17 +97,23 @@ Rectangle {
         Rectangle {
             id: previewBox
             readonly property bool markdown: insp.preview && insp.preview.markdown === true
-            readonly property bool isImage: insp.preview && insp.preview.path !== undefined
+            // A local picture needs no answer from the daemon to start drawing: it is the file.
+            readonly property bool isImage: localImage || (insp.preview && insp.preview.path !== undefined)
             /// A local picture is read from the file itself rather than from its 256px thumbnail,
             /// which the panel is wide enough to show blown up and blurred.
             readonly property bool localImage: insp.kind() === "image" && insp.uri.indexOf("file://") === 0
+            /// A video on this machine can be played where its still is. Only on a click: a
+            /// selection moving down a folder must not start ten players.
+            readonly property bool localVideo: insp.kind() === "video" && insp.uri.indexOf("file://") === 0
+            property bool videoOn: false
+            Connections { target: insp; function onUriChanged() { previewBox.videoOn = false } }
             // An image preview takes the width of the panel and keeps its own ratio, rather
             // than sitting letterboxed in a short box.
             readonly property int imageHeight: img.implicitWidth > 0
                 ? Math.min(400, Math.round((width - 12) * img.implicitHeight / img.implicitWidth) + 12)
                 : 240
             // A folder (or anything with no preview) is just its icon: no box around it.
-            readonly property bool iconOnly: !insp.preview || insp.preview.children !== undefined
+            readonly property bool iconOnly: !isImage && (!insp.preview || insp.preview.children !== undefined)
             width: parent.width
             height: Math.min(markdown ? 300 : (isImage ? imageHeight : 150), Math.round(insp.height * 0.4))
             radius: 2
@@ -122,7 +142,7 @@ Rectangle {
             }
             Image {
                 id: img
-                visible: insp.preview && insp.preview.path !== undefined
+                visible: previewBox.isImage
                 anchors.fill: parent; anchors.margins: 6; fillMode: Image.PreserveAspectFit
                 asynchronous: true; smooth: true; mipmap: true; cache: false
                 source: previewBox.localImage ? insp.uri : (insp.preview && insp.preview.path ? "file://" + insp.preview.path : "")
@@ -130,13 +150,66 @@ Rectangle {
                 sourceSize: Qt.size(Math.round(previewBox.width * Screen.devicePixelRatio),
                                     Math.round(400 * Screen.devicePixelRatio))
             }
+            Loader {
+                id: video
+                objectName: "inspector-video"
+                anchors.fill: parent; anchors.margins: 6
+                active: previewBox.videoOn
+                source: "VideoPreview.qml"
+                onLoaded: item.source = insp.uri
+            }
+            // The still is the play button; the one floating over its middle shows under the
+            // pointer and pauses as well. Below the panel's own close box and resize grip.
+            MouseArea {
+                id: videoHover
+                objectName: "inspector-video-area"
+                visible: previewBox.localVideo && previewBox.isImage
+                anchors.fill: parent; hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: previewBox.toggleVideo()
+                // Two round buttons over the middle of the picture: play/pause, and open it in
+                // the app that owns the type. `hovered` spans the buttons too — a MouseArea
+                // inside another takes the pointer from it, and the pair would blink out.
+                readonly property bool hovered: containsMouse || playArea.containsMouse || openArea.containsMouse
+                Row {
+                    objectName: "inspector-video-buttons"
+                    visible: videoHover.hovered
+                    anchors.centerIn: parent; spacing: 14
+                    Rectangle {
+                        objectName: "inspector-video-button"
+                        width: 48; height: 48; radius: 24
+                        color: Qt.rgba(0, 0, 0, playArea.containsMouse ? 0.75 : 0.55); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.25)
+                        Icon { anchors.centerIn: parent; name: video.item && video.item.playing ? "pause" : "play"; size: 20; color: "white" }
+                        MouseArea { id: playArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: previewBox.toggleVideo() }
+                    }
+                    Rectangle {
+                        objectName: "inspector-video-open"
+                        width: 48; height: 48; radius: 24
+                        color: Qt.rgba(0, 0, 0, openArea.containsMouse ? 0.75 : 0.55); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.25)
+                        Icon { anchors.centerIn: parent; name: "open"; size: 20; color: "white" }
+                        Tip { visible: openArea.containsMouse; text: "Open" }
+                        MouseArea {
+                            id: openArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            // Two players talking over each other helps nobody: ours stops.
+                            onClicked: { if (video.item && video.item.playing) video.item.toggle(); insp.open(insp.uri) }
+                        }
+                    }
+                }
+            }
+            function toggleVideo() { if (!videoOn) videoOn = true; else if (video.item) video.item.toggle() }
             Column {
                 visible: insp.preview && insp.preview.members !== undefined
                 anchors.fill: parent; anchors.margins: 10
                 Repeater { model: insp.preview && insp.preview.members ? insp.preview.members.slice(0, 9) : []; delegate: Text { required property var modelData; text: (modelData.isDir ? "" : "  ") + modelData.name; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11; elide: Text.ElideMiddle; width: 250 } }
             }
             // A folder shows its icon rather than a list of what is inside it.
-            Icon { visible: !insp.preview || insp.preview.children !== undefined; anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
+            // Only once that is known: a folder says so in its row, anything else when the
+            // daemon has answered.
+            Icon {
+                objectName: "inspector-kind-icon"
+                visible: insp.previewPending ? !!(insp.row && insp.row.isDir) : previewBox.iconOnly
+                anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind())
+            }
         }
         // Tabs
         Item {

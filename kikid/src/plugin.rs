@@ -132,7 +132,16 @@ pub struct Plugin {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
     pending: Mutex<HashMap<u64, Sender<Msg>>>,
+    /// Which request the binary frames arriving now belong to.
     stream: Mutex<Option<u64>>,
+    /// Held for the whole of a binary transfer, in either direction. Binary frames carry no id —
+    /// only a length and a type byte — so both ends can attribute them to exactly one request at
+    /// a time: the daemon through `stream` above, the SDK through its own `Read`/`Thumb` lock and
+    /// its single `Write` slot. Without this gate a second transfer begun while the first was
+    /// still streaming would take the first one's frames, which in a mirror means one file's
+    /// bytes written to another file's path. JSON streams (`Scan`) carry their own id and do not
+    /// take it, so browsing a location while a transfer runs is still parallel.
+    binary: Mutex<()>,
     next_id: AtomicU64,
     describe: OnceLock<Value>,
     last_used: Mutex<std::time::Instant>,
@@ -170,6 +179,7 @@ impl Plugin {
             stdin: Mutex::new(stdin),
             pending: Mutex::new(HashMap::new()),
             stream: Mutex::new(None),
+            binary: Mutex::new(()),
             next_id: AtomicU64::new(1),
             describe: OnceLock::new(),
             last_used: Mutex::new(std::time::Instant::now()),
@@ -328,25 +338,39 @@ impl Plugin {
         self.wait_reply(id, &rx, None)
     }
 
-    /// A streaming request: `on_frame` gets every intermediate JSON or binary frame; returns the final reply.
+    /// A streaming request whose frames are JSON — `Scan`. Every frame carries its own id, so any
+    /// number of these can be in flight on one plugin at once.
     pub fn request_stream(&self, req: Value, on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
         self.request_stream_with(req, None, on_frame)
     }
 
-    /// A streaming request that stops early when `cancel` is set (a closed listing, a cancelled job).
+    /// The same, stopping early when `cancel` is set (a closed listing, a cancelled job).
     pub fn request_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
+        let (id, rx) = self.begin(req, false)?;
+        self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame))
+    }
+
+    /// A request whose reply streams binary frames — `Read`, `Thumb`. One at a time per plugin.
+    pub fn read_stream(&self, req: Value, on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
+        self.read_stream_with(req, None, on_frame)
+    }
+
+    pub fn read_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
+        let _gate = self.binary.lock().unwrap_or_else(|e| e.into_inner());
         let (id, rx) = self.begin(req, true)?;
         let r = self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame));
         *self.stream.lock().unwrap() = None;
         r
     }
 
-    /// Write: send the request, then binary frames, then the end marker; returns the reply.
+    /// Write: send the request, then binary frames, then the end marker; returns the reply. Takes
+    /// the same gate — the SDK routes incoming binary frames to the one `Write` it has in flight.
     pub fn write_stream(&self, req: Value, chunks: impl FnMut() -> Option<Vec<u8>>) -> Result<Value, VfsError> {
         self.write_stream_with(req, None, chunks)
     }
 
     pub fn write_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut chunks: impl FnMut() -> Option<Vec<u8>>) -> Result<Value, VfsError> {
+        let _gate = self.binary.lock().unwrap_or_else(|e| e.into_inner());
         let (id, rx) = self.begin(req, false)?;
         while let Some(c) = chunks() {
             if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {

@@ -18,7 +18,7 @@ Rectangle {
                 width: parent.width; height: 44
                 Column {
                     x: 8; y: 6; width: parent.width - 60; spacing: 4
-                    Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: modelData.state === "failed" ? Kiki.Theme.red : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                    Text { width: parent.width; elide: Text.ElideRight; text: modelData.title; color: modelData.state === "failed" ? Kiki.Theme.danger : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                     Row {
                         spacing: 10; width: parent.width
                         Rectangle {

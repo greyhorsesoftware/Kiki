@@ -54,6 +54,21 @@ pub fn upsert(location: Value) -> std::io::Result<()> {
     write_all(&items)
 }
 
+/// The picture a location wears in the sidebar: a path to an image file, or `None` to go back
+/// to the plain glyph. Changed in place — it is not part of how the location connects, so the
+/// live session is left alone and the location keeps its place in the list.
+pub fn set_image(name: &str, image: Option<&str>) -> std::io::Result<()> {
+    let mut items = all();
+    let Some(Value::Obj(m)) = items.iter_mut().find(|l| l.str_field("name") == Some(name)) else {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("no location called {name}")));
+    };
+    match image.filter(|i| !i.is_empty()) {
+        Some(i) => m.insert("image".to_string(), Value::Str(i.to_string())),
+        None => m.remove("image"),
+    };
+    write_all(&items)
+}
+
 pub fn remove(name: &str) -> std::io::Result<()> {
     let items: Vec<Value> = all().into_iter().filter(|l| l.str_field("name") != Some(name)).collect();
     write_all(&items)?;
@@ -134,6 +149,10 @@ fn secrets_for(location: &Value) -> Value {
     Value::Obj(m)
 }
 
+/// How a refusal to connect to a never-verified server starts; the key's fingerprint follows.
+/// The shell recognises it and offers the verification instead of showing a bare error.
+pub const UNVERIFIED_PREFIX: &str = "this server's key has not been verified yet: ";
+
 /// Connects (or reuses) the plugin session for a saved location and role.
 pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<Arc<Session>, VfsError> {
     let name = location.str_field("name").ok_or(VfsError::Io("location without name".into()))?.to_string();
@@ -147,7 +166,25 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
     let plugin = plugin::get(&scheme)?;
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     let secrets = secrets.unwrap_or_else(|| secrets_for(location));
-    plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done())?;
+    let pinned = config.str_field("trustedFingerprint").map(str::to_string);
+    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done())?;
+    // A location added without being checked has never had its server's key looked at.
+    match key_verdict(pinned.as_deref(), reply.str_field("fingerprint"), reply.get("knownHost").and_then(Value::as_bool).unwrap_or(false)) {
+        KeyVerdict::Proceed => {}
+        KeyVerdict::Pin(fp) => {
+            let mut pinned_location = location.clone();
+            if let Value::Obj(m) = &mut pinned_location {
+                let mut c = match m.get("config").cloned() { Some(Value::Obj(c)) => c, _ => BTreeMap::new() };
+                c.insert("trustedFingerprint".into(), Value::Str(fp));
+                m.insert("config".into(), Value::Obj(c));
+            }
+            let _ = upsert(pinned_location);
+        }
+        KeyVerdict::Refuse(fp) => {
+            let _ = plugin.request(Value::obj().s("type", "Disconnect").s("location", name.clone()).s("role", role).done());
+            return Err(VfsError::Io(format!("{UNVERIFIED_PREFIX}{fp}")));
+        }
+    }
     let s = Arc::new(Session { plugin, location: name, role: role.to_string() });
     sessions().lock().unwrap().insert(key, Arc::clone(&s));
     Ok(s)
@@ -175,21 +212,83 @@ pub fn resolve(uri: &Uri) -> Result<(Arc<Session>, String), VfsError> {
     Ok((s, uri.path.clone()))
 }
 
-/// Validate + connect a candidate location with the given secrets, without saving.
-pub fn test(location: &Value, secrets: &Value) -> Result<(), VfsError> {
+/// Validate + connect a candidate location with the given secrets, without saving. Returns the
+/// server's key fingerprint when the plugin reports one (SFTP does), and whether the plugin
+/// found that key in a record the user already keeps — `~/.ssh/known_hosts`.
+pub fn test(location: &Value, secrets: &Value) -> Result<(Option<String>, bool), VfsError> {
     let scheme = location.str_field("plugin").ok_or(VfsError::Io("missing plugin".into()))?;
     let plugin = plugin::get(scheme)?;
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     plugin.request(Value::obj().s("type", "Validate").v("config", config.clone()).done())?;
     let name = format!("_test_{}", location.str_field("name").unwrap_or("x"));
-    plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", "browse").v("config", config).v("secrets", secrets.clone()).done())?;
+    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", "browse").v("config", config).v("secrets", secrets.clone()).done())?;
     let _ = plugin.request(Value::obj().s("type", "Disconnect").s("location", name).s("role", "browse").done());
-    Ok(())
+    Ok((reply.str_field("fingerprint").map(str::to_string), reply.get("knownHost").and_then(Value::as_bool).unwrap_or(false)))
 }
 
 /// Add or update: validate, connect, store secrets, then write the file.
-pub fn save(location: Value, secrets: &Value) -> Result<(), VfsError> {
-    test(&location, secrets)?;
+///
+/// A server that identifies itself with a key — SFTP — is not saved until the user has seen that
+/// key and said yes. The first attempt comes back `Ok(Some(fingerprint))`, which is the shell's
+/// cue to show it; the shell asks again with `trust` set to the fingerprint it displayed, and
+/// that is what gets written as `trustedFingerprint`. Every later connection is checked against
+/// it, and a server whose key has changed is refused with a message that says so.
+pub fn save(location: Value, secrets: &Value, trust: Option<&str>, check: bool) -> Result<Option<String>, VfsError> {
+    let mut location = location;
+    // "Add": take what was typed. The fields are validated (that needs no network), the secrets
+    // are stored, the file is written — and nothing is looked up, resolved or connected to. The
+    // server's key is therefore NOT verified yet; `connect` below refuses an unknown one until
+    // it has been (through "Save and Connect"), so skipping the check here never becomes
+    // trusting whoever answers first.
+    if !check {
+        let scheme = location.str_field("plugin").ok_or(VfsError::Io("missing plugin".into()))?;
+        let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
+        plugin::get(scheme)?.request(Value::obj().s("type", "Validate").v("config", config).done())?;
+        return store(location, secrets);
+    }
+    if let Some(fp) = trust {
+        let mut config = match location.get("config").cloned() {
+            Some(Value::Obj(m)) => m,
+            _ => BTreeMap::new(),
+        };
+        config.insert("trustedFingerprint".into(), Value::Str(fp.to_string()));
+        if let Value::Obj(m) = &mut location {
+            m.insert("config".into(), Value::Obj(config));
+        }
+    }
+    let pinned = location.get("config").and_then(|c| c.str_field("trustedFingerprint")).map(str::to_string);
+    // Check with what was typed, over what is already in the keyring: editing a saved location
+    // (or verifying one that was added unchecked) does not mean typing its password again.
+    let mut for_test = match secrets_for(&location) { Value::Obj(m) => m, _ => BTreeMap::new() };
+    if let Value::Obj(given) = secrets {
+        for (k, v) in given {
+            for_test.insert(k.clone(), v.clone());
+        }
+    }
+    let (seen, known_host) = test(&location, &Value::Obj(for_test))?;
+    if let Some(fp) = &seen {
+        if pinned.is_none() {
+            if !known_host {
+                return Ok(Some(fp.clone()));   // the user has not accepted this key yet
+            }
+            // ssh already knows this host and this key. That is the same verification, done
+            // once, by hand; pin it rather than asking the question a second time.
+            if let Value::Obj(m) = &mut location {
+                let mut config = match m.get("config").cloned() {
+                    Some(Value::Obj(c)) => c,
+                    _ => BTreeMap::new(),
+                };
+                config.insert("trustedFingerprint".into(), Value::Str(fp.clone()));
+                m.insert("config".into(), Value::Obj(config));
+            }
+        }
+    }
+    store(location, secrets)
+}
+
+/// Secrets to the keyring, the location to its file, and any live session on the old details
+/// dropped.
+fn store(location: Value, secrets: &Value) -> Result<Option<String>, VfsError> {
     let name = location.str_field("name").ok_or(VfsError::Io("missing name".into()))?.to_string();
     if let Value::Obj(m) = secrets {
         for (k, v) in m {
@@ -199,7 +298,30 @@ pub fn save(location: Value, secrets: &Value) -> Result<(), VfsError> {
         }
     }
     disconnect(&name);
-    upsert(location).map_err(|e| VfsError::Io(e.to_string()))
+    upsert(location).map_err(|e| VfsError::Io(e.to_string()))?;
+    Ok(None)
+}
+
+/// What to do about the key a server offered to a SAVED location, given what the location
+/// already holds. Pure, so it can be tested without a server.
+#[derive(Debug, PartialEq)]
+pub(crate) enum KeyVerdict {
+    /// Nothing to decide: the plugin reports no key, or this one is the pinned one (the plugin
+    /// itself refuses a pinned key that changed).
+    Proceed,
+    /// Never verified, but `~/.ssh/known_hosts` vouches for it: pin it and carry on.
+    Pin(String),
+    /// Never verified and unknown to ssh too: refuse. Connecting would be trusting whoever
+    /// answered first, without ever having shown the key to anybody.
+    Refuse(String),
+}
+
+pub(crate) fn key_verdict(pinned: Option<&str>, offered: Option<&str>, known_host: bool) -> KeyVerdict {
+    match (pinned, offered) {
+        (Some(_), _) | (None, None) => KeyVerdict::Proceed,
+        (None, Some(fp)) if known_host => KeyVerdict::Pin(fp.to_string()),
+        (None, Some(fp)) => KeyVerdict::Refuse(fp.to_string()),
+    }
 }
 
 pub fn json_list() -> Value {
@@ -208,4 +330,56 @@ pub fn json_list() -> Value {
 
 pub fn scheme_set() -> HashSet<String> {
     plugin::available().into_iter().collect()
+}
+
+#[cfg(test)]
+mod key_verdict_tests {
+    use super::*;
+
+    /// A location added without being checked has never had its server's key looked at. What
+    /// the first connect does about that decides whether "Add" is safe.
+    #[test]
+    fn an_unverified_unknown_key_is_refused_not_trusted() {
+        assert_eq!(key_verdict(None, Some("SHA256:abc"), false), KeyVerdict::Refuse("SHA256:abc".into()));
+    }
+
+    #[test]
+    fn a_key_ssh_already_vouches_for_is_pinned() {
+        assert_eq!(key_verdict(None, Some("SHA256:abc"), true), KeyVerdict::Pin("SHA256:abc".into()));
+    }
+
+    #[test]
+    fn a_pinned_location_and_a_plugin_with_no_keys_just_connect() {
+        assert_eq!(key_verdict(Some("SHA256:abc"), Some("SHA256:abc"), false), KeyVerdict::Proceed);
+        assert_eq!(key_verdict(None, None, false), KeyVerdict::Proceed);      // FTPS: no fingerprint reported
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn an_image_is_set_and_cleared_in_place() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kiki-locimg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("KIKI_CONFIG_DIR", &dir);
+        upsert(Value::obj().s("name", "first").s("plugin", "sftp").done()).unwrap();
+        upsert(Value::obj().s("name", "second").s("plugin", "sftp").done()).unwrap();
+
+        set_image("first", Some("/pics/nas.png")).unwrap();
+        let names: Vec<String> = all().iter().map(|l| l.str_field("name").unwrap().to_string()).collect();
+        assert_eq!(names, ["first", "second"], "the location keeps its place");
+        assert_eq!(find("first").unwrap().str_field("image"), Some("/pics/nas.png"));
+        assert_eq!(find("second").unwrap().str_field("image"), None);
+
+        set_image("first", Some("")).unwrap();
+        assert_eq!(find("first").unwrap().str_field("image"), None, "empty clears it");
+        assert_eq!(find("first").unwrap().str_field("plugin"), Some("sftp"));
+        assert!(set_image("nobody", Some("/x.png")).is_err());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::env::remove_var("KIKI_CONFIG_DIR");
+    }
 }

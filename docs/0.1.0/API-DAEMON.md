@@ -191,8 +191,10 @@ Events:
 | `Plugins` | | `{ plugins: [{ scheme, displayName, form: [Field], defaults: {…}, secretFields: [string] }] }` |
 | `Locations` | | `{ locations: [Location] }` |
 | `TestLocation` | `location: Location`, `secrets: { key: string }` | `{}` or error with `field` |
-| `AddLocation` | `location`, `secrets` | `{}` (validates, connects, writes keyring then file) |
-| `UpdateLocation` | `location`, `secrets` (only changed keys) | `{}` |
+| `AddLocation` | `location`, `secrets`, `trust`? | `{}` when saved (validates, connects, writes keyring then file), or `{ verify, host }` when the server offered a key nobody has accepted — nothing is saved, and the shell asks again with `trust` set to the fingerprint it showed, which is stored as `config.trustedFingerprint` |
+| `UpdateLocation` | `location`, `secrets` (only changed keys), `trust`? | as `AddLocation` |
+| `Icon` | `name`, `theme`, `size` | `{ path }` — the file an icon theme uses for a freedesktop icon name, or `null`. Resolved by the daemon because Qt answers with a provider URL that does not change when the theme does |
+| `PluginBrowse` | `plugin`, `field`, `config`, `secrets` | `{ items: [{ value, label }] }` — the choices a plugin offers for a `browse` field (shares on a server, say) |
 | `RemoveLocation` | `name` | `{}` |
 | `Disconnect` | `name` | `{}` |
 | `Settings` | | the merged `settings.toml` as an object with the daemon's defaults filled in |

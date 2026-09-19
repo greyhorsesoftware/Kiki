@@ -75,6 +75,16 @@ Item {
             onContextMenu: pos => root.contextMenu(index, pos)
         }
     }
+    // A right-click on empty space is still a menu — the folder's, with everything that needs a
+    // file greyed out. Rows sit above this and answer for themselves.
+    MouseArea {
+        anchors.fill: view; z: -1
+        acceptedButtons: Qt.RightButton
+        onClicked: mouse => {
+            root.pane.selection.clear()
+            root.contextMenu(-1, mapToItem(null, mouse.x, mouse.y))
+        }
+    }
     // Drops on empty space land in the folder being shown (rows sit above this and win).
     DropArea {
         anchors.fill: view; z: -1

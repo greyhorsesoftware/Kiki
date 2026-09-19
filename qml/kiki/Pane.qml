@@ -50,16 +50,7 @@ QtObject {
         filterText = ""
         selection.clear()
         // Per-folder memory (plan 02): restore this folder's view and sort, else keep the current ones.
-        const pref = Kiki.Settings.viewPref(target.replace(/\/+$/, "") || target)
-        hasPref = !!pref
-        _applying = true
-        if (pref) { if (pref.view && pref.view !== view) view = pref.view; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc"; showHidden = pref.hidden !== undefined ? pref.hidden : (Kiki.Settings.view.showHidden === true) }
-        else {
-            showHidden = Kiki.Settings.view.showHidden === true
-            const d = Kiki.Settings.view["default"] || "list"
-            if (view !== d && view !== "mirror") view = d
-        }
-        _applying = false
+        _applyPref(target)
         listing.open(target)
         // Always state the order: the daemon caches listings, so this folder may still carry the
         // order some earlier pane asked for. The daemon ignores a sort that is already in force.
@@ -67,13 +58,45 @@ QtObject {
         if (showHidden !== (Kiki.Settings.view.showHidden === true)) listing.showHidden(showHidden)
         navigated(target)
     }
+    /// Whether this pane reads and writes per-folder view memory. Off side by side: a folder
+    /// remembered as Gallery must not open that way in half a window, and nothing chosen there —
+    /// view, sort, hidden files — is the folder's preference. One switch for read and write, so
+    /// the two cannot drift apart.
+    property bool rememberViews: true
+    /// Put this folder back the way it is remembered: for the pane that stays when side by side
+    /// is turned off.
+    function applyPref() {
+        if (!uri) return
+        const was = [sortRole, sortOrder, showHidden]
+        _applyPref(uri)
+        if (was[0] !== sortRole || was[1] !== sortOrder) listing.sort(sortRole, sortOrder)
+        if (was[2] !== showHidden) listing.showHidden(showHidden)
+        _smartChecked = ""; if (listing.done) _smart()
+    }
+    function _applyPref(target) {
+        if (!rememberViews) { hasPref = false; return }     // keep whatever this pane is showing
+        const pref = Kiki.Settings.viewPref(target.replace(/\/+$/, "") || target)
+        hasPref = !!pref
+        _applying = true
+        // "mirror" was once a view (the two-pane layout lived in `Pane.view`), so old entries in
+        // views.toml can still say it. Nobody chose that; it is read as no view at all.
+        const stored = pref && pref.view !== "mirror" ? pref.view : ""
+        if (pref) { if (stored && stored !== view) view = stored; else if (!stored && view === "mirror") view = "list"; sortRole = pref.sort || "name"; sortOrder = pref.order || "asc"; showHidden = pref.hidden !== undefined ? pref.hidden : (Kiki.Settings.view.showHidden === true) }
+        else {
+            showHidden = Kiki.Settings.view.showHidden === true
+            const d = Kiki.Settings.view["default"]
+            const want = !d || d === "mirror" ? "list" : d
+            if (view !== want) view = want
+        }
+        _applying = false
+    }
     property bool _applying: false
     property bool hasPref: false
     // Smart default (plan 24): with no memory for this folder, a picture folder opens in icon view.
     property string _smartChecked: ""
     readonly property var pictureNames: ["pictures", "photos", "dcim", "screenshots", "wallpapers", "camera", "camera roll"]
     function _smart() {
-        if (_smartChecked === uri || hasPref || view === "mirror") return
+        if (_smartChecked === uri || hasPref || !rememberViews) return
         _smartChecked = uri
         const name = decodeURIComponent(uri.replace(/\/+$/, "").split("/").pop() || "").toLowerCase()
         let pick = pictureNames.indexOf(name) >= 0 ? "gallery" : ""
@@ -121,7 +144,7 @@ QtObject {
         function onReset() { pane._restorePending = pane.listing.uri === pane._keepUri && pane._keepNames.length > 0 }
         function onRowsUpdated(first, n) { pane._restoreSelection() }
     }
-    function _remember() { if (!_applying && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
+    function _remember() { if (!_applying && rememberViews && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()
     function canBack() { return historyIndex > 0 }
     function canForward() { return historyIndex < history.length - 1 }

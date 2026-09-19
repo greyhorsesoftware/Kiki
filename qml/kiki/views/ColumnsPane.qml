@@ -11,6 +11,9 @@ Item {
     /// A right click on a row, with the URI of that row — which may live in any column, not just
     /// the one the pane's listing is on.
     signal contextMenu(string uri, var row, point pos)
+    /// A right click on a column's empty space: the menu for that folder, which need not be the
+    /// folder the pane is on.
+    signal contextMenuFolder(string uri, point pos)
     signal fileSelected(string uri)
     signal edit(string uri, int line)
     /// What a column is when the strip is full of them.
@@ -45,6 +48,14 @@ Item {
         : inspectorMax
     readonly property alias scrollX: strip.contentX
     readonly property int stripWidth: columns.length * columnWidth + (inspectedUri !== "" ? inspectorWidth : 0)
+
+    /// One empty element per column, kept in step with `columns` by appending and removing at
+    /// the end — the only kind of change that leaves the other columns' delegates alone.
+    ListModel { id: slots }
+    onColumnsChanged: {
+        while (slots.count > columns.length) slots.remove(slots.count - 1)
+        while (slots.count < columns.length) slots.append({})
+    }
 
     Component.onCompleted: rebuild()
     Connections { target: root.pane; function onNavigated(uri) { root.rebuild() } }
@@ -179,30 +190,49 @@ Item {
             visible: root.inspectedUri !== ""
             x: root.columns.length * root.columnWidth; width: root.inspectorWidth; height: strip.height
             uri: root.inspectedUri; row: root.inspectedRow; home: root.home
+            closable: false
             onEdit: (u, line) => root.edit(u, line)
+            onOpen: u => root.activate(u)
             onResized: dx => root.inspectorW = root.inspectorWidth - dx
             onResizeEnded: Kiki.Settings.set("view", "inspectorWidth", root.inspectorWidth)
         }
         Row {
             id: row
             Repeater {
-                model: root.columns
+                // Not handed the array, and not its length either: `columns` is replaced on every
+                // selection, and a Repeater given a new array — or a new NUMBER — throws away
+                // every delegate and builds them again, so each click rebuilt every column and
+                // every icon in them reloaded (a visible flash). `slots` only ever grows or
+                // shrinks at its end, so a column lives as long as it has an index, and reads
+                // its entry from `columns` here.
+                model: slots
                 delegate: Item {
-                    required property var modelData
+                    id: colItem
                     required property int index
+                    readonly property var modelData: root.columns[index] || ({ uri: "", cache: null, selected: -1 })
                     objectName: "column-" + index
                     width: root.columnWidth; height: strip.height
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
+                    // Behind the rows: a right click that lands on none of them asks about the
+                    // column's folder instead of doing nothing.
+                    MouseArea {
+                        anchors.fill: parent; z: -1
+                        acceptedButtons: Qt.RightButton
+                        onClicked: mouse => root.contextMenuFolder(modelData.uri, mapToItem(null, mouse.x, mouse.y))
+                    }
                     ListView {
                         id: list
                         UI.NaturalScroll { }
                         property int colIndex: index
                         anchors.fill: parent; anchors.rightMargin: 1; anchors.topMargin: 6
                         clip: true; reuseItems: true
-                        model: modelData.cache.count
+                        model: modelData.cache ? modelData.cache.count : 0
                         Component.onCompleted: if (modelData.selected >= 0) positionViewAtIndex(modelData.selected, ListView.Contain)
-                        onContentYChanged: modelData.cache.setViewport(Math.max(0, Math.floor(contentY / Kiki.Theme.rowHeight)), Math.ceil(height / Kiki.Theme.rowHeight) + 1)
+                        onContentYChanged: if (modelData.cache) modelData.cache.setViewport(Math.max(0, Math.floor(contentY / Kiki.Theme.rowHeight)), Math.ceil(height / Kiki.Theme.rowHeight) + 1)
                         Connections { target: modelData.cache; function onReset() { list.forceLayout() } }
+                        // A living column handed another folder starts at its top.
+                        readonly property var shown: modelData.cache
+                        onShownChanged: positionViewAtBeginning()
                         // A vertical list would otherwise swallow the sideways swipe before the
                         // strip sees it, so hand the horizontal part over here.
                         WheelHandler {
@@ -219,10 +249,16 @@ Item {
                         delegate: Rectangle {
                             id: cr
                             required property int index
+                            objectName: "colrow-" + list.colIndex + "-" + index
                             // An arrow-function handler is plain JavaScript: the file's ids are
                             // not in its scope, so the pane is reached through a bound property.
                             readonly property var owner: root
-                            property var r: modelData.cache.row(index)
+                            property var r: cache ? cache.row(index) : null
+                            // The column can be handed another folder while this row lives (the
+                            // delegate now outlasts a selection), and a pooled row another index.
+                            readonly property var cache: modelData.cache
+                            onCacheChanged: r = cache ? cache.row(index) : null
+                            onIndexChanged: r = cache ? cache.row(index) : null
                             property bool sel: index === modelData.selected
                             // The focused column shows its selection in the accent; the others in grey.
                             property bool active: sel && list.colIndex === root.focusCol
@@ -234,12 +270,12 @@ Item {
                                 radius: 6
                                 color: cr.sel ? (cr.active ? Kiki.Theme.accent : Kiki.Theme.surface) : "transparent"
                             }
-                            Connections { target: modelData.cache; function onRowsUpdated(first, n) { if (cr.index >= first && cr.index < first + n) cr.r = modelData.cache.row(cr.index) } function onReset() { cr.r = modelData.cache.row(cr.index) } }
+                            Connections { target: cr.cache; function onRowsUpdated(first, n) { if (cr.index >= first && cr.index < first + n) cr.r = cr.cache.row(cr.index) } function onReset() { cr.r = cr.cache.row(cr.index) } }
                             Row {
                                 anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 8
                                 Item {
                                     width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
-                                    UI.KindIcon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; kind: cr.r ? cr.r.kind : "file"; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
+                                    UI.KindIcon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; kind: cr.r ? cr.r.kind : ""; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
                                     Image { visible: cr.r && cr.r.thumb; anchors.fill: parent; source: cr.r && cr.r.thumb ? "file://" + cr.r.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                                 }
                                 Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

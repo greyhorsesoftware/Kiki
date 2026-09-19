@@ -60,3 +60,58 @@ One row under General: **Filmstrip** — `bottom` (default) or `hidden`, remembe
 - Filtering to `*.png` narrows the filmstrip and the count without leaving the view.
 - A folder on an SFTP location pages without stalling the shell; images that are not cached show a progress state, not a blank stage.
 - Trashing the last image leaves the view on the new last image, or the empty state when the folder runs out.
+
+## Slideshow and the fade (added after the first pass)
+
+The plan above said "no slideshow, no transitions". Both are in: play/pause and a settings popover
+(delay 2/4/8/15 seconds, Loop) on a pill under the stage, and a cross-fade between pictures.
+
+The fade is two `Image` frames that swap roles rather than one picture reloaded twice. The next
+photograph decodes in whichever frame is not showing and fades in over the one that is, which keeps
+its pixels until the fade ends — a single frame would have to start the fade from an empty stage,
+which is no fade at all. `bFront` says which frame is in front; `z` follows it so the incoming one
+is always on top.
+
+Two traps, both found the hard way:
+
+- `this` in a signal handler is not the object. `onStatusChanged: root.arrived(this)` silently does
+  nothing; the frame has to name itself.
+- Sibling bindings do not settle in a known order. `onSourceChanged` read `isImage`, which comes off
+  the same `row` and had not caught up, so the picture was skipped. `wantPicture()` works it out on
+  the spot instead.
+
+## Under load: a thousand photographs
+
+`tests/e2e/run.sh --flow gallery_perf` builds a fixture of 1,000 JPEGs at 1600×1200
+(`kikid bench gen gallery1k`, kept at `/tmp/kiki-perf/gallery1k` between runs) and times each part of
+showing them. `galleryStats` over IPC reports what the window itself measured — decodes, average,
+worst — so the figures are not just the driver's own round trips.
+
+Measured on Omarchy, x86_64, under cage (software rendering); the live session is the same or better:
+
+| What | Cost |
+| --- | --- |
+| Listing 1,000 files, daemon side | 1 ms to first rows, 52 ms to the full count |
+| The same through the window | ~160 ms, including one 22 ms ipc round trip |
+| First picture on screen after switching to Gallery | ~65 ms, 16 ms of it decoding |
+| Stepping to the next picture | 12 ms decode; ~52 ms wall, most of which is two ipc round trips |
+| Jumping to row 500 | ~51 ms |
+| Thumbnails, cold, 4 niced workers | ~338/s |
+| kikid holding the listing | 5 MB → 26 MB |
+
+Nothing in the picture path is a bottleneck: `sourceSize` caps every decode at twice the stage, so a
+16 MP photograph costs the same as a 2 MP one, and 40 steps in a row move the window's resident set
+by a megabyte — the two frames are the whole budget.
+
+What the run did find:
+
+- **The window's floor rises with the largest folder visited.** Fresh shell 249 MB, +62 MB once a
+  1,000-row listing is held, +27 MB for icon and gallery views; leaving for a small folder gives back
+  about 10 MB and no more. The row objects are a fraction of that — it is Qt's JS heap and scene
+  graph, and it does not come back.
+- **`select` by name could not reach a row outside the loaded window.** The cache keeps a few hundred
+  rows either side of the viewport, so scanning `listing.row(i)` found nothing and the call did
+  nothing at all — silently. It now falls back to the daemon's `SeekName`, which is what
+  `selectCameFrom` already used.
+- **The filmstrip asks for a screenful at a time**, which is right, but means "thumbnails per second
+  while browsing" measures demand, not the pipeline. The ceiling is measured through the daemon.
