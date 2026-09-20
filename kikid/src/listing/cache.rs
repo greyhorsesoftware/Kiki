@@ -128,6 +128,10 @@ pub(super) fn evict_if_needed() {
             if l.dir.watchable() {
                 crate::watch::unwatch(&l);
             }
+            // Its git status was kept for this listing's rows; nobody is showing them now.
+            if l.uri.is_local() {
+                crate::git::invalidate(&l.path);
+            }
             c.entries = c.entries.saturating_sub(n);
         }
     }
@@ -152,6 +156,19 @@ pub fn gone(path: &std::path::Path) {
 
 pub fn find(path: &std::path::Path) -> Option<Arc<Listing>> {
     cache().lock().unwrap().map.get(&key_of(path)).cloned()
+}
+
+/// A job changed what is in `dir`. A local folder is watched and finds out by itself; a server
+/// tells nobody, so a listing of it that a window has open is read again — in place, so the
+/// windows showing it keep their subscription and see the rows change.
+pub fn changed(dir: &Uri) {
+    if dir.is_local() {
+        return;
+    }
+    let hit = cache().lock().unwrap().map.get(&dir.to_string()).cloned();
+    if let Some(l) = hit {
+        l.rescan();
+    }
 }
 
 /// Drops every cached listing of a remote location (after a job wrote there, or a disconnect).

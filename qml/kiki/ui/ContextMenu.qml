@@ -3,6 +3,9 @@ import ".." as Kiki
 
 // The right-click menu. Items are [{ label, key, action, danger, sep, enabled, checked }]; `checked`
 // (true/false) draws a check column, undefined draws none; `sep` draws a divider above the item.
+// An item carrying `items` opens them beside it (Send via Tailscale ▸ peers). One whose list has
+// to be asked for carries `load: fill => …` as well: `items` is what shows while waiting, and
+// `fill(list)` replaces it — once; the answer is kept on the item.
 // While it is open the menu covers its parent, so a click anywhere outside the box closes it.
 Item {
     id: menu
@@ -32,6 +35,16 @@ Item {
         box.forceActiveFocus()
     }
     function close() { visible = false; subItems = []; subLabel = ""; closed() }
+    /// Show `it`'s submenu, asking for its list the first time if it has to be fetched.
+    function showSub(it, y) {
+        subItems = it.items; subLabel = it.label; subY = y
+        if (!it.load || it._asked) return
+        it._asked = true
+        it.load(list => {
+            it.items = list
+            if (menu.visible && menu.subLabel === it.label) menu.subItems = list
+        })
+    }
     /// Replace the items of a submenu that is already open (or of the row, for the next hover).
     function refill(label, items) {
         const all = menu.items.slice()
@@ -82,12 +95,12 @@ Item {
                             onEntered: {
                                 // A greyed-out row has nothing to show: hovering "Share" with
                                 // nothing selected must not fly a submenu out of it.
-                                if (parent.parent.hasSub && !menu.off(modelData)) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y }
+                                if (parent.parent.hasSub && !menu.off(modelData)) menu.showSub(modelData, parent.parent.y)
                                 else { menu.subItems = []; menu.subLabel = "" }
                             }
                             onClicked: {
                                 if (menu.off(modelData)) return
-                                if (parent.parent.hasSub) { menu.subItems = modelData.items; menu.subLabel = modelData.label; menu.subY = parent.parent.y; return }
+                                if (parent.parent.hasSub) { menu.showSub(modelData, parent.parent.y); return }
                                 const act = modelData.action
                                 menu.close()
                                 if (act) act()
@@ -112,11 +125,13 @@ Item {
             Repeater {
                 model: menu.subItems
                 delegate: Rectangle {
+                    id: subRow
                     required property var modelData
                     objectName: "menu-" + modelData.label
                     readonly property bool sep: modelData.sep === true
                     width: subCol.width; height: (sep ? 5 : 0) + 26
                     color: sh.containsMouse && !menu.off(modelData) ? Kiki.Theme.surface : "transparent"
+                    Text { visible: !!modelData.key; anchors.right: parent.right; anchors.rightMargin: 12; y: subRow.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
                     Icon { visible: modelData.icon !== undefined; x: 12; y: (parent.sep ? 5 : 0) + 6; name: modelData.icon || "file"; size: 14; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.accent }
                     Text { x: modelData.icon !== undefined ? 34 : 12; y: parent.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; width: parent.width - (modelData.icon !== undefined ? 46 : 24); elide: Text.ElideRight; text: modelData.label; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
@@ -134,4 +149,5 @@ Item {
             }
         }
     }
+
 }

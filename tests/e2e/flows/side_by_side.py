@@ -74,6 +74,29 @@ def run(ctx):
     sh.call("focusPane", "right")
     c.check("moving the focus changes neither", sbs(sh).get("leftPath") == left, sbs(sh))
 
+    # The view menu ticks the FOCUSED pane's view, split or not. (It ticked nothing when split.)
+    import json as _json
+    def ticks():
+        sh.call("viewMenu")
+        items = wait_for(lambda: _json.loads(sh.call("menuItems") or "[]") or None, what="view menu open") or []
+        sh.call("viewMenu")
+        return [i["label"] for i in items if i["checked"] and i["label"] != "Show hidden files"]
+    sh.call("focusPane", "left"); sh.keys(("ctrl", "1"))
+    sh.call("focusPane", "right"); sh.keys(("ctrl", "2"))
+    wait_for(lambda: sbs(sh).get("leftView") == "icon" and sbs(sh).get("rightView") == "list" or None, what="one pane in icon, one in list")
+    c.check("the view menu ticks the right pane's view while it has the focus", ticks() == ["List"], ticks())
+    sh.call("focusPane", "left")
+    c.check("and the left pane's when the focus moves", ticks() == ["Icon"], ticks())
+    sh.keys(("ctrl", "2"))
+
+    # Tab changes pane. (A property called `otherPane` once shadowed the function of that name:
+    # Tab and copy-to-the-other-pane both threw, and nothing drove either.)
+    sh.call("focusPane", "left")
+    sh.keys(("Tab",))
+    c.check("Tab moves the focus to the other pane", (wait_for(lambda: sbs(sh).get("focused") == "right" or None, what="focus right") or False) is True, sbs(sh))
+    sh.keys(("Tab",))
+    c.check("and back", (wait_for(lambda: sbs(sh).get("focused") == "left" or None, what="focus left") or False) is True, sbs(sh))
+
     # The overlays that make any press focus a pane cover the pane's VIEW — everything under its
     # header, which takes a click for itself — and must not have pushed the headers down.
     for side in ("left", "right"):

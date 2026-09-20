@@ -63,12 +63,37 @@ pub struct Status {
     pub slow: bool,
 }
 
-/// Repository root for a directory, cached (negative results too).
+/// Directories whose status is kept. One `Status` holds every changed path under its directory,
+/// so this is the cache that matters; a directory dropped from it is simply asked again.
+pub const STATUS_KEEP: usize = 64;
+/// Directories whose repository root is remembered.
+pub const ROOTS_KEEP: usize = 1024;
+/// How long "this is not in a repository" is believed: short, so `git init` or a clone into a
+/// folder kiki has already shown is noticed without restarting the daemon.
+const NO_ROOT_FOR: Duration = Duration::from_secs(5);
+/// How long a root is believed without looking again — and then only while its `.git` is there.
+const ROOT_FOR: Duration = Duration::from_secs(60);
+
+type Roots = HashMap<PathBuf, (Option<PathBuf>, Instant)>;
+
+fn roots() -> &'static Mutex<Roots> {
+    static CACHE: OnceLock<Mutex<Roots>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn root_still_good(found: &Option<PathBuf>, at: Instant) -> bool {
+    match found {
+        None => at.elapsed() < NO_ROOT_FOR,
+        Some(root) => at.elapsed() < ROOT_FOR && root.join(".git").exists(),
+    }
+}
+
+/// Repository root for a directory, cached (negative results too) — for a while, see above.
 pub fn repo_root(dir: &Path) -> Option<PathBuf> {
-    static CACHE: OnceLock<Mutex<HashMap<PathBuf, Option<PathBuf>>>> = OnceLock::new();
-    let c = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(r) = c.lock().unwrap().get(dir) {
-        return r.clone();
+    if let Some((found, at)) = roots().lock().unwrap().get(dir) {
+        if root_still_good(found, *at) {
+            return found.clone();
+        }
     }
     let mut cur = Some(dir);
     let mut found = None;
@@ -79,7 +104,16 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
         }
         cur = d.parent();
     }
-    c.lock().unwrap().insert(dir.to_path_buf(), found.clone());
+    let mut c = roots().lock().unwrap();
+    if c.len() >= ROOTS_KEEP {
+        // Everything stale goes; if a long walk filled it with fresh answers, all of it does —
+        // an answer costs a handful of stats to get back.
+        c.retain(|_, (f, at)| root_still_good(f, *at));
+        if c.len() >= ROOTS_KEEP {
+            c.clear();
+        }
+    }
+    c.insert(dir.to_path_buf(), (found.clone(), Instant::now()));
     found
 }
 
@@ -92,8 +126,16 @@ fn status_cache() -> &'static Mutex<HashMap<PathBuf, Status>> {
     C.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// The directory changed, or nobody is showing it any more: forget what was known about it,
+/// whether it is in a repository included.
 pub fn invalidate(dir: &Path) {
     status_cache().lock().unwrap().remove(dir);
+    roots().lock().unwrap().remove(dir);
+}
+
+#[cfg(test)]
+pub(crate) fn cached_statuses() -> usize {
+    status_cache().lock().unwrap().len()
 }
 
 /// Every git command kiki runs starts here, never with a bare `Command::new("git")`.
@@ -180,7 +222,14 @@ pub fn status(dir: &Path) -> Option<()> {
             _ => {}
         }
     }
-    status_cache().lock().unwrap().insert(dir.to_path_buf(), st);
+    let mut cache = status_cache().lock().unwrap();
+    cache.insert(dir.to_path_buf(), st);
+    // Oldest out. The directory on screen is re-read whenever it changes, so it is never oldest
+    // for long; one that was dropped is asked again the next time it is listed.
+    while cache.len() > STATUS_KEEP {
+        let Some(oldest) = cache.iter().min_by_key(|(_, s)| s.at).map(|(k, _)| k.clone()) else { break };
+        cache.remove(&oldest);
+    }
     Some(())
 }
 
@@ -365,5 +414,65 @@ mod tests {
         // a bare temp dir is not a repository (or is inside one on some CI images): either answer is valid
         let _ = repo_root(&std::env::temp_dir());
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kiki-git-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn a_repository_made_after_the_folder_was_shown_is_noticed() {
+        let d = scratch("late-init");
+        assert_eq!(repo_root(&d), None);
+        git(&d, &["init", "-q", "-b", "main"]);
+        // Believed for a few seconds only…
+        assert!(root_still_good(&None, Instant::now()));
+        assert!(!root_still_good(&None, Instant::now().checked_sub(NO_ROOT_FOR + Duration::from_secs(1)).unwrap()));
+        // …and not at all once the folder is rescanned, which creating `.git` in it causes.
+        invalidate(&d);
+        assert_eq!(repo_root(&d), Some(d.clone()));
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_repository_that_is_no_longer_one_stops_being_one() {
+        let d = scratch("un-init");
+        git(&d, &["init", "-q", "-b", "main"]);
+        assert_eq!(repo_root(&d), Some(d.clone()));
+        std::fs::remove_dir_all(d.join(".git")).unwrap();
+        assert_eq!(repo_root(&d), None, "a remembered root is only believed while its .git is there");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn statuses_are_kept_for_so_many_directories_and_no_more() {
+        let d = scratch("many");
+        git(&d, &["init", "-q", "-b", "main"]);
+        let n = STATUS_KEEP + 8;
+        for i in 0..n {
+            let sub = d.join(format!("d{i}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            std::fs::write(sub.join("new.txt"), "x").unwrap();
+            assert!(status(&sub).is_some());
+            assert!(cached_statuses() <= STATUS_KEEP, "after {i}: {}", cached_statuses());
+        }
+        // The newest is there; the first went to make room, and asking again brings it back.
+        assert_eq!(state_for(&d.join(format!("d{}", n - 1)), "new.txt", false).map(|e| e.state), Some(State::Untracked));
+        assert_eq!(state_for(&d.join("d0"), "new.txt", false).map(|e| e.state), Some(State::Untracked));
+        assert!(cached_statuses() <= STATUS_KEEP);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn remembered_roots_are_capped() {
+        let base = scratch("roots");
+        for i in 0..ROOTS_KEEP + 10 {
+            let _ = repo_root(&base.join(format!("nowhere{i}")));
+        }
+        assert!(roots().lock().unwrap().len() <= ROOTS_KEEP);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

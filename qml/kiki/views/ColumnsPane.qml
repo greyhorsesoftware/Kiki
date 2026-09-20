@@ -58,10 +58,17 @@ Item {
     }
 
     Component.onCompleted: rebuild()
+    // The shell makes the view first and says whose it is second (`onLoaded: item.pane = …`). The
+    // columns built in between are the DEFAULT pane's — so side by side the right pane's column
+    // view showed the left pane's folder under the right pane's path. Build them again.
+    onPaneChanged: rebuild()
     Connections { target: root.pane; function onNavigated(uri) { root.rebuild() } }
 
     function rebuild() {
-        for (const c of columns) if (c.cache !== root.pane.listing) c.cache.destroy()
+        // Only what this view made. The first column is the pane's own listing, and when the
+        // pane changes under us the OLD pane's listing is "not this pane's" too — comparing
+        // against the current pane destroyed the other pane's listing out from under it.
+        for (const c of columns) if (c.own) c.cache.destroy()
         columns = [{ uri: root.pane.uri, cache: root.pane.listing, selected: -1 }]
         focusCol = 0; pendingIndex = -1
         inspectedUri = ""; inspectedRow = null
@@ -81,7 +88,7 @@ Item {
             const uri = cols[fromCol].uri.replace(/\/+$/, "") + "/" + encodeURIComponent(row.name)
             const cache = cacheComp.createObject(root)
             cache.open(uri)
-            cols.push({ uri: uri, cache: cache, selected: -1 })
+            cols.push({ uri: uri, cache: cache, selected: -1, own: true })
             root.inspectedUri = ""; root.inspectedRow = null
         } else {
             root.inspectedUri = cols[fromCol].uri.replace(/\/+$/, "") + "/" + encodeURIComponent(row.name); root.inspectedRow = row
@@ -167,6 +174,15 @@ Item {
     }
     Component { id: cacheComp; Kiki.WindowCache {} }
 
+    // To the right of the last column there is nothing but room: a drop there goes into the
+    // deepest folder open, which is what the eye takes that room to belong to.
+    DropArea {
+        objectName: "columns-drop-background"
+        anchors.fill: parent; z: -1
+        keys: ["text/uri-list"]
+        enabled: !root.pane.isTrash && root.columns.length > 0
+        onDropped: drop => root.pane.dropInto(root.columns[root.columns.length - 1].uri, drop)
+    }
     Flickable {
         id: strip
         UI.NaturalScroll { }
@@ -219,6 +235,16 @@ Item {
                         anchors.fill: parent; z: -1
                         acceptedButtons: Qt.RightButton
                         onClicked: mouse => root.contextMenuFolder(modelData.uri, mapToItem(null, mouse.x, mouse.y))
+                    }
+                    // And a drop that lands on none of them goes into the column's folder — which
+                    // need not be the one the pane is on.
+                    DropArea {
+                        objectName: "column-drop-" + colItem.index
+                        anchors.fill: parent; z: -1
+                        keys: ["text/uri-list"]
+                        enabled: !root.pane.isTrash && modelData.uri !== ""
+                        onDropped: drop => root.pane.dropInto(modelData.uri, drop)
+                        Rectangle { anchors.fill: parent; anchors.rightMargin: 1; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
                     }
                     ListView {
                         id: list
@@ -281,9 +307,28 @@ Item {
                                 Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                                 UI.Icon { visible: cr.r && cr.r.isDir; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.gutter }
                             }
+                            // A folder row takes a drop; any row can be dragged, as itself.
+                            DropArea {
+                                anchors.fill: parent
+                                enabled: !!cr.r && cr.r.isDir && !root.pane.isTrash
+                                keys: ["text/uri-list"]
+                                onDropped: drop => root.pane.dropInto(modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name), drop)
+                                Rectangle { anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 5; radius: 6; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
+                            }
+                            Item {
+                                id: colDrag
+                                Drag.dragType: Drag.Automatic
+                                Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+                                Drag.proposedAction: Qt.MoveAction
+                            }
                             MouseArea {
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                drag.target: colDrag; drag.threshold: 8
+                                drag.onActiveChanged: {
+                                    if (drag.active && cr.r) { colDrag.Drag.mimeData = { "text/uri-list": modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name) + "\r\n" }; colDrag.Drag.active = true }
+                                    else colDrag.Drag.active = false
+                                }
                                 onClicked: mouse => {
                                     if (!cr.r) return
                                     const uri = modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)

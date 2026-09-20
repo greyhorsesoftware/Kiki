@@ -90,6 +90,10 @@ impl Client {
         for (lid, l) in client.listings.drain() {
             l.unsubscribe(id, lid);
         }
+        // A window that went away was showing these: nobody will close them now.
+        for (_, (job, _)) in client.plans.drain() {
+            crate::mirror::unview(job);
+        }
     }
 
     fn handle_frame(&mut self, f: Frame) {
@@ -245,6 +249,17 @@ impl Client {
             "AiStatus" => Ok(Some(crate::ai::status())),
             "AiConfigure" => crate::ai::configure(b.str_field("provider"), b.str_field("cliCommand")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
             "AiCancel" => Ok(Some(Value::obj().b("cancelled", b.u64_field("id").map(crate::ai::cancel).unwrap_or(false)).done())),
+            "AiOpen" => {
+                let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
+                match parse_uri(b, "dir") {
+                    Ok(dir) => crate::ai::open_external(&dir, &uris).map(|tool| Some(Value::obj().s("tool", tool).done())).map_err(vfs_err),
+                    Err(e) => Err(e),
+                }
+            }
+            "OpenTerminal" => match parse_uri(b, "dir") {
+                Ok(dir) => crate::ai::open_terminal(&dir).map(|_| Some(Value::obj().done())).map_err(vfs_err),
+                Err(e) => Err(e),
+            },
             "AiQuery" => {
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 crate::ai::query(
@@ -604,7 +619,9 @@ impl Client {
         if let Some(l) = self.listings.remove(&lid) {
             l.unsubscribe(self.id, lid);
         }
-        self.plans.remove(&lid);
+        if let Some((job, _)) = self.plans.remove(&lid) {
+            crate::mirror::unview(job);
+        }
         self.searches.remove(&lid);
         self.trees.remove(&lid);
         self.texts.remove(&lid);
@@ -850,8 +867,10 @@ impl Client {
     fn mirror_plan(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
         let job = b.u64_field("job").ok_or(("Protocol", "missing job".to_string()))?;
         let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
-        let stored = crate::mirror::stored(job).ok_or(("NotFound", "no such plan".to_string()))?;
-        self.plans.insert(lid, (job, "all".into()));
+        let stored = crate::mirror::view(job).ok_or(("NotFound", "no such plan".to_string()))?;
+        if let Some((old, _)) = self.plans.insert(lid, (job, "all".into())) {
+            crate::mirror::unview(old);
+        }
         let (counts, offset, n) = {
             let p = stored.plan.lock().unwrap();
             (p.counts_json(), p.clock_offset_ms, p.actions.len() as u64)

@@ -61,7 +61,11 @@ Item {
         onContentYChanged: root.pane.listing.setViewport(Math.max(0, Math.floor(contentY / cellHeight) * perRow), (Math.ceil(height / cellHeight) + 1) * perRow)
         onHeightChanged: root.pane.listing.setViewport(Math.max(0, Math.floor(contentY / cellHeight) * perRow), (Math.ceil(height / cellHeight) + 1) * perRow)
         Connections { target: root.pane.listing; function onReset() { grid.forceLayout() } }
-        DropArea { anchors.fill: parent; z: -1; keys: ["text/uri-list"]; enabled: !root.pane.isTrash; onDropped: drop => root.pane.dropInto(root.pane.uri, drop) }
+        // Drops on empty space land in the folder being shown (tiles sit above this and win).
+        // Re-parented to the pane: declared here it would be a child of the grid's CONTENT, which
+        // is only as tall as its rows of tiles — everything below the last row, and the margins,
+        // took no drop at all, so a drag had to find a folder to land on.
+        DropArea { objectName: "icon-drop-background"; parent: root; anchors.fill: parent; z: -1; keys: ["text/uri-list"]; enabled: !root.pane.isTrash; onDropped: drop => root.pane.dropInto(root.pane.uri, drop) }
         delegate: Item {
             id: cell
             required property int index

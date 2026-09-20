@@ -275,6 +275,10 @@ impl Plugin {
                 "Exists" => VfsError::Exists,
                 "NotEmpty" => VfsError::NotEmpty,
                 "Unsupported" => VfsError::Unsupported,
+                // Which field was wrong is part of the answer, and for `fingerprint` it is the
+                // whole of it: that is how a plugin that checks certificates itself (FTPS) says
+                // "this is the certificate I was shown, and nobody has accepted it".
+                "Invalid" if e.str_field("field").is_some() => VfsError::Io(format!("Invalid/{}: {msg}", e.str_field("field").unwrap_or(""))),
                 _ => VfsError::Io(format!("{code}: {msg}")),
             });
         }

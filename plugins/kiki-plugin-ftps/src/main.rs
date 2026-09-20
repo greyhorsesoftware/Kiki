@@ -193,6 +193,23 @@ impl Ftps {
     }
 }
 
+/// End an upload's data connection so that the server keeps all of it.
+///
+/// An upload only ever writes, but a TLS 1.3 server writes too: session tickets, right after the
+/// handshake. Nobody reads them, and a socket closed with unread data in it is closed with a
+/// reset, not a FIN — on which the server throws away what it had received and not yet read. The
+/// file arrived short by a different amount every time (seen with pyftpdlib: 0.8–2.5 MB of 3 MB),
+/// and the server still said 226. So: say goodbye in TLS, send the FIN ourselves, and read until
+/// the server has closed its side. Only then is the socket dropped. (The goodbye in TLS is the
+/// library's, when its stream is dropped; its types are private, so this gets the socket alone.)
+fn finish_upload(socket: std::net::TcpStream) {
+    let mut socket = socket;
+    let _ = socket.shutdown(std::net::Shutdown::Write);
+    let _ = socket.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+    let mut sink = [0u8; 4096];
+    while matches!(socket.read(&mut sink), Ok(n) if n > 0) {}
+}
+
 impl Handler for Ftps {
     fn describe(&self) -> Describe {
         Describe {
@@ -338,7 +355,16 @@ impl Handler for Ftps {
 
     fn write(&self, location: &str, path: &str, mut args: WriteArgs) -> Result<u64> {
         let s = self.session(location)?;
-        let n = s.lock().unwrap().ftp.put_file(path, &mut args.data).map_err(ftp_err)?;
+        let mut sess = s.lock().unwrap();
+        let mut data = sess.ftp.put_with_stream(path).map_err(ftp_err)?;
+        let n = std::io::copy(&mut args.data, &mut data).map_err(PluginError::io)?;
+        // A second handle on the socket keeps it open while the library's stream is dropped —
+        // which is where it flushes and sends TLS's close_notify — so that the close itself can
+        // be done properly (see `finish_upload`).
+        let socket = data.get_ref().try_clone().map_err(PluginError::io)?;
+        drop(data);
+        finish_upload(socket);
+        sess.ftp.finalize_put_stream(std::io::sink()).map_err(ftp_err)?;
         Ok(n)
     }
 

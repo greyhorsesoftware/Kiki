@@ -22,8 +22,11 @@ fn peers_from(status: &[u8]) -> Result<Vec<Target>> {
     let mut targets = Vec::new();
     if let Some(Value::Obj(peers)) = v.get("Peer") {
         for p in peers.values() {
-            let name = p.str_field("HostName").unwrap_or("").to_string();
             let dns = p.str_field("DNSName").unwrap_or("").trim_end_matches('.').to_string();
+            // The name the tailnet knows it by — what `tailscale status` prints — not the one the
+            // machine gives itself: an iPhone's own hostname is "localhost".
+            let short = dns.split('.').next().unwrap_or("");
+            let name = if short.is_empty() { p.str_field("HostName").unwrap_or("").to_string() } else { short.to_string() };
             let online = p.get("Online").and_then(Value::as_bool).unwrap_or(false);
             let os = p.str_field("OS").unwrap_or("").to_string();
             targets.push(Target { id: dns.split('.').next().unwrap_or(&name).to_string(), name, detail: os, online, icon: "server".into() });
@@ -55,6 +58,13 @@ mod tests {
     }
 
     #[test]
+    fn a_peer_is_called_what_the_tailnet_calls_it() {
+        let t = peers_from(br#"{"Peer":{"a":{"HostName":"localhost","DNSName":"iphone-12-pro.tail1234.ts.net.","Online":true,"OS":"iOS"},
+                                       "b":{"HostName":"nas","DNSName":"","Online":true,"OS":"linux"}}}"#).unwrap();
+        assert_eq!(t.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["iphone-12-pro", "nas"]);
+    }
+
+    #[test]
     fn a_status_document_with_no_peers_is_empty_not_an_error() {
         assert!(peers_from(b"{}").unwrap().is_empty());
     }
@@ -80,6 +90,8 @@ impl ShareHandler for Tailscale {
             form: vec![],
             secret_fields: vec![],
             compose: vec![],
+            requires: vec!["tailscale"],
+            off_by_default: false,
         }
     }
     fn targets(&mut self, _c: &Value, _s: &Value, query: Option<&str>) -> Result<Vec<Target>> {

@@ -18,8 +18,12 @@ use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 
 /// SFTP throughput is bounded by round trips, not bandwidth, with one outstanding request.
-const READ_IN_FLIGHT: usize = 16;
-const READ_CHUNK: u32 = 256 * 1024;
+const READ_IN_FLIGHT: usize = 32;
+/// What is asked for at a time. A server may give LESS than it is asked for and that is not the
+/// end of the file — OpenSSH never gives more than 255 KiB, some servers 32 — so a short read is
+/// followed up (see `read_pipelined`). 64 KiB is under every cap met so far, so the follow-up is
+/// the exception and the pipeline stays full.
+const READ_CHUNK: u32 = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FastScan {
@@ -421,7 +425,7 @@ impl Sftp {
         self.rt.block_on(async {
             let handle = raw.open(path, OpenFlags::READ, Default::default()).await.map_err(sftp_err)?.handle;
             let size = raw.fstat(handle.clone()).await.ok().and_then(|a| a.attrs.size);
-            let mut inflight: VecDeque<tokio::task::JoinHandle<std::result::Result<Vec<u8>, russh_sftp::client::error::Error>>> = VecDeque::new();
+            let mut inflight: VecDeque<(u64, tokio::task::JoinHandle<std::result::Result<Vec<u8>, russh_sftp::client::error::Error>>)> = VecDeque::new();
             let mut next = offset;
             let mut eof = false;
             let issue = |raw: &Arc<RawSftpSession>, handle: &str, off: u64| {
@@ -432,20 +436,36 @@ impl Sftp {
             let result: Result<()> = async {
                 loop {
                     while !eof && inflight.len() < READ_IN_FLIGHT && size.is_none_or(|s| next < s) {
-                        inflight.push_back(issue(raw, &handle, next));
+                        inflight.push_back((next, issue(raw, &handle, next)));
                         next += READ_CHUNK as u64;
                     }
-                    let Some(job) = inflight.pop_front() else { break };
+                    let Some((at, job)) = inflight.pop_front() else { break };
                     if sdk::cancelled() {
                         return Err(sdk::cancel_error());
                     }
                     match job.await.map_err(PluginError::io)? {
                         Ok(data) if data.is_empty() => eof = true,
                         Ok(data) => {
-                            let short = (data.len() as u32) < READ_CHUNK;
                             out.write_all(&data).map_err(PluginError::io)?;
-                            if short {
-                                eof = true;
+                            // Fewer bytes than asked for is not the end of the file: the server
+                            // gives what it likes. The chunks after this one are already asked
+                            // for at their own offsets, so the rest of THIS one is fetched now,
+                            // in order, before they are written. (Treating a short read as the
+                            // end cut every file over 255 KiB short against OpenSSH.)
+                            let mut got = data.len() as u64;
+                            while got < READ_CHUNK as u64 && !eof {
+                                if sdk::cancelled() {
+                                    return Err(sdk::cancel_error());
+                                }
+                                match raw.read(handle.clone(), at + got, READ_CHUNK - got as u32).await {
+                                    Ok(more) if more.data.is_empty() => eof = true,
+                                    Ok(more) => {
+                                        out.write_all(&more.data).map_err(PluginError::io)?;
+                                        got += more.data.len() as u64;
+                                    }
+                                    Err(russh_sftp::client::error::Error::Status(st)) if st.status_code == russh_sftp::protocol::StatusCode::Eof => eof = true,
+                                    Err(e) => return Err(sftp_err(e)),
+                                }
                             }
                         }
                         Err(russh_sftp::client::error::Error::Status(st)) if st.status_code == russh_sftp::protocol::StatusCode::Eof => eof = true,
@@ -453,7 +473,7 @@ impl Sftp {
                     }
                     if eof {
                         // Drain whatever is still in flight; those chunks are past the end.
-                        while let Some(j) = inflight.pop_front() {
+                        while let Some((_, j)) = inflight.pop_front() {
                             let _ = j.await;
                         }
                     }

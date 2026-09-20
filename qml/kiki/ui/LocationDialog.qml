@@ -34,8 +34,14 @@ Rectangle {
     /// "Save and Connect": the daemon refused to connect because nobody has seen its server's
     /// key, and this is where it gets seen.
     property bool _verifyWhenLoaded: false
-    function verify(existing) { _verifyWhenLoaded = true; open(existing) }
+    /// Verifying a saved location's server is a question, not an edit: only the question is
+    /// shown — no form behind it — and whatever the answer, that is the end of it.
+    property bool verifyOnly: false
+    function verify(existing) { _verifyWhenLoaded = true; verifyOnly = true; open(existing) }
+    /// The end of a verify-only visit that did not save: say why, since there is no form to say it in.
+    function _leaveVerify(why) { verifyOnly = false; verifyFingerprint = ""; visible = false; if (why) Kiki.Jobs.showToast({ text: why, undoable: false }) }
     function open(existing) {
+        if (!_verifyWhenLoaded) verifyOnly = false
         openAfter = false
         errors = ({}); status = ""; busy = false; verifyFingerprint = ""; verifyHost = ""
         image = existing && existing.image ? existing.image : ""
@@ -190,10 +196,11 @@ Rectangle {
         if (!openAfter && !trust) req.check = false
         Kiki.Daemon.request(editingName ? "UpdateLocation" : "AddLocation", req, (ok, err) => {
             busy = false
+            if (err && verifyOnly) { _leaveVerify(err.message); return }
             if (err) { verifyFingerprint = ""; status = ""; if (err.field) { const e = {}; e[err.field] = err.message; errors = e } else status = err.message; return }
             // The server identified itself with a key kiki has never accepted. Ask before saving.
             if (ok && ok.verify) { verifyFingerprint = ok.verify; verifyHost = ok.host || values.host || ""; status = ""; return }
-            verifyFingerprint = ""
+            verifyFingerprint = ""; verifyOnly = false
             const name = (values.name || "").trim(), open = openAfter
             visible = false; openAfter = false; dlg.saved()
             if (open) dlg.openRequested(name)
@@ -204,6 +211,7 @@ Rectangle {
     Rectangle {
         anchors.centerIn: parent
         objectName: "location-card"
+        visible: !dlg.verifyOnly
         width: Math.min(660, parent.width - 32); height: Math.min(560, parent.height - 32)
         color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         ToggleButton {
@@ -463,11 +471,20 @@ Rectangle {
             }
             Row {
                 anchors.right: parent.right; spacing: 8
-                Button { text: "Cancel"; onClicked: { dlg.verifyFingerprint = ""; dlg.status = "Not saved: the key was not accepted." } }
+                Button { objectName: "verify-cancel"; text: "Cancel"; onClicked: { if (dlg.verifyOnly) dlg._leaveVerify(""); else { dlg.verifyFingerprint = ""; dlg.status = "Not saved: the key was not accepted." } } }
                 Button { objectName: "verify-trust"; text: dlg.busy ? "Saving…" : "Trust and save"; primary: true; enabled: !dlg.busy; onClicked: dlg.connect(dlg.verifyFingerprint) }
             }
         }
-        Keys.onEscapePressed: dlg.verifyFingerprint = ""
+        Keys.onEscapePressed: if (dlg.verifyOnly) dlg._leaveVerify(""); else dlg.verifyFingerprint = ""
+    }
+    // Verify-only, before the server has answered: there is no form to show "Connecting…" in.
+    Rectangle {
+        objectName: "verify-waiting"
+        visible: dlg.verifyOnly && dlg.verifyFingerprint === ""
+        anchors.centerIn: parent; z: 4
+        width: waitText.implicitWidth + 48; height: 56; radius: 2
+        color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.yellow
+        Text { id: waitText; anchors.centerIn: parent; text: "Asking " + (dlg.values.host || "the server") + " who it is…"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
     }
 
     focus: visible

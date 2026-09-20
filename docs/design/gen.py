@@ -914,9 +914,7 @@ SHARE_SHEET = f"""<div style="position: absolute; inset: 0; display: flex; align
       <span style="padding: 0 16px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: {CM};">Share via</span>
       {share_target("phone", "LocalSend", "nearby", CYAN, selected=True)}
       {share_target("mail", "Mail", "SMTP", BLUE)}
-      {share_target("message", "Messages", "KDE Connect · Signal", PURPLE)}
       {share_target("share", "Tailscale", "Taildrop", GREEN)}
-      {share_target("share", "AirDrop", "needs owl", YELLOW, online=False)}
     </div>
     <div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; padding: 16px 20px; gap: 10px;">
       <div style="display: flex; align-items: center; justify-content: space-between;"><span style="font-size: 15px; font-weight: 600; color: {FG};">Share 2 items</span><span style="font-size: 11px; color: {CM};">screenshot-2026-09-12.png, notes.md · 1.2 MB</span></div>

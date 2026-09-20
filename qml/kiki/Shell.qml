@@ -4,6 +4,7 @@ import Quickshell.Io
 import "." as Kiki
 import "ui" as UI
 import "views" as Views
+import "viewmenu.js" as ViewMenu
 
 // The kiki window: sidebar, toolbar, one pane (two in plan 07), shortcut bar.
 FloatingWindow {
@@ -72,8 +73,6 @@ FloatingWindow {
     /// Side by side, "the local pane": the `file://` one — the
     /// left by default, the right after Swap — and the left when both (or neither) are local.
     readonly property var localPane: !split ? pane : (left.uri.indexOf("file://") === 0 || right.uri.indexOf("file://") !== 0 ? left : right)
-    /// …and the other one, which is navigated from its own header.
-    readonly property var otherPane: localPane === left ? right : left
     /// A path from the title bar, which only shows when there is one pane.
     function navigateFromTitle(uri) { pane.open(uri) }
     /// The breadcrumb that is on screen for the focused pane: the title bar's with one pane,
@@ -229,15 +228,27 @@ FloatingWindow {
     /// asks for what the composer is about to ask for.
     function shareItems() {
         const uris = selectedUris()
-        const items = sharePlugins.map(p => ({
-            label: p.name, icon: p.icon || "share",
-            action: () => { if (!uris.length) return; if (p.targets === "none") shareNow(p, null, uris); else shareTargets(p, uris) }
-        }))
-        return items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }]
+        // One that cannot work here — its program is not installed — stays in the menu, dimmed,
+        // saying what is missing: it tells the user the thing exists and what it would take.
+        // Each way of sending is a row of the menu itself — "Send via LocalSend ▸" — rather than
+        // all of them behind one "Share ▸": it is one level less to the device, and a plugin's
+        // targets fit in the one submenu the menu has. They are asked for when the row is opened
+        // (LocalSend looks for two seconds). One that cannot work here stays, dimmed, saying why.
+        const items = sharePlugins.map(p => {
+            const it = { label: "Send via " + p.name, icon: p.icon || "share", enabled: uris.length > 0 && !p.unavailable, key: p.unavailable ? "not installed" : "" }
+            if (p.unavailable) return it
+            if (p.targets === "none") { it.action = () => { if (uris.length) shareNow(p, null, uris) }; return it }
+            it.items = [{ label: "Looking…", enabled: false, action: () => {} }]
+            it.load = fill => shareTargetItems(p, uris, fill)
+            return it
+        })
+        if (items.length) items[0].sep = true
+        return items
     }
     function shareMenu() {
         if (!selectedUris().length) return
-        menuUnder(toolbar.viewButton, shareItems())
+        const items = shareItems()
+        menuUnder(toolbar.viewButton, items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }])
     }
     /// Share without asking anything first. If the plugin needs more than the files — an SMTP
     /// account wants a recipient — it says so, and the sheet opens to collect it.
@@ -246,20 +257,45 @@ FloatingWindow {
             if (err) shareSheet.open(p, target, uris)
         })
     }
-    function shareTargets(p, uris) {
+    /// For scripts (`shell share <plugin>`): the targets as a menu of their own.
+    function shareTargets(p, uris) { shareTargetItems(p, uris, items => menuUnder(toolbar.viewButton, items)) }
+    /// A share plugin's targets as menu items: online ones first as the plugin sorted them,
+    /// offline ones greyed, and the reason when there are none.
+    function shareTargetItems(p, uris, fill) {
         Kiki.Daemon.request("ShareTargets", { plugin: p.id }, (ok, err) => {
-            if (err) { Kiki.Jobs.showToast({ text: err.message, undoable: false }); return }
-            const items = ok.targets.map(t => ({ label: t.name + (t.online ? "" : "  (offline)") + (t.detail ? "  ·  " + t.detail : ""), icon: p.icon || "share", enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
-            if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
-            menuUnder(toolbar.viewButton, items)
+            if (err) { fill([{ label: err.message, enabled: false, action: () => {} }]); return }
+            const items = ok.targets.map(t => ({ label: t.name + (t.detail ? "  ·  " + t.detail : ""), key: t.online ? "" : "offline", icon: t.icon || p.icon || "share", enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
+            fill(items.length ? items : [{ label: "Nothing found", enabled: false, action: () => {} }])
         })
     }
     // AI (plan 19)
     property bool aiOpen: false
     property var aiStatus: ({ configured: false })
     function loadAi() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) aiStatus = ok }) }
+    /// "Open AI here…" and "Open Terminal here…": both lead OUT of kiki, to a terminal window
+    /// started in `dir`. "Here" is the folder under the pointer when that is what was clicked,
+    /// else the folder being shown; the AI — the one chosen in Settings, as its own command-line
+    /// tool — is also told which `files` were selected. Local folders only.
+    function hereItems(dir, files) {
+        const local = dir.indexOf("file://") === 0
+        return [
+            { label: "Open AI here…", key: keymap.chordFor("ai"), sep: true, enabled: local, action: () => win.openAiHere(dir, files) },
+            { label: "Open Terminal here…", enabled: local, action: () => win.openTerminalHere(dir) },
+        ]
+    }
+    /// A failure says why (the tool is not installed, the files are remote) and, when no tool
+    /// is set at all, goes to where one is chosen.
+    function openAiHere(dir, files) {
+        Kiki.Daemon.request("AiOpen", { dir: dir, uris: files || [] }, (ok, err) => {
+            if (!err) return
+            Kiki.Jobs.showToast({ text: err.message, undoable: false })
+            if (err.message.indexOf("Settings") >= 0) settingsWin.open("ai")
+        })
+    }
+    function openTerminalHere(dir) {
+        Kiki.Daemon.request("OpenTerminal", { dir: dir }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+    }
     function aiQuery() { const u = selectedUris(); if (!u.length) return; if (!aiStatus.configured) { settingsWin.open("ai"); return } aiOpen = true; inspector = false; aiPanel.openFor(u) }
-    function aiCanned(q) { aiQuery(); if (aiOpen) aiPanel.ask(q) }
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
@@ -332,14 +368,16 @@ FloatingWindow {
             { label: "About kiki…", sep: true, action: () => aboutDlg.open() },
         ])
     }
+    /// The rows and their ticks are `viewmenu.js`'s (tested there); what each does is here.
+    /// Ticked for the FOCUSED pane's view, side by side as well — each pane has its own. (The
+    /// ticks used to be withheld when split: a leftover from when Mirror was itself a view and
+    /// none of these was the current one.)
+    function viewMenuItems() {
+        const act = { gallery: () => win.enterGallery(), hidden: () => pane.setHidden(!pane.showHidden) }
+        return ViewMenu.items(pane.view, pane.showHidden).map(it => Object.assign(it, { action: act[it.id] || (() => win.setView(it.id)) }))
+    }
     function viewMenu() {
-        const items = [
-            { label: "Icon", key: "Ctrl+1", checked: !win.split && pane.view === "icon", action: () => win.setView("icon") },
-            { label: "List", key: "Ctrl+2", checked: !win.split && pane.view === "list", action: () => win.setView("list") },
-            { label: "Columns", key: "Ctrl+3", checked: !win.split && pane.view === "columns", action: () => win.setView("columns") },
-            { label: "Gallery", key: "Ctrl+5", checked: pane.view === "gallery", action: () => win.enterGallery() },
-            { label: "Show hidden files", key: "Ctrl+H", sep: true, checked: pane.showHidden, action: () => pane.setHidden(!pane.showHidden) },
-        ]
+        const items = viewMenuItems()
         menuUnder(toolbar.viewButton, items)
     }
     // Sidebar keyboard focus (plan 23): Ctrl+B, then Up/Down/Enter, Esc back to the pane.
@@ -408,6 +446,7 @@ FloatingWindow {
             { label: "Compress…", sep: true, action: () => compressDialog.open(uris, folder) },
             { label: "Extract here", enabled: !!row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
             { label: "Copy path", action: () => ops.copyPath(uris) },
+            ...win.hereItems(row && row.isDir ? uri : folder, row && row.isDir ? [] : uris),
             { label: "Move to Trash", key: "Del", danger: true, sep: true, action: () => ops.trashSelection(uris) },
         ]
     }
@@ -455,10 +494,8 @@ FloatingWindow {
             { label: "Extract here", enabled: !!r && r.kind === "archive", action: () => ops.extractHere(r.name) },
             { label: "Extract to…", enabled: !!r && r.kind === "archive", action: () => ops.extractTo(r.name) },
             { label: "Copy path", enabled: sel, action: () => win.copyPath() },
-            { label: "Share", key: keymap.chordFor("share"), enabled: sel && win.sharePlugins.length > 0, items: win.shareItems() },
-            { label: win.aiStatus.configured ? "Jarvis: Query…" : "Jarvis: Set up…", key: "Alt+Q", enabled: sel && r && (r.kind === "code" || r.kind === "text" || r.kind === "document" || r.kind === "pdf" || r.isDir), action: () => win.aiQuery() },
-            { label: "Jarvis: Summarise", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Summarise this file in a few sentences.") },
-            { label: "Jarvis: Explain this file", enabled: sel && win.aiStatus.configured && r && !r.isDir, action: () => win.aiCanned("Explain what this file does and how it is structured.") },
+            ...win.shareItems(),
+            ...win.hereItems(r && r.isDir && pane.selection.count() === 1 ? pane.childUri(r.name) : pane.uri, win.selectedUris().filter(u => !(r && r.isDir && pane.selection.count() === 1))),
             { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
         return items
@@ -580,7 +617,7 @@ FloatingWindow {
         case "openWith": win.openWithMenu(); return true
         case "openDefault": win.openIn(""); return true
         case "share": win.shareMenu(); return true
-        case "ai": win.aiQuery(); return true
+        case "ai": win.openAiHere(win.pane.uri, win.selectedUris()); return true
         case "mirror": win.toggleMirror(); return true
         case "transfer": if (!win.split) return false; win.transfer(true); return true
         case "project": if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } return true
@@ -762,6 +799,8 @@ FloatingWindow {
                 titlePathShown: toolbar.pathShown, leftPath: leftHeader.breadcrumb.visible ? leftHeader.breadcrumb.uri : "", rightPath: rightHeader.breadcrumb.visible ? rightHeader.breadcrumb.uri : "", focused: win.pane === win.right ? "right" : "left", leftUri: win.left.uri, rightUri: win.right.uri })
         }
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
+        /// What the open menu says, for scripts and tests: each row's label, tick and whether it is live.
+        function menuItems(): string { return JSON.stringify(menu.visible ? menu.items.map(i => ({ label: i.label, checked: i.checked === true, enabled: !menu.off(i) })) : []) }
         function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
         function toggleSearch(): void { win.toggleSearch() }
         function inspector(on: string): void { win.inspectorRequested = on === "" ? !win.inspectorRequested : on === "on" }

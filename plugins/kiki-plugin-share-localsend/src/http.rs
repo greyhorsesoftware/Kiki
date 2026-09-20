@@ -1,6 +1,6 @@
 //! A minimal HTTP/1.1 client for the LocalSend protocol: one request per connection, plain or
-//! TLS. LocalSend receivers use self-signed certificates identified by fingerprint, so the TLS
-//! client accepts any certificate (the protocol's own trust model).
+//! TLS. LocalSend receivers use self-signed certificates identified by fingerprint: the TLS
+//! client accepts exactly the certificate the device announced (see `Pinned`).
 
 use kiki_plugin_sdk::{PluginError, Result};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -8,18 +8,46 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Debug)]
-struct AcceptAll;
+/// SHA-256 of a certificate, which is what a LocalSend device announces as its `fingerprint`.
+pub type Fingerprint = [u8; 32];
 
-impl rustls::client::danger::ServerCertVerifier for AcceptAll {
+/// 64 hex digits, either case; anything else is not a fingerprint.
+pub fn parse_fingerprint(hex: &str) -> Option<Fingerprint> {
+    let h = hex.trim().as_bytes();
+    if h.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, pair) in h.chunks(2).enumerate() {
+        out[i] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// LocalSend has no CA: a device IS its certificate, named by that certificate's SHA-256, which
+/// it announces when it is discovered. With a fingerprint to hold it to, the certificate the
+/// server presents must be that one — or whoever answered is not the device that was picked.
+/// Without one (an address typed by hand, which announced nothing) any certificate is accepted:
+/// there is nothing to compare it with, and the user named the address themselves.
+#[derive(Debug)]
+struct Pinned(Option<Fingerprint>);
+
+impl rustls::client::danger::ServerCertVerifier for Pinned {
     fn verify_server_cert(
         &self,
-        _: &rustls::pki_types::CertificateDer<'_>,
+        cert: &rustls::pki_types::CertificateDer<'_>,
         _: &[rustls::pki_types::CertificateDer<'_>],
         _: &rustls::pki_types::ServerName<'_>,
         _: &[u8],
         _: rustls::pki_types::UnixTime,
     ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        if let Some(want) = &self.0 {
+            let got = ring::digest::digest(&ring::digest::SHA256, cert.as_ref());
+            // Both sides are public (a hash of a public certificate): nothing to time.
+            if got.as_ref() != want {
+                return Err(rustls::Error::General(NOT_THE_DEVICE.into()));
+            }
+        }
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
     fn verify_tls12_signature(&self, m: &[u8], c: &rustls::pki_types::CertificateDer<'_>, d: &rustls::DigitallySignedStruct) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
@@ -65,30 +93,73 @@ pub struct Response {
     pub body: Vec<u8>,
 }
 
-fn connect(host: &str, port: u16, https: bool) -> Result<Stream> {
-    let tcp = TcpStream::connect((host, port)).map_err(|e| PluginError::network(format!("{host}:{port}: {e}")))?;
-    let _ = tcp.set_read_timeout(Some(Duration::from_secs(120)));
-    let _ = tcp.set_write_timeout(Some(Duration::from_secs(120)));
+pub const NOT_THE_DEVICE: &str = "the device that answered is not the one that announced itself (its certificate does not match)";
+
+/// `quick` is for asking an address whether a LocalSend device is there at all: it gives up on
+/// the connection, and on a silent peer, in that long. A send waits as long as a person takes to
+/// press Accept.
+fn connect(host: &str, port: u16, https: bool, pin: Option<&Fingerprint>, quick: Option<Duration>) -> Result<Stream> {
+    let unreachable = |e: std::io::Error| PluginError::network(format!("{host}:{port}: {e}"));
+    let tcp = match quick {
+        None => TcpStream::connect((host, port)).map_err(unreachable)?,
+        Some(t) => {
+            use std::net::ToSocketAddrs;
+            let addr = (host, port).to_socket_addrs().map_err(unreachable)?.next().ok_or_else(|| PluginError::network(format!("{host}: no address")))?;
+            TcpStream::connect_timeout(&addr, t).map_err(unreachable)?
+        }
+    };
+    let wait = quick.unwrap_or(Duration::from_secs(120));
+    let _ = tcp.set_read_timeout(Some(wait));
+    let _ = tcp.set_write_timeout(Some(wait));
     if !https {
         return Ok(Stream::Plain(tcp));
     }
+    let me = crate::identity::get()?;
     let cfg = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|e| PluginError::network(e.to_string()))?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAll))
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(Arc::new(Pinned(pin.copied())))
+        // Receivers ask for the sender's certificate and hang up without one.
+        .with_client_auth_cert(
+            vec![rustls::pki_types::CertificateDer::from(me.cert_der.clone())],
+            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(me.key_der.clone())),
+        )
+        .map_err(|e| PluginError::network(format!("this machine's LocalSend certificate: {e}")))?;
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|_| PluginError::network("bad host"))?;
     let conn = rustls::ClientConnection::new(Arc::new(cfg), name).map_err(|e| PluginError::network(e.to_string()))?;
     Ok(Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
 }
 
+fn handshake_error(e: std::io::Error) -> PluginError {
+    let text = e.to_string();
+    if text.contains(NOT_THE_DEVICE) {
+        PluginError::new("Auth", NOT_THE_DEVICE)
+    } else if text.to_ascii_lowercase().contains("certificaterequired") || text.to_ascii_lowercase().contains("certificate required") {
+        PluginError::network("the receiver would not accept this machine's certificate")
+    } else {
+        PluginError::io(text)
+    }
+}
+
 /// POST with a body from a reader of known length; `on_sent` gets each chunk's size.
 #[allow(clippy::too_many_arguments)]
-pub fn post(host: &str, port: u16, https: bool, path: &str, content_type: &str, body: &mut dyn Read, len: u64, mut on_sent: impl FnMut(u64)) -> Result<Response> {
-    let mut s = connect(host, port, https)?;
+pub fn post(host: &str, port: u16, https: bool, pin: Option<&Fingerprint>, path: &str, content_type: &str, body: &mut dyn Read, len: u64, on_sent: impl FnMut(u64)) -> Result<Response> {
+    post_within(None, host, port, https, pin, path, content_type, body, len, on_sent)
+}
+
+/// A small JSON POST that gives up quickly: discovery's question to one address.
+pub fn ask(host: &str, port: u16, https: bool, path: &str, json: &str, within: Duration) -> Result<Response> {
+    post_within(Some(within), host, port, https, None, path, "application/json", &mut json.as_bytes(), json.len() as u64, |_| {})
+}
+
+#[allow(clippy::too_many_arguments)]
+fn post_within(quick: Option<Duration>, host: &str, port: u16, https: bool, pin: Option<&Fingerprint>, path: &str, content_type: &str, body: &mut dyn Read, len: u64, mut on_sent: impl FnMut(u64)) -> Result<Response> {
+    let mut s = connect(host, port, https, pin, quick)?;
     let head = format!("POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUser-Agent: kiki\r\nAccept: */*\r\nConnection: close\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\n\r\n");
-    s.write_all(head.as_bytes()).map_err(PluginError::io)?;
+    // The handshake happens on the first write, so this is where a refused certificate — theirs
+    // or ours — comes back. Say which, in words, rather than rustls's.
+    s.write_all(head.as_bytes()).map_err(handshake_error)?;
     let mut buf = vec![0u8; 256 * 1024];
     let mut sent = 0u64;
     while sent < len {

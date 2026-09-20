@@ -216,7 +216,7 @@ impl Job {
         broadcast(self.event());
     }
 
-    fn progress(&self, done_delta: u64, bytes_delta: u64) {
+    pub(crate) fn progress(&self, done_delta: u64, bytes_delta: u64) {
         let mut st = self.status.lock().unwrap();
         st.done += done_delta;
         st.bytes += bytes_delta;
@@ -271,6 +271,26 @@ impl Job {
     }
 
     /// Ask the submitting client what to do about an existing destination.
+    /// The same question when either file is on a server: what is known about them comes from
+    /// a listing, not from this machine's filesystem.
+    pub(crate) fn ask_collision_meta(&self, dest: &Uri, existing: &crate::vfs::Meta, incoming: &crate::vfs::Meta) -> String {
+        if let Some(p) = self.policy.lock().unwrap().clone() {
+            return p;
+        }
+        let Some(tx) = &self.client else { return "skip".into() };
+        let _ = tx.send(
+            proto::event("Prompt")
+                .u("job", self.id)
+                .s("kind", "collision")
+                .s("uri", dest.to_string())
+                .v("existing", crate::listing::meta_json(existing))
+                .v("incoming", crate::listing::meta_json(incoming))
+                .v("choices", Value::Arr(vec![Value::Str("replace".into()), Value::Str("keepBoth".into()), Value::Str("skip".into())]))
+                .done(),
+        );
+        self.await_collision_answer()
+    }
+
     fn ask_collision(&self, dest: &std::path::Path, incoming: &std::path::Path) -> String {
         if let Some(p) = self.policy.lock().unwrap().clone() {
             return p;
@@ -299,6 +319,10 @@ impl Job {
                 .v("choices", Value::Arr(vec![Value::Str("replace".into()), Value::Str("keepBoth".into()), Value::Str("skip".into())]))
                 .done(),
         );
+        self.await_collision_answer()
+    }
+
+    fn await_collision_answer(&self) -> String {
         let rx = self.prompt.lock().unwrap().take();
         let answer = match rx {
             Some(rx) => {
@@ -392,6 +416,26 @@ fn uri(op: &Value, key: &str) -> Result<PathBuf, VfsError> {
     ops::local_path(&Uri::parse(s).map_err(|e| VfsError::Io(e.0.into()))?)
 }
 
+fn uri_value(op: &Value, key: &str) -> Result<Uri, VfsError> {
+    let s = op.str_field(key).ok_or(VfsError::Io(format!("missing {key}")))?;
+    Uri::parse(s).map_err(|e| VfsError::Io(e.0.into()))
+}
+
+fn uri_values(op: &Value, key: &str) -> Result<Vec<Uri>, VfsError> {
+    let arr = op.get(key).and_then(Value::as_arr).ok_or(VfsError::Io(format!("missing {key}")))?;
+    arr.iter().map(|v| v.as_str().ok_or(VfsError::Io("bad uri".into())).and_then(|s| Uri::parse(s).map_err(|e| VfsError::Io(e.0.into())))).collect()
+}
+
+/// Does any URI this op names live somewhere other than this machine?
+fn remote_op(op: &Value) -> bool {
+    let mut all: Vec<Uri> = Vec::new();
+    for key in ["dest", "uri", "dir"] {
+        all.extend(op.str_field(key).and_then(|s| Uri::parse(s).ok()));
+    }
+    all.extend(op.get("items").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect::<Vec<_>>()).unwrap_or_default());
+    crate::transfer::involves_remote(&all.iter().collect::<Vec<_>>())
+}
+
 fn uri_list(paths: &[PathBuf]) -> Value {
     Value::Arr(paths.iter().map(|p| Value::Str(Uri::from_path(p).to_string())).collect())
 }
@@ -402,6 +446,28 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
     let unjournaled = op.get("_unjournaled").and_then(Value::as_bool).unwrap_or(false);
     let cancel = Arc::clone(&job.cancel);
     let inverse = match job.kind.as_str() {
+        // Anything with an end that is not this machine goes through `transfer`: what follows
+        // works on local paths.
+        "copy" | "move" if remote_op(op) => {
+            let items = uri_values(op, "items")?;
+            let dest = uri_value(op, "dest")?;
+            return crate::transfer::copy_or_move(job, job.kind == "move", &items, &dest, &cancel);
+        }
+        "delete" if remote_op(op) => {
+            crate::transfer::delete_items(job, &uri_values(op, "items")?, &cancel)?;
+            None
+        }
+        "trash" if remote_op(op) => return Err(VfsError::Io("a server has no trash: use Delete (Shift+Del), which cannot be undone".into())),
+        "mkdir" if remote_op(op) => {
+            crate::transfer::make_dir(&uri_value(op, "uri")?)?;
+            job.set_totals(1, 0);
+            job.progress(1, 0);
+            None
+        }
+        "rename" if remote_op(op) => {
+            crate::transfer::rename_item(&uri_value(op, "uri")?, op.str_field("name").unwrap_or(""))?;
+            None
+        }
         "copy" | "move" => {
             let items = uris(op, "items")?;
             let dest = uri(op, "dest")?;
@@ -595,7 +661,17 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             None
         }
         "mirrorRun" => {
-            let stored = crate::mirror::stored(op.u64_field("plan").ok_or(VfsError::Io("missing plan".into()))?).ok_or(VfsError::Io("no such plan".into()))?;
+            let plan_id = op.u64_field("plan").ok_or(VfsError::Io("missing plan".into()))?;
+            let stored = crate::mirror::stored(plan_id).ok_or(VfsError::Io("no such plan".into()))?;
+            // However this ends, the plan is no longer being run from. (This job still counts
+            // as running while the guard drops, which is why it does not ask `plan_wanted`.)
+            struct Done(u64);
+            impl Drop for Done {
+                fn drop(&mut self) {
+                    crate::mirror::run_finished(self.0);
+                }
+            }
+            let _done = Done(plan_id);
             let mut spec = stored.spec.clone();
             if let Some(s) = op.get("spec") {
                 if let Ok(over) = crate::mirror::Spec::from_json(s) {
@@ -618,6 +694,14 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
         other => return Err(VfsError::Io(format!("unknown op {other}"))),
     };
     Ok(if unjournaled { None } else { inverse })
+}
+
+/// Is a run that was started from this plan still queued or running? While one is, the plan
+/// outlives the view it was reviewed in.
+pub fn plan_wanted(plan: u64) -> bool {
+    queue().lock().unwrap().jobs.iter().any(|j| {
+        j.op.str_field("op") == Some("mirrorRun") && j.op.u64_field("plan") == Some(plan) && matches!(j.status.lock().unwrap().state, State::Running | State::Queued)
+    })
 }
 
 fn audit_summary(job: &Job, out: &crate::mirror::Outcome) {

@@ -17,7 +17,7 @@ Ship 0.1.0 as an Omarchy package.
   |---|---|
   | `/usr/bin/kiki` | launcher: runs Quickshell on `/usr/share/kiki/shell.qml`, forwards a URI argument to `open(uri)` over IPC if a window is already up |
   | `/usr/bin/kikid` | the daemon |
-  | `/usr/lib/kiki/plugins/kiki-plugin-*` | every plugin: locations (`sftp`, `ftps`, later `ptp`, `mtp`, `afc`), services (`dbus`, `highlight`), share (`share-mail`, `share-messages`, `share-tailscale`, `share-localsend`, `share-airdrop`) |
+  | `/usr/lib/kiki/plugins/kiki-plugin-*` | every plugin: locations (`sftp`, `ftps`, later `ptp`, `mtp`, `afc`), services (`dbus`, `highlight`), share (`share-mail`, `share-tailscale`, `share-localsend`) |
   | `/usr/share/kiki/` | QML shell, `qml/icons/`, `qmldir` |
   | `/usr/lib/systemd/user/kiki.socket`, `kikid.service` | socket activation; enabled by the post-install hook |
   | `/usr/share/applications/org.kiki.App.desktop` | menu entry, `inode/directory`, `x-scheme-handler/sftp`, `x-scheme-handler/ftps` |

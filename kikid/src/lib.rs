@@ -30,6 +30,7 @@ pub mod share;
 pub mod string_pool;
 pub mod thumbs;
 pub mod toml;
+pub mod transfer;
 pub mod tree;
 pub mod vfs;
 pub mod watch;

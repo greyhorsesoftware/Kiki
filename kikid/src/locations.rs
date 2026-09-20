@@ -149,6 +149,16 @@ fn secrets_for(location: &Value) -> Value {
     Value::Obj(m)
 }
 
+/// A plugin that verifies certificates itself refuses one nobody has accepted, and the refusal
+/// IS the fingerprint (`Invalid`, field `fingerprint`). SFTP answers the same question with a
+/// reply instead. Either way it is "here is the key; has anyone said yes to it?".
+pub(crate) fn unaccepted_fingerprint(e: &VfsError) -> Option<String> {
+    match e {
+        VfsError::Io(m) => m.strip_prefix("Invalid/fingerprint: ").filter(|f| !f.is_empty()).map(str::to_string),
+        _ => None,
+    }
+}
+
 /// How a refusal to connect to a never-verified server starts; the key's fingerprint follows.
 /// The shell recognises it and offers the verification instead of showing a bare error.
 pub const UNVERIFIED_PREFIX: &str = "this server's key has not been verified yet: ";
@@ -167,7 +177,10 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     let secrets = secrets.unwrap_or_else(|| secrets_for(location));
     let pinned = config.str_field("trustedFingerprint").map(str::to_string);
-    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done())?;
+    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done()).map_err(|e| match unaccepted_fingerprint(&e) {
+        Some(fp) => VfsError::Io(format!("{UNVERIFIED_PREFIX}{fp}")),
+        None => e,
+    })?;
     // A location added without being checked has never had its server's key looked at.
     match key_verdict(pinned.as_deref(), reply.str_field("fingerprint"), reply.get("knownHost").and_then(Value::as_bool).unwrap_or(false)) {
         KeyVerdict::Proceed => {}
@@ -221,7 +234,13 @@ pub fn test(location: &Value, secrets: &Value) -> Result<(Option<String>, bool),
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     plugin.request(Value::obj().s("type", "Validate").v("config", config.clone()).done())?;
     let name = format!("_test_{}", location.str_field("name").unwrap_or("x"));
-    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", "browse").v("config", config).v("secrets", secrets.clone()).done())?;
+    let reply = match plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", "browse").v("config", config).v("secrets", secrets.clone()).done()) {
+        Ok(r) => r,
+        Err(e) => match unaccepted_fingerprint(&e) {
+            Some(fp) => return Ok((Some(fp), false)),
+            None => return Err(e),
+        },
+    };
     let _ = plugin.request(Value::obj().s("type", "Disconnect").s("location", name).s("role", "browse").done());
     Ok((reply.str_field("fingerprint").map(str::to_string), reply.get("knownHost").and_then(Value::as_bool).unwrap_or(false)))
 }
@@ -338,6 +357,15 @@ mod key_verdict_tests {
 
     /// A location added without being checked has never had its server's key looked at. What
     /// the first connect does about that decides whether "Add" is safe.
+    #[test]
+    fn a_refusal_that_is_a_fingerprint_is_a_question_not_a_failure() {
+        let fp = "1B:9D:2F:F6";
+        assert_eq!(unaccepted_fingerprint(&VfsError::Io(format!("Invalid/fingerprint: {fp}"))), Some(fp.to_string()));
+        assert_eq!(unaccepted_fingerprint(&VfsError::Io("Invalid/host: no such host".into())), None);
+        assert_eq!(unaccepted_fingerprint(&VfsError::Io("Invalid/fingerprint: ".into())), None, "nothing seen is nothing to show");
+        assert_eq!(unaccepted_fingerprint(&VfsError::Denied), None);
+    }
+
     #[test]
     fn an_unverified_unknown_key_is_refused_not_trusted() {
         assert_eq!(key_verdict(None, Some("SHA256:abc"), false), KeyVerdict::Refuse("SHA256:abc".into()));

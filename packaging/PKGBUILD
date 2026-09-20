@@ -14,10 +14,7 @@ depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 
 makedepends=('rust' 'cargo' 'clang' 'pkgconf')
 optdepends=('poppler: PDF thumbnails and text for Jarvis'
             'openssh: SFTP host key tools'
-            'tailscale: share files over Taildrop'
-            'kdeconnect: share to a paired phone'
-            'signal-cli: share via Signal'
-            'opendrop: AirDrop to Apple devices (needs owl and a supported Wi-Fi adapter)')
+            'tailscale: share files over Taildrop')
 install=kiki.install
 options=('!lto')
 
@@ -40,7 +37,7 @@ package() {
   install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
   install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
-  for p in dbus highlight share-mail share-messages share-tailscale share-localsend share-airdrop; do
+  for p in dbus highlight share-mail share-tailscale share-localsend; do
     install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
   done
   # Device and GIO plugins (ptp mtp afc gio, and the smb/dav/afp symlinks onto gio) are not in

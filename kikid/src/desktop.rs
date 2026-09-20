@@ -320,7 +320,15 @@ pub fn launch(app_id: &str, uris: &[String]) -> Result<(), String> {
 }
 
 pub fn spawn_detached(argv: &[String]) -> Result<(), String> {
+    spawn_detached_in(argv, None)
+}
+
+/// …started in `dir`: a terminal opens where it is started.
+pub fn spawn_detached_in(argv: &[String], dir: Option<&std::path::Path>) -> Result<(), String> {
     let mut cmd = Command::new(&argv[0]);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
     cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     #[cfg(unix)]
     {

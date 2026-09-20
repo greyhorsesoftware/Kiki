@@ -273,6 +273,64 @@ The form took one key file path and treated the password as "(if no key)"; there
 - Covered by `key_tests` (discovery, labels, choice, messages, form) and seven new cases in `tests/mock_sftp.rs` against an in-process SSH server: several named keys tried in order, no key named offers none even when one would work, named-key-only (asserting the un-named key was never offered), passphrase needed / wrong / right, password after refused keys, keyboard-interactive-only server, nothing to sign in with, and `Browse`; and `tst_LocationKeys.qml` for the form. The tests never see the developer's own `~/.ssh` (`KIKI_SSH_DIR`).
 - **Not done:** `ssh-agent` (keys held only by an agent are not found); `~/.ssh/config` (`IdentityFile`, `Host` aliases, `ProxyJump`) is not read; FTPS was not touched; and none of it has been tried by hand against a real server.
 
+## L2. Share, trimmed and made to work (2026-09-19)
+
+- **Messages and AirDrop are gone** (plugins, workspace members, PKGBUILD install line and optdepends, docs, design mockup). Three remain: **LocalSend, Mail, Tailscale**. Reasons in `18-share.md`.
+- **LocalSend could never have sent to a real device** — no client certificate, discovery blind beside the app Omarchy ships, multicast-only. Fixed and checked against the running app; details in `18-share.md`. A send to a **phone** is still to be tried by hand (D).
+- **No "Share ▸" any more.** The context menu has the ways themselves, between separators — *Send via LocalSend ▸*, *Send via Mail*, *Send via Tailscale ▸* — and a plugin's targets are the submenu of its own row, asked for when the row is opened (`ContextMenu`'s `load`; "Looking…" meanwhile). Choosing a plugin used to open its targets as a second menu at the top of the window. `Alt+S` still opens the same rows under the toolbar. Looked at in the running app with a real right-click; `tst_MenuLazySub.qml`.
+- Tailscale peers are named as the tailnet names them (`iphone-12-pro`), not by the hostname the device gives itself — an iPhone's is "localhost".
+- **LocalSend ships switched off** (`off_by_default` in its `Describe`; the daemon falls back to it when the user has said nothing). It is in the build and one switch away in Settings → Share; it comes on by default once it has sent to a real phone (D).
+- **"Open AI here…" and "Open Terminal here…"** replace the three Jarvis rows, in every file menu (rows, empty space, column view). Both lead out of kiki, to a terminal window started in the folder — the one under the pointer when a folder was clicked, else the one on screen (`xdg-terminal-exec --dir=`, as Omarchy's own launcher; `$TERMINAL -e`, then alacritty, without it). The AI is the one chosen in Settings → Jarvis, as its own command-line tool in **conversation** mode (`claude`, `codex`, `gemini -i`), told which files were selected and to wait for the question; nothing selected starts it bare in the folder. `Alt+Q` does the same. Not installed, or remote files, is said in a toast; no tool chosen goes to Settings. Tried against the daemon: a foot window running `claude "I have questions about `…/footer.js`…"` in the file's folder. **The in-app Jarvis panel is no longer reachable from the UI** (only `shell aiQuery` over IPC): decide whether it goes (`AiPanel.qml`, `AiQuery`, plan 19's streaming) or gets a way back in.
+- **Tailscale is dimmed when `tailscale` is not installed**, saying so, through a general `requires` in a share plugin's `Describe`.
+
+## L3. Files to and from servers: it had never worked (2026-09-19)
+
+Reported as "dragging to white space does not download or move — you have to hit a folder". Two different things were wrong, and the second was the large one.
+
+**Drop targets.** List view took a drop on empty space; **icon view did not** (its background target was declared inside the grid, so it was a child of the grid's *content* — only as tall as the rows of tiles, and not under the margins); **column view and the gallery had no drop target at all**, and column rows could not be dragged. Fixed: every view takes a drop on empty space (a column's goes into that column's folder, the room right of the last column into the deepest folder open), folder rows in columns take drops, column rows drag. Found on the way: **a drop was delivered twice** where targets overlap (a second move of a file already gone: "Already exists, incoming 0 B") — a drop is now dealt with once; and **the right pane's column view showed the LEFT pane's folder** (built before it was told whose it was), and the first fix for that destroyed the other pane's listing — the view now destroys only listings it made. Proven with real drags injected into the live window (`vptr`, a scripted virtual pointer written for this; `wlrctl` can only click).
+
+**The job engine was local-only.** `copy`, `move`, `delete`, `rename` and `mkdir` turned every URI into a local path, and anything else was `Unsupported`. So a drag to or from a server, paste into one, F5/F6 between the panes, Delete, Rename and New folder had **never worked on a remote location** — only Mirror could move bytes to a server. New `kikid/src/transfer.rs` does all five when any end is remote, on Mirror's own file copy (`mirror::copy_file`: the four pairings of local and remote, now taking a name for each side so "keep both" works). A move inside one server is the server's rename; between places it is a copy and then a delete, the original going only once all of it has arrived. Collisions ask the same question (`ask_collision_meta`). A plugin's `Delete` is one file or one EMPTY folder — the contract, tested — so a folder on a server is emptied from the daemon, deepest first, the same for every plugin. A window showing a server folder a job changed is read again in place (`listing::changed`). **Not journalled:** anything that changed a server has no undo (a copy that landed on this machine does); `trash` on a server says to use Delete. **Known gap:** a remote folder containing a symlink cannot be emptied (the tree walk skips links) — the delete fails rather than doing harm.
+
+**What the drop does** is now one tested function (`Pane.dropAction`, `tst_DropAction.qml`, 40 cases): a move within one place, a copy between places — and **a place is scheme AND server**: `sftp://nas` → `sftp://backup` used to count as the same place and *move*. `Ctrl` copies, `Shift` moves. A folder is not dropped onto itself or into something inside it.
+
+**Three plugin bugs that only a real server shows**, all found by the new flow and none by the mocks:
+- **SFTP cut every file over 255 KiB short.** A read that came back with fewer bytes than asked was taken for the end of the file; OpenSSH never gives more than 255 KiB a read. Mirror, previews and downloads were all affected. A short read is now followed up, the chunk is 64 KiB, and the mock server gives at most 50 000 bytes a read so the tests cover it.
+- **FTPS uploads arrived short by a random amount** (0.8–2.5 MB of 3 MB) and the server still said 226. A TLS 1.3 server writes session tickets on the data connection, nobody reads them, and a socket closed with unread data is closed with a reset — on which the server discards what it had not yet read. The upload now half-closes and drains before letting go (`finish_upload`).
+- **A self-signed FTPS server could not be added at all**: the plugin's refusal *is* the fingerprint (`Invalid`/`fingerprint`), and the daemon flattened it into an error string. It is now the same "trust this server?" question SFTP gets, on add and on the first connect of an unchecked location.
+
+**Tests.** `tests/e2e/flows/remote_transfers.py`: a user-mode `sshd` and a pyftpdlib FTPS server (`make e2e-servers`, once), both serving folders of the fixture; **nine pairs of ends × copy and move = 18 transfers** of a tree with a 3 MB file, an empty file, an empty folder, spaces and non-ASCII names, each checked on disk byte for byte, source kept or gone. The harness's secret-tool now really keeps secrets (FTPS signs in with a password). A pair whose server cannot be started is skipped by name.
+
+## M. Code scan, 2026-09-19 (leaks, carelessness, duplication)
+
+The open items below have a plan of their own: **`30-code-health.md`** (W1–W8, in order, each with its tests). **W1–W3 — LocalSend's fingerprint check, the mirror plan store, and the two git caches — were built the same day**; what is open below is W4–W8.
+
+Clippy is all but clean (8 style warnings, none a defect). Per-client daemon state is released on disconnect; the job list, the listing cache, the row window and the thumbnail path are all bounded.
+
+**Fixed the same day**
+- **Every column walked into leaked a listing.** `ColumnsPane` (and `ProjectTree`) destroy their `WindowCache`s rather than close them, and a destroyed cache neither sent `Close` nor unbound itself: the daemon kept the listing subscribed — so never evictable, its folder watched — for the life of the window, and `Daemon._listings` kept the dead object, which is F's `handleEvent … is not a function`. `WindowCache` now closes on destruction (`tst_WindowCacheLifetime.qml`).
+- **`Tab` and copy/move to the other pane threw, side by side.** A property `otherPane` (unused) shadowed `function otherPane()`. Removed; the e2e split flow now presses Tab.
+
+**Open — leaks in the daemon (all unbounded, none evicted)**
+- `mirror/store.rs`: a scanned plan is stored by job id and never removed; a plan lists every file of both sides. Drop it when its run finishes or its listing closes, and cap what is kept.
+- `git.rs` `status_cache`: one `Status` (a map of every changed file) per directory ever listed; removed only when that directory changes. Tie it to the listing cache's eviction, or cap it by age.
+- `git.rs` `repo_root`: one entry per directory ever visited, negative answers included, and never invalidated — so it is also wrong after `git init` or a deleted `.git` until the daemon restarts.
+- `icons.rs` lookup cache and `listing::names` are unbounded too, but bounded in practice (names × sizes; uids).
+
+**Open — security, found on the way**
+- **LocalSend sends to whoever answers.** `kiki-plugin-share-localsend/src/http.rs` accepts any TLS certificate (`AcceptAll`) and never compares it with the fingerprint the peer announced, which is the protocol's whole identity check. Anyone on the LAN who answers first gets the files. Verify the certificate's SHA-256 against the announced fingerprint. (Mail and FTPS do verify: web PKI or a pinned fingerprint.)
+
+**Open — carelessness**
+- `Theme.qml` re-reads three or four files every 2 s for ever, in every window, because a watch on a file behind Omarchy's `current` symlink dies when the theme changes. Watch the symlink's directory (or `theme.name`, which is already watched and changes with it) and reload the rest on that.
+- `listing/mod.rs`: an empty `impl Inner {}`.
+- `jobs.rs:676` and `listing/mod.rs:147` wait by sleeping 2–5 ms in a loop (the second is tests and bench only); a condvar on the job's status would do for the first.
+- Lines over 300 characters that hold whole behaviours: 13 in `MirrorWorkspace.qml`, 10 in `SettingsWindow.qml`, 8 in `Shell.qml`. The sidebar's location menu in `Shell.qml` is one of them.
+
+**Open — duplication**
+- `font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize` with a colour is written out 201 times: a `Label.qml` (and a field-label variant for the 11 px upper-case one) would take most of them.
+- One-pixel rules (`Rectangle { … height: 1; color: Kiki.Theme.line }`) 19 times in three orientations: a `Rule.qml`.
+- `Shell.qml`'s four view components repeat the same `onActivate` / `onContextMenu` bodies; the text-input styling line is in four files; the dropdown chevron in three.
+- Rust: the rustls verifier boilerplate is copied between the LocalSend and mail plugins; `Count` done-events are built identically in three places in `server.rs`; `location.get("config")…unwrap_or(empty)` three times in `locations.rs`; the `uris` array parse twice on adjacent lines of `server.rs`. The SFTP/FTPS/MTP/gio plugins share trait signatures, not bodies — that is the SDK working, not duplication.
+
 ## Order
 
 1. **G, first two bullets and the commit** — cheap, and everything after it is easier to review on a clean tree.

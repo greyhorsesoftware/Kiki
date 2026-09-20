@@ -432,7 +432,10 @@ impl russh_sftp::server::Handler for SftpFs {
         if offset as usize >= b.len() {
             return Err(StatusCode::Eof);
         }
-        let end = (offset as usize + len as usize).min(b.len());
+        // A real server gives what it likes, not what it is asked for: OpenSSH never more than
+        // 255 KiB, others 32. This one gives at most 50 000 bytes, a number no client asks for, so
+        // every read of a file of any size is a short one that is not the end of the file.
+        let end = (offset as usize + (len as usize).min(50_000)).min(b.len());
         Ok(Data { id, data: b[offset as usize..end].to_vec() })
     }
 
@@ -827,7 +830,11 @@ fn reads_are_pipelined_and_exact() {
     assert_eq!(got.len(), expect.len());
     assert!(got == expect, "bytes differ");
     let reads = m.counters.reads.load(Ordering::SeqCst);
-    assert_eq!(reads, 17, "256 KiB chunks: 16 full + 1 short");
+    // This server gives at most 50 000 bytes a read, and 64 KiB is asked for: every chunk comes
+    // back short and is followed up once. 64 full chunks × 2, the 12 345-byte tail, and the read
+    // after it that is told "end of file". What matters is the line above — the bytes are exact;
+    // against OpenSSH, which also gives less than it is asked, they used to stop at 255 KiB.
+    assert_eq!(reads, 130, "64 KiB chunks, each answered short and followed up");
     assert!(m.counters.max_inflight.load(Ordering::SeqCst) >= 8, "requests overlap on the wire: max in flight {}", m.counters.max_inflight.load(Ordering::SeqCst));
     // Resume from an offset (partialRead)
     let tail = p.read("/data.bin", 4 * 1024 * 1024);

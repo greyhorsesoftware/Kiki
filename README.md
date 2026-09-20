@@ -10,7 +10,7 @@ index, git badges, project mode beside your editor and agent, sharing, and Jarvi
 |---|---|
 | `kikid/` | the daemon: string-pool listings, windows, jobs and undo, archives, mirror, index, git, plugin and helper hosts |
 | `crates/kiki-json`, `crates/kiki-plugin-sdk` | the shared JSON reader/writer and the SDK for location and share plugins |
-| `plugins/` | every plugin, one process each: locations (`sftp`, `ftps`), services (`dbus`, `highlight`), share (`share-mail`, `share-messages`, `share-tailscale`, `share-localsend`, `share-airdrop`); the stub lives in `kikid/src/bin/` |
+| `plugins/` | every plugin, one process each: locations (`sftp`, `ftps`), services (`dbus`, `highlight`), share (`share-mail`, `share-tailscale`, `share-localsend`); the stub lives in `kikid/src/bin/` |
 | `qml/` | the Quickshell shell |
 | `tests/` | QML component tests and the e2e harness (`tests/e2e/run.sh`) |
 | `docs/0.1.0/` | the core plan, feature plans and the two API documents |

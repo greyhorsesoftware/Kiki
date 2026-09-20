@@ -25,11 +25,22 @@ export KIKI_TRASH_DIR="$work/trash"
 export HOME_FIXTURE="$work/home"; mkdir -p "$HOME_FIXTURE"
 export KIKI_START="file://$HOME_FIXTURE"
 export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman
-# A fake secret-tool: no Secret Service in a headless run, and no flow needs a real keyring.
-cat > "$work/secret-tool" <<'EOS'
+# A secret-tool of our own: there is no Secret Service in a headless run. It keeps what it is given
+# in the temp directory and gives it back, because a flow that signs in to a server with a
+# password (remote_transfers, FTPS) needs the daemon to be able to look that password up again.
+#   secret-tool store --label L app kiki location <loc> field <f>   (the secret on stdin)
+#   secret-tool lookup|clear     app kiki location <loc> field <f>
+mkdir -p "$work/secrets"
+cat > "$work/secret-tool" <<EOS
 #!/bin/sh
-if [ "$1" = lookup ]; then exit 1; fi
-cat >/dev/null; exit 0
+verb="\$1"; shift
+[ "\$verb" = store ] && shift 2
+f="$work/secrets/\$(printf '%s' "\$*" | tr -c 'A-Za-z0-9._-' '_')"
+case "\$verb" in
+  store) cat > "\$f" ;;
+  lookup) [ -f "\$f" ] && cat "\$f" || exit 1 ;;
+  clear) rm -f "\$f" ;;
+esac
 EOS
 chmod +x "$work/secret-tool"
 export KIKI_SECRET_TOOL="$work/secret-tool"

@@ -46,7 +46,7 @@ QtObject {
         { id: "openWith",      group: "Files",    label: "Open with…",             def: "Alt+Shift+Enter" },
         { id: "openDefault",   group: "Files",    label: "Open in default tool",   def: "Alt+Enter" },
         { id: "share",         group: "Files",    label: "Share",                  def: "Alt+S" },
-        { id: "ai",            group: "Files",    label: "Ask Jarvis",             def: "Alt+Q" },
+        { id: "ai",            group: "Files",    label: "Open AI here",            def: "Alt+Q" },
 
         { id: "mirror",        group: "Two panes", label: "Mirror to the remote",  def: "Ctrl+M" },
         { id: "transfer",      group: "Two panes", label: "Move across",           def: "F6" },

@@ -183,12 +183,34 @@ QtObject {
     function dragMime(index) { return { "text/uri-list": dragUris(index).join("\r\n") + "\r\n" } }
     // Drop `drop` (a DragEvent) into `dest`: move within one scheme, copy across, Ctrl forces copy.
     function dropInto(dest, drop) {
+        // One drop, one job. Drop targets lie over each other — a folder row over its view's
+        // background, a column over the pane's — and Qt hands the same drop to each of them in
+        // turn, topmost first. The second would move the files again: a collision prompt for a
+        // file that has already gone ("incoming 0 B"). Whoever accepted it first has dealt with it.
+        if (drop.accepted) return
         const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : (drop.hasText ? drop.text.split(/\r?\n/).filter(l => l && !l.startsWith("#")) : [])
-        const items = urls.filter(u => u && parentOf(u) !== dest.replace(/\/+$/, "") && parentOf(u) + "/" !== dest && u.replace(/\/+$/, "") !== dest.replace(/\/+$/, ""))
-        if (!items.length) { drop.accepted = false; return }
-        const sameScheme = items.every(u => u.split("://")[0] === dest.split("://")[0])
-        const copy = (drop.modifiers & Qt.ControlModifier) || drop.proposedAction === Qt.CopyAction && !sameScheme || !sameScheme
-        drop.accept(copy ? Qt.CopyAction : Qt.MoveAction)
-        Kiki.Jobs.submit({ op: copy ? "copy" : "move", items: items, dest: dest })
+        const action = dropAction(urls, dest, drop.modifiers)
+        if (!action) { drop.accepted = false; return }
+        drop.accept(action.op === "copy" ? Qt.CopyAction : Qt.MoveAction)
+        Kiki.Jobs.submit({ op: action.op, items: action.items, dest: dest })
+    }
+    /// Where a URI lives: its scheme and authority. `sftp://nas` and `sftp://backup` are two
+    /// machines, however alike they look; every `file://` is this one.
+    function placeOf(u) { const m = /^([a-z][a-z0-9+.-]*):\/\/([^\/]*)/i.exec(u); return m ? (m[1] + "://" + m[2]).toLowerCase() : "" }
+    /// What dropping `urls` on the folder `dest` does: `{ op, items }`, or null for nothing.
+    ///  - What is already there is not dropped again: an item whose folder IS `dest`, `dest`
+    ///    itself, and a folder onto itself or into something inside it.
+    ///  - Ctrl copies, Shift moves. Otherwise: a MOVE within one place, a COPY between places —
+    ///    between machines a move is a copy and then a delete, and nobody asked for the delete.
+    function dropAction(urls, dest, modifiers) {
+        const d = dest.replace(/\/+$/, "")
+        const items = urls.filter(u => {
+            const s = (u || "").replace(/\/+$/, "")
+            return s !== "" && parentOf(s) !== d && s !== d && d.indexOf(s + "/") !== 0
+        })
+        if (!items.length) return null
+        const samePlace = items.every(u => placeOf(u) === placeOf(dest))
+        const op = (modifiers & Qt.ControlModifier) ? "copy" : (modifiers & Qt.ShiftModifier) ? "move" : (samePlace ? "move" : "copy")
+        return { op: op, items: items }
     }
 }

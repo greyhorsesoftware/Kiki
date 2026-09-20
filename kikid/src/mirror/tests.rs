@@ -242,8 +242,65 @@ fn a_local_only_mirror_uses_size_and_mtime() {
 
 // ---------------------------------------------------------------- the plan registry
 
+/// The plan store is one map for the whole process: tests that count what is in it take turns.
+static PLANS: Mutex<()> = Mutex::new(());
+
+fn one_file_plan() -> Plan {
+    let m: SideMap = [e("a.txt", false, 1, 1)].into_iter().collect();
+    diff(&m, &SideMap::new(), &spec(false), Detector::SizeMtime, 0).unwrap()
+}
+
+#[test]
+fn a_plan_goes_when_the_last_view_of_it_closes() {
+    let _g = PLANS.lock().unwrap_or_else(|e| e.into_inner());
+    store(7001, spec(false), one_file_plan());
+    assert!(view(7001).is_some());
+    assert!(view(7001).is_some(), "two windows showing it");
+    unview(7001);
+    assert!(stored(7001).is_some(), "one is still looking");
+    unview(7001);
+    assert!(stored(7001).is_none(), "a plan lists every file on both sides: not kept for nobody");
+    unview(7001); // a second close of the same view is not an error
+    assert!(view(7002).is_none(), "no such plan");
+}
+
+#[test]
+fn a_finished_run_drops_a_plan_nobody_is_showing() {
+    let _g = PLANS.lock().unwrap_or_else(|e| e.into_inner());
+    store(7010, spec(false), one_file_plan());
+    view(7010);
+    run_finished(7010);
+    assert!(stored(7010).is_some(), "still on screen: the report can be saved");
+    unview(7010);
+    store(7011, spec(false), one_file_plan());
+    let held = stored(7011).unwrap(); // what a run holds while it works
+    run_finished(7011);
+    assert!(stored(7011).is_none());
+    assert_eq!(held.plan.lock().unwrap().actions.len(), 1, "the run's own handle outlives the store's");
+}
+
+#[test]
+fn plans_nobody_opened_are_capped_and_the_ones_on_screen_survive() {
+    let _g = PLANS.lock().unwrap_or_else(|e| e.into_inner());
+    store(7100, spec(false), one_file_plan());
+    view(7100); // the oldest, but on screen
+    for id in 7101..7101 + KEEP as u64 + 4 {
+        store(id, spec(false), one_file_plan());
+    }
+    let mine: Vec<u64> = store::ids().into_iter().filter(|id| (7100..7200).contains(id)).collect();
+    assert!(mine.len() <= KEEP, "{mine:?}");
+    assert!(mine.contains(&7100), "never the one being shown");
+    assert!(mine.contains(&(7100 + KEEP as u64 + 4)), "nor the newest");
+    assert!(!mine.contains(&7101), "the oldest idle one went first");
+    unview(7100);
+    for id in mine {
+        run_finished(id);
+    }
+}
+
 #[test]
 fn a_scanned_plan_is_kept_for_the_run_that_follows() {
+    let _g = PLANS.lock().unwrap_or_else(|e| e.into_inner());
     let m: SideMap = [e("a.txt", false, 1, 1)].into_iter().collect();
     let plan = diff(&m, &SideMap::new(), &spec(false), Detector::SizeMtime, 0).unwrap();
     assert!(stored(4242).is_none(), "an unknown job id has no plan");

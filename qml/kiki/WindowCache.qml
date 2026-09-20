@@ -49,6 +49,11 @@ QtObject {
         _request(0, Math.min(viewportCount + padAhead, maxRequest))
     }
 
+    // A cache made on the fly (a column, the project tree) is destroyed, not closed: without this
+    // the daemon kept the listing subscribed — never evicted, its folder watched — for the life of
+    // the window, and `Daemon._listings` kept a dead object that the next event was dispatched to.
+    Component.onDestruction: close()
+
     function close() {
         if (lid) { d().request("Close", { lid: lid }); d().unbind(lid); lid = 0 }
     }

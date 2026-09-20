@@ -153,17 +153,30 @@ fn run_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resul
 
 fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Result<(), VfsError> {
     let mtime = a.master.as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+    copy_file(master, &a.rel, replica, &a.rel, a.bytes, mtime, ctx)
+}
+
+/// One file from `master`/`from` to `replica`/`to`, whichever of the two is this machine: the
+/// four pairings of local and remote. Mirror copies under the same name on both sides; a plain
+/// copy that was told "keep both" does not, which is why there are two.
+pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64, mtime: u64, ctx: &ExecCtx) -> Result<(), VfsError> {
+    struct A<'a> {
+        rel: &'a str,
+        to: &'a str,
+        bytes: u64,
+    }
+    let a = A { rel: from, to, bytes };
     match (master, replica) {
         (Side::Local(mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(&*a.rel);
+            let dst = rroot.join(a.to);
             let _ = std::fs::remove_file(&dst);
             let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n) };
-            crate::ops::copy_file(&mroot.join(&*a.rel), &dst, &mut p)?;
+            crate::ops::copy_file(&mroot.join(a.rel), &dst, &mut p)?;
             Ok(())
         }
         (Side::Local(mroot), Side::Remote(s, rroot)) => {
-            let mut f = std::fs::File::open(mroot.join(&*a.rel))?;
-            let req = Value::obj().s("type", "Write").s("location", s.location.clone()).s("path", join_rel(rroot, &a.rel)).u("size", a.bytes).u("mtime", mtime).done();
+            let mut f = std::fs::File::open(mroot.join(a.rel))?;
+            let req = Value::obj().s("type", "Write").s("location", s.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
             let mut buf = vec![0u8; 512 * 1024];
             let cancel = ctx.cancel;
             s.plugin.write_stream(req, || {
@@ -180,14 +193,14 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
                 }
             })?;
             // Best-effort mtime so size+mtime stays idempotent on the next run.
-            let _ = s.plugin.request(Value::obj().s("type", "SetMtime").s("location", s.location.clone()).s("path", join_rel(rroot, &a.rel)).u("mtime", mtime).done());
+            let _ = s.plugin.request(Value::obj().s("type", "SetMtime").s("location", s.location.clone()).s("path", join_rel(rroot, a.to)).u("mtime", mtime).done());
             Ok(())
         }
         (Side::Remote(s, mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(&*a.rel);
+            let dst = rroot.join(a.to);
             let tmp = dst.with_extension("kiki-part");
             let mut f = std::fs::File::create(&tmp)?;
-            let req = Value::obj().s("type", "Read").s("location", s.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
+            let req = Value::obj().s("type", "Read").s("location", s.location.clone()).s("path", join_rel(mroot, a.rel)).done();
             let r = s.plugin.read_stream_with(req, Some(ctx.cancel), |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
@@ -210,8 +223,8 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             // Two plugin processes: stream the Read straight into the Write through a bounded
             // channel, so the transfer never touches the local disk and both sides run at once.
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
-            let read_req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
-            let write_req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, &a.rel)).u("size", a.bytes).u("mtime", mtime).done();
+            let read_req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, a.rel)).done();
+            let write_req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
             let reader = std::thread::scope(|scope| {
                 let ms = Arc::clone(ms);
                 let cancel = ctx.cancel;
@@ -241,7 +254,7 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             // spool through a temp file.
             let tmp = std::env::temp_dir().join(format!("kiki-mirror-{}-{}", std::process::id(), crate::md5::hex(a.rel.as_bytes())));
             let mut f = std::fs::File::create(&tmp)?;
-            let req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, &a.rel)).done();
+            let req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, a.rel)).done();
             ms.plugin.read_stream(req, |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
@@ -250,7 +263,7 @@ fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resu
             })?;
             drop(f);
             let mut f = std::fs::File::open(&tmp)?;
-            let req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, &a.rel)).u("size", a.bytes).u("mtime", mtime).done();
+            let req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
             let mut buf = vec![0u8; 512 * 1024];
             let r = rs.plugin.write_stream(req, || {
                 use std::io::Read;

@@ -334,4 +334,5 @@ pub use execute::{execute, ExecCtx, Outcome};
 pub use filters::{filtered, load_filters, Rule};
 pub use report::{action_json, report};
 pub use scan::{scan, scan_side};
-pub use store::{store, stored, Stored};
+pub use execute::copy_file;
+pub use store::{run_finished, store, stored, unview, view, Stored, KEEP};

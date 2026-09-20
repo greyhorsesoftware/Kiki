@@ -87,4 +87,42 @@ TestCase {
         verify(dlg.status.indexOf("has changed") >= 0, dlg.status)
         verify(dlg.visible)
     }
+
+    // A location that was added without being checked is verified on its first connect. That is a
+    // question about a server, not an edit: only the question is shown, never the form.
+    readonly property var saved: ({ name: "homelab", plugin: "sftp", remoteUri: "sftp://homelab/", config: { host: "homelab.lan", username: "gideon" } })
+    readonly property var plugins: [{ scheme: "sftp", displayName: "SFTP", version: "1.0", form: [{ key: "name", label: "Name", kind: "text", required: true }, { key: "host", label: "Host", kind: "text", required: true }], secretFields: [] }]
+    function verifySaved() {
+        dlg.visible = false
+        Wire.reset()
+        dlg.verify(tc.saved)
+        Wire.replyTo("Plugins", { plugins: tc.plugins })
+    }
+    function test_verifying_a_saved_location_shows_the_question_and_not_the_form() {
+        verifySaved()
+        verify(dlg.visible)
+        verify(!findChild(dlg, "location-card").visible, "no edit form")
+        verify(findChild(dlg, "verify-waiting").visible, "something to look at while the server is asked")
+        const asked = Wire.last("UpdateLocation")
+        verify(asked !== null)
+        Wire.reply(asked.id, { verify: tc.fingerprint, host: "homelab.lan" })
+        verify(panel().visible)
+        verify(!findChild(dlg, "verify-waiting").visible)
+        verify(!findChild(dlg, "location-card").visible, "still no form")
+    }
+    function test_cancelling_it_closes_everything() {
+        verifySaved()
+        Wire.reply(Wire.last("UpdateLocation").id, { verify: tc.fingerprint, host: "homelab.lan" })
+        mouseClick(findChild(dlg, "verify-cancel"))
+        verify(!dlg.visible, "not left standing in an edit form nobody asked for")
+        verify(!dlg.verifyOnly)
+    }
+    function test_a_failure_closes_it_too_and_the_form_is_a_form_again_next_time() {
+        verifySaved()
+        Wire.fail(Wire.last("UpdateLocation").id, "Network", "homelab.lan:22: connection refused")
+        verify(!dlg.visible)
+        dlg.open(tc.saved)
+        Wire.replyTo("Plugins", { plugins: tc.plugins })
+        verify(findChild(dlg, "location-card").visible, "Edit… is still an edit")
+    }
 }

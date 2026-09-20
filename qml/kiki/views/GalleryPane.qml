@@ -6,6 +6,14 @@ import "../ui" as UI
 // listing, its order and the selection are the other views' — only the drawing differs.
 Item {
     id: root
+    // The gallery shows one folder: anything dropped on it, anywhere, goes into that folder.
+    DropArea {
+        objectName: "gallery-drop-background"
+        anchors.fill: parent; z: -1
+        keys: ["text/uri-list"]
+        enabled: !!root.pane && !root.pane.isTrash
+        onDropped: drop => root.pane.dropInto(root.pane.uri, drop)
+    }
     property Kiki.Pane pane
     property string home: ""
     signal activate(int index)
