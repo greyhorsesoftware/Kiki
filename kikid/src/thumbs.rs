@@ -9,8 +9,6 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Size {
@@ -304,51 +302,9 @@ pub fn thumbable(kind: Kind) -> bool {
     matches!(kind, Kind::Image | Kind::Video | Kind::Pdf)
 }
 
-// ---------------------------------------------------------------- worker pool (low priority)
-
-pub struct ThumbJob {
-    pub uri: Uri,
-    pub kind: Kind,
-    pub mtime_ms: u64,
-    pub size: Size,
-    pub done: Box<dyn FnOnce(Option<PathBuf>) + Send>,
-}
-
-fn pool() -> &'static Sender<ThumbJob> {
-    static P: OnceLock<Sender<ThumbJob>> = OnceLock::new();
-    P.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<ThumbJob>();
-        let rx = Arc::new(Mutex::new(rx));
-        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4);
-        for i in 0..n {
-            let rx = Arc::clone(&rx);
-            std::thread::Builder::new()
-                .name(format!("thumb-{i}"))
-                .spawn(move || {
-                    #[cfg(target_os = "linux")]
-                    unsafe {
-                        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
-                    }
-                    loop {
-                        let job = { rx.lock().unwrap().recv() };
-                        match job {
-                            Ok(j) => {
-                                let r = generate(&j.uri, j.kind, j.size, j.mtime_ms);
-                                (j.done)(r);
-                            }
-                            Err(_) => return,
-                        }
-                    }
-                })
-                .expect("spawn thumb worker");
-        }
-        tx
-    })
-}
-
-pub fn submit(job: ThumbJob) {
-    let _ = pool().send(job);
-}
+// The pool that used to be here is now a process of its own: `thumber.rs` in the daemon and
+// `bin/kiki-thumber.rs` at the other end. Everything above runs there, not here — the daemon
+// keeps only `lookup`, which reads a PNG it wrote itself.
 
 #[cfg(test)]
 mod tests {

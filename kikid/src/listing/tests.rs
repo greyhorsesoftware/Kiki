@@ -1,6 +1,7 @@
 //! The listing's tests: sorting, filtering, windows, watching and the cache.
 
 use crate::listing::*;
+use crate::listing::deco;
 use std::time::Duration;
 
 fn temp_tree(n: usize) -> PathBuf {
@@ -316,12 +317,16 @@ fn a_rescan_keeps_the_thumbnails_it_had() {
     let dir = temp_tree(40);
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
+    let mtime = |l: &Arc<Listing>, name: &[u8]| {
+        let inner = l.inner.lock().unwrap();
+        let i = inner.pool.find(name).unwrap();
+        inner.meta[i as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)
+    };
+    let (m3, m4) = (mtime(&l, b"file3.txt"), mtime(&l, b"file4.txt"));
     {
         let mut inner = l.inner.lock().unwrap();
-        let a = inner.pool.find(b"file3.txt").unwrap();
-        let b = inner.pool.find(b"file4.txt").unwrap();
-        inner.thumb.insert(a, "/cache/three.png".into());
-        inner.thumb.insert(b, String::new()); // one that failed
+        inner.deco.set_thumb(b"file3.txt", deco::Thumb::At { path: "/cache/three.png".into(), mtime_ms: m3 });
+        inner.deco.set_thumb(b"file4.txt", deco::Thumb::None { mtime_ms: m4 }); // one that failed
     }
     // New names that sort before the old ones, and one gone: every index moves.
     std::fs::write(dir.join("aaa.txt"), b"1").unwrap();
@@ -331,7 +336,7 @@ fn a_rescan_keeps_the_thumbnails_it_had() {
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     let thumb = |name: &str| rows.iter().find(|r| r.str_field("name") == Some(name)).unwrap().get("thumb").unwrap().clone();
     assert_eq!(thumb("file3.txt"), Value::Str("/cache/three.png".into()), "carried by name");
-    assert_eq!(thumb("file4.txt"), Value::Null, "a failure is asked about again");
+    assert_eq!(thumb("file4.txt"), Value::Null, "one that could not be made shows nothing");
     assert_eq!(thumb("file5.txt"), Value::Null, "and nobody else was given one");
     assert_eq!(thumb("aaa.txt"), Value::Null);
     std::fs::remove_dir_all(&dir).unwrap();
@@ -350,14 +355,15 @@ fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
     }
     l.rescan();
     // Not a picture, so the job fails and records "" — which is all this needs: where it lands.
-    l.inner.lock().unwrap().thumb_queued[old_idx as usize] = true;
+    l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(old_idx, crate::kinds::Kind::Image, 1, "file7.txt");
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let inner = l.inner.lock().unwrap();
-        if !inner.thumb.is_empty() {
-            let at = inner.pool.find(b"file7.txt").unwrap();
-            assert_eq!(inner.thumb.keys().copied().collect::<Vec<_>>(), vec![at]);
+        // Not a picture, so the answer is "there is none" — recorded against file7.txt and
+        // against nothing else, however the rescan moved the indexes.
+        if matches!(inner.deco.get(b"file7.txt").and_then(|d| d.thumb.as_ref()), Some(deco::Thumb::None { .. })) {
+            assert_eq!(inner.deco.known(), 1, "one name knows anything at all");
             break;
         }
         drop(inner);

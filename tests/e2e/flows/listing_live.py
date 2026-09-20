@@ -5,7 +5,10 @@ everything and ask again" (`Reset`); a folder read again (a rescan) still knows 
 it knew; and every answer carries the number of the view it describes.
 """
 import os
+import signal
 import struct
+import subprocess
+import time
 import zlib
 
 from harness import wait_for
@@ -85,3 +88,27 @@ def run(ctx):
     again = wait_for(lambda: (lambda t: t if t else None)(thumbs(window()).get("p2.png")), timeout=20)
     c.check("a changed picture is thumbnailed again, the others left alone", again is not None and all(thumbs(window()).values()), (before, again))
     c.check("…and changing it reset nobody", not any(e.get("event") == "Reset" and e.get("lid") == lid for e in d.events))
+
+    # ---------------------------------------------------------------- the thumbnailer dies
+    # Decoding a picture is the one thing kiki does to a file's contents, and it happens in
+    # `kiki-thumber` so that a file which kills the decoder costs that file its thumbnail and
+    # nothing else. Kill it under a running daemon and the folder must carry on.
+    def thumber_pids():
+        out = subprocess.run(["pgrep", "-f", "kiki-thumber"], capture_output=True, text=True).stdout
+        return [int(x) for x in out.split()]
+
+    pids = thumber_pids()
+    c.check("thumbnails are made in a process of their own", bool(pids), pids)
+    if pids:
+        for pid in pids:
+            os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+        # The daemon is still there and still answering about this folder.
+        w = window()
+        c.check("the daemon outlives its thumbnailer", len(w["rows"]) == 6, w.get("rows"))
+        c.check("…and what was already made is still shown", all(thumbs(w).values()), thumbs(w))
+        # A new picture still gets one: the thumbnailer was started again.
+        png(os.path.join(folder, "p9.png"), 90)
+        got = wait_for(lambda: thumbs(window()).get("p9.png") or None, timeout=20)
+        c.check("a picture wanted after the death is thumbnailed", bool(got), got)
+        c.check("…by a thumbnailer that was started again", bool(thumber_pids()), thumber_pids())

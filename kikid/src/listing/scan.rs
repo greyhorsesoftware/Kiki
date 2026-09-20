@@ -15,7 +15,6 @@ impl Listing {
                 let idx = inner.pool.push(e.name.as_bytes(), e.kind);
                 inner.meta.push(e.meta);
                 inner.queued.push(false);
-                inner.thumb_queued.push(false);
                 inner.pos.push(u32::MAX);
                 if inner.filter.is_none() {
                     inner.view.push(idx);
@@ -92,17 +91,11 @@ impl Listing {
                         }
                         let e = crate::git::state_for(&me.path, &name, is_dir);
                         let interesting = e.as_ref().map(|e| e.state != crate::git::State::Clean).unwrap_or(false);
-                        if interesting || inner.git.contains_key(&i) {
+                        let key = name.as_bytes();
+                        if interesting || inner.deco.git(key).is_some() {
                             changed.push(i);
                         }
-                        match e {
-                            Some(e) if interesting => {
-                                inner.git.insert(i, e);
-                            }
-                            _ => {
-                                inner.git.remove(&i);
-                            }
-                        }
+                        inner.deco.set_git(key, e.filter(|_| interesting));
                     }
                     inner.git_done = true;
                     // Hiding ignored files changes which rows there are, not how they look.
@@ -129,58 +122,37 @@ impl Listing {
             .expect("spawn git");
     }
 
-    /// Re-enumerate after a change, keeping what is known — metadata, thumbnail, git state — for
-    /// names that still exist. Pool indexes are dealt again here, so everything is carried by name.
+    /// Re-enumerate after a change. Metadata is kept for names that still exist; **decorations
+    /// keep themselves** — they are held by name, so the rescan has nothing to copy and cannot
+    /// forget one. A thumbnail made for a version of a file the scan now says is gone stops being
+    /// shown by that rule alone (`Decorations::thumb_path`), and is asked for again.
     pub fn rescan(self: &Arc<Self>) {
-        struct Kept {
-            meta: Option<Meta>,
-            thumb: Option<String>,
-            git: Option<crate::git::Entry>,
-        }
-        let (mut old, had_git) = {
+        let (old, had_git) = {
             let inner = self.inner.lock().unwrap();
-            let old: HashMap<Vec<u8>, Kept> = (0..inner.pool.len() as u32)
+            let old: HashMap<Vec<u8>, Option<Meta>> = (0..inner.pool.len() as u32)
                 .filter(|&i| !inner.pool.is_removed(i))
-                .map(|i| (inner.pool.name(i).to_vec(), Kept { meta: inner.meta[i as usize].clone(), thumb: inner.thumb.get(&i).cloned(), git: inner.git.get(&i).cloned() }))
+                .map(|i| (inner.pool.name(i).to_vec(), inner.meta[i as usize].clone()))
                 .collect();
             (old, inner.git_done)
         };
+        let mut old = old;
         let mut pool = StringPool::with_capacity(old.len());
         let mut meta = Vec::with_capacity(old.len());
-        let mut thumb = HashMap::new();
-        let mut git = HashMap::new();
+        let mut present: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::with_capacity(old.len());
         let result = self.dir.scan(&mut |chunk| {
             for e in chunk {
-                let idx = pool.push(e.name.as_bytes(), e.kind);
-                let kept = old.remove(e.name.as_bytes());
-                let (was, t, g) = match kept {
-                    Some(k) => (k.meta, k.thumb, k.git),
-                    None => (None, None, None),
-                };
-                // A thumbnail is of one version of a file: it is carried only while the scan does
-                // not say the file's time has changed. One that failed ("") is asked for again —
-                // the marker on disk makes that a lookup, not a second decode.
-                let same = match (&e.meta, &was) {
-                    (Some(now), Some(then)) => now.mtime_ms == then.mtime_ms,
-                    _ => true,
-                };
-                if let Some(t) = t.filter(|t| same && !t.is_empty()) {
-                    thumb.insert(idx, t);
-                }
-                if let Some(g) = g {
-                    git.insert(idx, g);
-                }
-                meta.push(e.meta.or(was));
+                pool.push(e.name.as_bytes(), e.kind);
+                present.insert(e.name.as_bytes().to_vec());
+                meta.push(e.meta.or_else(|| old.remove(e.name.as_bytes()).flatten()));
             }
         });
         let mut inner = self.inner.lock().unwrap();
         let old_total = inner.pool.len();
         let n = pool.len();
         inner.queued = vec![false; n];
-        inner.thumb = thumb;
-        inner.thumb_queued = vec![false; n];
-        // Shown as it was until status has run again (below), rather than blank and then back.
-        inner.git = git;
+        // Names that have gone take what was known about them; the rest is untouched, so badges
+        // and thumbnails are shown as they were while status runs again below.
+        inner.deco.retain_names(&present);
         inner.git_done = had_git;
         inner.pos = vec![u32::MAX; n];
         inner.pool = pool;
@@ -236,16 +208,15 @@ impl Listing {
             added_idx.push(idx);
             inner.meta.push(None);
             inner.queued.push(false);
-            inner.thumb_queued.push(false);
             inner.pos.push(u32::MAX);
             to_stat.push(idx);
             changed = true;
         }
         for name in modified {
             if let Some(i) = inner.pool.find(name) {
+                // The metadata goes, and with it the answer a thumbnail was made for: the stat
+                // that follows brings a new time, and the row asks again by that alone.
                 inner.meta[i as usize] = None;
-                inner.thumb.remove(&i);
-                inner.thumb_queued[i as usize] = false;
                 if !inner.queued[i as usize] {
                     inner.queued[i as usize] = true;
                     to_stat.push(i);

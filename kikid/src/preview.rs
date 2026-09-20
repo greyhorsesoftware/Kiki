@@ -30,7 +30,7 @@ pub fn preview(uri: &Uri) -> Result<Value> {
     let mtime_ms = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
     match kind {
         Kind::Image | Kind::Video | Kind::Pdf => {
-            let p = thumbs::generate(uri, kind, thumbs::Size::Large, mtime_ms).ok_or(VfsError::Unsupported)?;
+            let p = crate::thumber::blocking(uri, kind, thumbs::Size::Large, mtime_ms).ok_or(VfsError::Unsupported)?;
             let (w, h) = image::image_dimensions(&p).unwrap_or((0, 0));
             Ok(Value::obj().s("path", p.to_string_lossy()).u("width", w as u64).u("height", h as u64).done())
         }

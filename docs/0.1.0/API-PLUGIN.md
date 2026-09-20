@@ -13,6 +13,8 @@ Protocol version: `1`.
 - `stdin` and `stdout` carry the protocol. `stderr` is logged by the daemon at debug level; write diagnostics there, never to stdout.
 - Idle exit: after 5 minutes with no requests the daemon sends `Shutdown` and waits 5 s before killing. A plugin may also exit on its own after replying to `Shutdown`; it must not exit with requests outstanding.
 - Crash: if the process dies, every outstanding request fails with `Plugin` and the next request spawns it again. Sessions are gone; the daemon re-`Connect`s as needed.
+- **Process group**: every child is spawned into a process group of its own, and the daemon kills the *group*, not the process. A plugin that starts a helper — gio reaching `gvfsd`, the thumbnailer running `ffmpeg` — leaves that helper holding the write end of `stdout`; a host that killed only the child would then wait on a pipe that never closes, which is a hang with no visible cause. A plugin does not have to do anything for this, but it should not put itself in another group.
+- **Not every child is a location plugin.** `kiki-thumber` (see `API-DAEMON.md`) speaks this framing and nothing else: no `Describe`, no `Connect`, no scheme of its own. The framing and the request/reply rules below are the daemon's one way of running a child; the discovery, sessions and `LOCATION_KINDS` above apply only to plugins that are locations.
 
 ## Framing
 

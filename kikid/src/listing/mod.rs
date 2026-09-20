@@ -65,11 +65,9 @@ struct Inner {
     pool: StringPool,
     meta: Vec<Option<Meta>>,
     queued: Vec<bool>,
-    /// Only rows that have one: pool index -> thumbnail path.
-    thumb: HashMap<u32, String>,
-    thumb_queued: Vec<bool>,
-    /// Only rows with a state other than clean: pool index -> git entry.
-    git: HashMap<u32, crate::git::Entry>,
+    /// What is known about a row that the scan did not say — thumbnail, git state — by name, so
+    /// that a worker finishing after a rescan still lands on the file it was asked about.
+    deco: deco::Decorations,
     git_done: bool,
     scan_done: bool,
     scan_error: Option<String>,
@@ -154,6 +152,7 @@ pub fn drain(rx: &Receiver<Value>) -> Vec<Value> {
 }
 
 mod cache;
+pub mod deco;
 mod rows;
 mod scan;
 mod stats;

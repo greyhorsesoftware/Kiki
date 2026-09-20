@@ -166,8 +166,8 @@ impl Plugin {
 
     /// Spawns any binary speaking the plugin framing; `Describe` is not called.
     pub fn spawn_path(bin: &std::path::Path, scheme: &str) -> Result<Arc<Plugin>, VfsError> {
-        let mut child = Command::new(bin)
-            .env("KIKI_PLUGIN_PROTOCOL", "1")
+        let mut cmd = Command::new(bin);
+        cmd.env("KIKI_PLUGIN_PROTOCOL", "1")
             .env("KIKI_PLUGIN_SCHEME", scheme)
             // Ask for the library log as `Log` events between the other frames (plan 32). Asked
             // for, not assumed: a host that reads frames strictly — the plugins' own tests — must
@@ -175,9 +175,20 @@ impl Plugin {
             .env("KIKI_PLUGIN_LOG", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|e| VfsError::Io(format!("spawn {}: {e}", bin.display())))?;
+            .stderr(Stdio::inherit());
+        // Its own process group, so that killing it kills what it started. A plugin that spawns a
+        // helper — gio reaching gvfsd, the thumbnailer running ffmpeg — leaves that helper holding
+        // the write end of stdout, and a host that killed only the child would wait on a pipe that
+        // never closes. Found by the thumbnailer's watchdog test, fixed for every child.
+        #[cfg(unix)]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            cmd.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+        let mut child = cmd.spawn().map_err(|e| VfsError::Io(format!("spawn {}: {e}", bin.display())))?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let plugin = Arc::new(Plugin {
@@ -258,6 +269,12 @@ impl Plugin {
         w.flush().map_err(|e| VfsError::Io(e.to_string()))
     }
 
+    /// A request that is given up on after `patience` rather than after `REQUEST_TIMEOUT`.
+    pub fn request_within(&self, req: Value, patience: Duration) -> Result<Value, VfsError> {
+        let (id, rx) = self.begin(req, false)?;
+        self.wait_reply_within(id, &rx, None, None, patience)
+    }
+
     fn begin(&self, mut req: Value, streaming: bool) -> Result<(u64, Receiver<Msg>), VfsError> {
         *self.last_used.lock().unwrap() = std::time::Instant::now();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -304,6 +321,12 @@ impl Plugin {
     /// Waits for the reply; while waiting, `cancel` is polled and, once set, a `Cancel` is sent
     /// to the plugin and the request ends with an error as soon as the plugin acknowledges it.
     fn wait_reply_with(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
+        self.wait_reply_within(id, rx, cancel, on_frame.take(), REQUEST_TIMEOUT)
+    }
+
+    /// The same, with a caller's own patience. A transfer may fairly take `REQUEST_TIMEOUT`; a
+    /// thumbnail that has not come back in twenty seconds means a decoder stuck on one file.
+    fn wait_reply_within(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>, patience: Duration) -> Result<Value, VfsError> {
         let started = std::time::Instant::now();
         let mut last_frame = std::time::Instant::now();
         let mut sent_cancel = false;
@@ -329,7 +352,7 @@ impl Plugin {
                             last_frame = std::time::Instant::now();
                         }
                     }
-                    let limit = if sent_cancel { Duration::from_secs(5) } else { REQUEST_TIMEOUT };
+                    let limit = if sent_cancel { Duration::from_secs(5) } else { patience };
                     if last_frame.elapsed() > limit && started.elapsed() > limit {
                         self.pending.lock().unwrap().remove(&id);
                         return Err(VfsError::Io(if sent_cancel { "cancelled".into() } else { "plugin request timed out or plugin exited".into() }));
@@ -417,9 +440,27 @@ impl Plugin {
     }
 }
 
+impl Plugin {
+    /// End the child and everything it started, now. `kill()` alone would leave a helper of its
+    /// own running and holding the pipe open (see the process group set in `spawn_path`).
+    pub fn kill_group(&self) {
+        let mut c = self.child.lock().unwrap();
+        #[cfg(unix)]
+        unsafe {
+            libc::killpg(c.id() as libc::pid_t, libc::SIGKILL);
+        }
+        let _ = c.kill();
+        let _ = c.wait();
+    }
+}
+
 impl Drop for Plugin {
     fn drop(&mut self) {
         if let Ok(c) = self.child.get_mut() {
+            #[cfg(unix)]
+            unsafe {
+                libc::killpg(c.id() as libc::pid_t, libc::SIGKILL);
+            }
             let _ = c.kill();
         }
     }

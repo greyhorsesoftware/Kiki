@@ -3,6 +3,7 @@
 use super::*;
 use super::cache::cache;
 use super::stats::{stat_pool, StatJob};
+use super::deco;
 
 impl Listing {
 
@@ -60,10 +61,10 @@ impl Listing {
                 continue;
             }
             let kind = inner.pool.kind(idx);
-            if self.thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
-                inner.thumb_queued[idx as usize] = true;
-                let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+            let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+            if self.thumbable(kind) && inner.deco.wants_thumb(inner.pool.name(idx), mtime) {
                 let name = String::from_utf8_lossy(inner.pool.name(idx)).into_owned();
+                inner.deco.set_thumb(name.as_bytes(), deco::Thumb::Asked);
                 want_thumbs.push((idx, kind, mtime, name));
             }
         }
@@ -129,16 +130,18 @@ impl Inner {
             Some(ms) => o.u("opened", ms),
             None => o,
         };
+        let pname = self.pool.name(idx);
+        let mtime = self.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
         o.v(
             "thumb",
-            match self.thumb.get(&idx) {
-                Some(p) => Value::Str(p.clone()),
+            match self.deco.thumb_path(pname, mtime) {
+                Some(p) => Value::Str(p.to_string()),
                 None => Value::Null,
             },
         )
         .v(
             "git",
-            match self.git.get(&idx) {
+            match self.deco.git(pname) {
                 Some(e) => crate::git::entry_json(e),
                 None => Value::Null,
             },

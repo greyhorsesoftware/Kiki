@@ -106,6 +106,19 @@ Git event: `RepoChanged { root }`.
 | `Repo` | `uri` | `{ root: Uri, branch: string \| null, detached: bool, ahead: u32, behind: u32, dirty: bool } \| null` |
 | `GitRefresh` | `uri` | `{}` |
 
+Thumbnails are made by **`kiki-thumber`, a process of its own** — the only part of kiki that decodes
+a file's contents, so that a malformed picture costs that file its thumbnail rather than the daemon.
+It speaks the plugin framing of `API-PLUGIN.md` (run through `Plugin::spawn_path`) without being a
+location plugin: no `Describe`, no `Connect`, no location. `{"type":"Thumb", uri, kind, size, mtime}`
+→ `{"ok":{"path":…}}`, and "no thumbnail for this one" is that same `ok` with a **null path** rather
+than an `err`, so the daemon can tell it from the child dying. The pixels never cross the pipe: the
+child writes the cache file and answers with its path. The daemon serves a cache hit itself, has one
+request out per worker, kills a child stuck 20 s on one file, and gives up on a file that kills one
+twice.
+`Thumbnail` and `Preview` therefore answer a little later on a cold cache and `Unsupported` when
+there is no thumbnail to be had — callers see no other difference. Installed at
+`/usr/lib/kiki/kiki-thumber`; without it the daemon says so once and makes no thumbnails.
+
 Thumbnails are made for `file://` only (owner, 2026-09-20), so `Thumbnail` and a picture's `Preview`
 answer `Unsupported` for a remote URI and a remote row's `thumb` is `null` — the views draw the kind
 artwork for it. A thumbnail already in the cache under a remote URI is still served. `Uri::to_path`

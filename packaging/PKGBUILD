@@ -40,6 +40,9 @@ check() {
 package() {
   local t="${srcdir}/target/release"
   install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
+  # The only part of kiki that decodes a file's contents, and so the only part a malformed file
+  # can bring down. kikid looks for it beside itself, then here. Without it: no thumbnails.
+  install -Dm755 "${t}/kiki-thumber"     "${pkgdir}/usr/lib/kiki/kiki-thumber"
   install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
   for p in dbus share-mail share-tailscale share-localsend; do

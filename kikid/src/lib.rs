@@ -29,6 +29,7 @@ pub mod proto;
 pub mod server;
 pub mod share;
 pub mod string_pool;
+pub mod thumber;
 pub mod thumbs;
 pub mod toml;
 pub mod transfer;

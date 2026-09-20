@@ -102,9 +102,9 @@ impl Listing {
             let kind = inner.pool.kind(idx);
             let p = inner.pos[idx as usize];
             let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers(p));
-            if visible && self.thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
-                inner.thumb_queued[idx as usize] = true;
-                let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+            let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
+            if visible && self.thumbable(kind) && inner.deco.wants_thumb(&name, mtime) {
+                inner.deco.set_thumb(&name, super::deco::Thumb::Asked);
                 let name = String::from_utf8_lossy(&name).into_owned();
                 drop(inner);
                 self.submit_thumb(idx, kind, mtime, &name);
@@ -127,28 +127,34 @@ impl Listing {
         self.uri.is_local() && crate::thumbs::thumbable(kind)
     }
 
-    /// Queue one row's thumbnail. The caller sets `thumb_queued` while it holds the lock.
+    /// Ask for one row's thumbnail. The caller has already marked it `Asked`.
     pub(super) fn submit_thumb(self: &Arc<Self>, idx: u32, kind: crate::kinds::Kind, mtime_ms: u64, name: &str) {
         let uri = self.uri.join(name);
         let me = Arc::clone(self);
         let name = name.as_bytes().to_vec();
-        crate::thumbs::submit(crate::thumbs::ThumbJob {
+        crate::thumber::submit(crate::thumber::Job {
             uri,
             kind,
             mtime_ms,
             size: crate::thumbs::Size::Normal,
             done: Box::new(move |path| {
-                // The answer belongs to a name, not an index: a rescan while the job waited has
-                // dealt the indexes again, and `idx` may now be another file.
-                let idx = {
+                // The answer belongs to the name it was asked about, whatever row that name is on
+                // now: a rescan while the job ran has dealt the indexes again.
+                {
                     let mut inner = me.inner.lock().unwrap();
-                    let at = if (idx as usize) < inner.pool.len() && !inner.pool.is_removed(idx) && String::from_utf8_lossy(inner.pool.name(idx)).as_bytes() == name.as_slice() { Some(idx) } else { inner.pool.find(&name) };
+                    inner.deco.set_thumb(
+                        &name,
+                        match path {
+                            Some(p) => super::deco::Thumb::At { path: p.to_string_lossy().into_owned(), mtime_ms },
+                            None => super::deco::Thumb::None { mtime_ms },
+                        },
+                    );
+                    // `idx` is only a hint about where to look; the name is the truth.
+                    let at = if (idx as usize) < inner.pool.len() && !inner.pool.is_removed(idx) && inner.pool.name(idx) == name.as_slice() { Some(idx) } else { inner.pool.find(&name) };
                     let Some(at) = at else { return };
-                    inner.thumb.insert(at, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-                    inner.thumb_queued[at as usize] = false;
-                    at
-                };
-                me.push_rows(&[idx]);
+                    drop(inner);
+                    me.push_rows(&[at]);
+                }
             }),
         });
     }

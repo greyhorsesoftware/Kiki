@@ -478,7 +478,7 @@ impl Client {
                     let tx = self.tx.clone();
                     let kind = crate::kinds::Kind::guess(crate::vfs::EntryType::File, u.name().as_bytes());
                     let mtime = std::fs::metadata(u.to_path()).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-                    crate::thumbs::submit(crate::thumbs::ThumbJob {
+                    crate::thumber::submit(crate::thumber::Job {
                         uri: u,
                         kind,
                         mtime_ms: mtime,
