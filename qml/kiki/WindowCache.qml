@@ -38,6 +38,18 @@ QtObject {
     // asking to what the daemon can answer instead of to the frame rate.
     property int _pending: 0
     property int _oldReplies: 0
+    /// How long an answer has been taking, smoothed. A fling covers ground while one is in the
+    /// post, and this is how far.
+    property real _rtt: 0
+    // Where a round trip's time goes, summed since `resetCost()`. Only the scroll probe reads
+    // these; nothing in the window depends on them. `wait` is the daemon, the socket and turning
+    // the reply into JavaScript; `store` is writing the rows into the cache; `bind` is every
+    // delegate re-reading its row, which happens synchronously inside `rowsUpdated`.
+    property real _msWait: 0
+    property real _msStore: 0
+    property real _msBind: 0
+    property int _answers: 0
+    function resetCost() { _msWait = 0; _msStore = 0; _msBind = 0; _answers = 0 }
     property double _pendingAt: 0
     // Resolved lazily so a test can inject a fake without the real singleton (and its Quickshell
     // socket) ever being instantiated.
@@ -120,9 +132,18 @@ QtObject {
         _reqFirst = first; _reqEnd = first + n
         const serial = ++_serial
         _pending = serial; _pendingAt = Date.now()
-        d().request("Window", { lid: lid, first: first, count: n }, (ok, err) => {
+        // `first`/`n` is what to send; `viewFirst`/`viewCount` is what is actually on screen. The
+        // daemon makes thumbnails for the latter only — during a scroll the look-ahead runs
+        // thousands of rows past the viewport, and a picture for a row nobody is looking at costs
+        // a decoder process and buys nothing.
+        d().request("Window", { lid: lid, first: first, count: n, viewFirst: viewportFirst, viewCount: viewportCount }, (ok, err) => {
             const awaited = serial === _pending
-            if (awaited) _pending = 0
+            if (awaited) {
+                const waited = Date.now() - _pendingAt
+                _msWait += waited; _answers++
+                _rtt = _rtt === 0 ? waited : _rtt * 0.7 + waited * 0.3
+                _pending = 0
+            }
             // The Window that left with a failed Open only reports "no listing": keep the reason.
             if (err) { if (!error) error = err.message; if (_stale) { _stale = false; _rows = ({}) } return }
             if (ok.gen !== undefined) {
@@ -147,6 +168,15 @@ QtObject {
             // nothing in it, which asking again would not improve.)
             if (awaited && ok.rows.length > 0) Qt.callLater(_fill)
         })
+    }
+
+    /// Where the viewport will be by the time an answer to a request sent now gets back. Asking
+    /// about where it is *now* is asking about the past: at a fling's speed the answer lands a
+    /// thousand rows behind the screen, and those rows are drawn for nobody.
+    function _predicted() {
+        const n = count > 0 ? count : 1
+        const lead = Math.round(_lastDirection * _velocity * Math.max(16, _rtt) / 1000)
+        return Math.max(0, Math.min(n - 1, viewportFirst + lead))
     }
 
     // Ask for the whole wanted range whatever is held — what is held is not to be trusted.
@@ -186,16 +216,37 @@ QtObject {
         if (visibleHeld && b - a < Math.max(1, Math.floor(Math.max(padAhead, padBehind) / 2))) return
         // More missing than one request holds: the part nearest the viewport first.
         if (b - a > maxRequest && _lastDirection < 0) a = b - maxRequest
+        // Falling behind a moving viewport. One answer holds `maxRequest` rows and a fling can
+        // outrun that, so the question is not how to catch up — it is which rows to spend the
+        // next answer on. Filling the gap that has opened behind buys nothing: those rows are
+        // gone. Jump to where the screen will be instead, and leave the hole.
+        // …but only when the screen is genuinely outrunning the answers. One answer carries
+        // `maxRequest` rows; if the viewport travels less than that in a round trip, fetching
+        // straight ahead keeps up and no gap ever opens, and jumping would only overshoot the
+        // rows being looked at now. Columns, whose rows are cheap and whose answers come back in
+        // half the time, is on the near side of that line; a list of formatted rows is not.
+        const outrun = Math.abs(_predicted() - viewportFirst) > maxRequest
+        if (_velocity > 0 && !visibleHeld && outrun) {
+            const back = _lastDirection > 0 ? padBehind : Math.max(0, maxRequest - viewportCount - padBehind)
+            const want = Math.max(0, Math.min(Math.max(count - 1, 0), _predicted() - back))
+            // Past `end`, which is only as far as the look-ahead reaches: where the screen will be
+            // is not a kind of look-ahead, and must not be clipped to it.
+            if (want > a) { a = want; b = Math.min(count > 0 ? count : a + maxRequest, a + maxRequest) }
+        }
         _request(a, Math.min(b - a, maxRequest))
     }
 
     function _apply(first, rows) {
+        const t0 = Date.now()
         for (let i = 0; i < rows.length; i++) _rows[first + i] = rows[i]
         // Drop rows far outside the window so a long scroll does not keep everything.
         const far = Math.max(4 * padAhead, 2 * _ahead())
         const keepFrom = viewportFirst - Math.max(4 * padBehind, _lastDirection < 0 ? far : 0), keepTo = viewportFirst + viewportCount + far
         for (const k in _rows) { const p = Number(k); if (p < keepFrom || p > keepTo) delete _rows[k] }
+        const t1 = Date.now()
         rowsUpdated(first, rows.length)
+        _msStore += t1 - t0
+        _msBind += Date.now() - t1
     }
 
     function handleEvent(msg) {

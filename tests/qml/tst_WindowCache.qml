@@ -200,12 +200,14 @@ TestCase {
         fake.held.shift()()                        // it lands…
         wait(40)
         compare(sent.length, 2)                    // …and only then is the next asked,
-        compare(sent[1].fields.first, 5000 - 10)   // for where the view is now, not where it was
+        // …for where the view is going, never for where it has been.
+        verify(sent[1].fields.first >= 5000 - cache.padBehind, "asked at " + sent[1].fields.first + ", viewport at 5000")
         compare(fake.held.length, 1)
         fake.hold = false
         fake.held.shift()()
-        wait(40)
-        verify(cache.row(5000) !== null)
+        // While it is still moving it is asking about where the screen is going, so the row under
+        // the pointer *now* may not be held yet. Once it stops, that is what gets filled.
+        tryVerify(() => cache.row(5000) !== null, 3000, "the viewport fills once the scroll stops")
     }
 
     function test_an_empty_folder_is_asked_once() {
@@ -225,5 +227,33 @@ TestCase {
         wait(400)
         verify(sent.length <= 8, "asked " + sent.length + " times")
         verify(cache.row(3000) !== null)
+    }
+
+    // One answer holds 512 rows and a fling can outrun that, so the question is not how to catch
+    // up — it is which rows to spend the next answer on. The gap that has opened behind the
+    // viewport is rows nobody will look at again; where the screen will be when the answer lands
+    // is the only place worth asking about.
+    function test_a_fling_asks_where_the_screen_will_be_not_where_it_was() {
+        cache.open("file:///tmp")
+        fake.hold = true
+        // 500 rows every 20ms — 25,000 a second, which is what a flung list does.
+        for (let i = 1; i <= 6; i++) { cache.setViewport(i * 500, 10); wait(20) }
+        fake.held.shift()()                        // the one in flight lands
+        wait(60)
+        const f = sent[sent.length - 1].fields
+        const going = cache._predicted()
+        verify(f.first >= 3000 - cache.padBehind, "asked at " + f.first + " with the screen at 3000: back in the hole")
+        verify(going > 3000, "the prediction should be ahead of the screen, not " + going)
+        verify(f.first <= going && f.first + f.count > going, "asked " + f.first + "+" + f.count + ", which does not cover " + going)
+        fake.hold = false
+    }
+
+    // Stopped, there is nothing to predict: the hole behind is exactly what wants filling.
+    function test_a_still_view_still_fills_what_is_missing() {
+        cache.open("file:///tmp")
+        cache.setViewport(9000, 10)
+        wait(60)
+        verify(cache.row(9000) !== null)
+        verify(cache.row(9005) !== null)
     }
 }

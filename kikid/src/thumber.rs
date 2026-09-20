@@ -38,12 +38,27 @@ const STUCK: Duration = Duration::from_secs(20);
 /// Deaths with a file in flight before that file is given up on.
 const STRIKES: u8 = 2;
 
+/// What became of a request. `Dropped` is not `None`: "there is no thumbnail for this file" is an
+/// answer that must stop the row asking again, and "nobody is looking at that row any more" must
+/// not — scroll back to it and it should be asked for afresh.
+pub enum Answer {
+    Made(PathBuf),
+    None,
+    Dropped,
+}
+
 pub struct Job {
     pub uri: Uri,
     pub kind: Kind,
     pub mtime_ms: u64,
     pub size: Size,
-    pub done: Box<dyn FnOnce(Option<PathBuf>) + Send>,
+    /// Asked once more when the job reaches a worker, because by then it may have been waiting a
+    /// while: `false` and it is dropped without being started. Scrolling through a hundred
+    /// thousand rows asks for tens of thousands of thumbnails and wants a few hundred of them;
+    /// without this the rest are decoded, slowly, for rows that went by long ago. `None` is a
+    /// caller who is still there whatever happens — a preview, or the `Thumbnail` request.
+    pub wanted: Option<Box<dyn Fn() -> bool + Send>>,
+    pub done: Box<dyn FnOnce(Answer) + Send>,
 }
 
 /// Where the thumbnailer is: beside this binary first, which is what a checkout and an install
@@ -173,30 +188,35 @@ fn workers() -> &'static Sender<Job> {
 /// alive instead would be a race — it has exited, and whether the kernel has said so yet is not
 /// something the answer should turn on.
 fn run(job: Job) {
+    // Cheap, and first: the queue behind a long scroll is mostly rows nobody can see any more.
+    if job.wanted.as_ref().is_some_and(|w| !w()) {
+        (job.done)(Answer::Dropped);
+        return;
+    }
     let uri = job.uri.to_string();
     let req = Value::obj().s("type", "Thumb").s("uri", uri.clone()).s("kind", kind_str(job.kind)).u("size", job.size as u64).u("mtime", job.mtime_ms).done();
     for _ in 0..STRIKES {
         let Some(p) = sup().plugin() else {
-            (job.done)(None);
+            (job.done)(Answer::None);
             return;
         };
         match p.request_within(req.clone(), STUCK) {
             Ok(v) => {
                 sup().forgive(&uri);
-                (job.done)(v.str_field("path").map(PathBuf::from));
+                (job.done)(v.str_field("path").map(|p| Answer::Made(PathBuf::from(p))).unwrap_or(Answer::None));
                 return;
             }
             Err(_) => {
                 eprintln!("thumbnailer died or hung on {uri}; starting it again");
                 sup().condemn(&p);
                 if sup().strike(&uri) {
-                    (job.done)(None);
+                    (job.done)(Answer::None);
                     return;
                 }
             }
         }
     }
-    (job.done)(None);
+    (job.done)(Answer::None);
 }
 
 fn kind_str(k: Kind) -> &'static str {
@@ -221,11 +241,11 @@ pub(crate) fn restart_for_test() {
 /// Ask for a thumbnail. A cache hit is answered here and now; anything else goes to the child.
 pub fn submit(job: Job) {
     if let Some(p) = thumbs::lookup(&job.uri, job.size, job.mtime_ms) {
-        (job.done)(Some(p));
+        (job.done)(Answer::Made(p));
         return;
     }
     if !job.uri.is_local() || !thumbs::thumbable(job.kind) {
-        (job.done)(None);
+        (job.done)(Answer::None);
         return;
     }
     let _ = workers().send(job);
@@ -240,8 +260,12 @@ pub fn blocking(uri: &Uri, kind: Kind, size: Size, mtime_ms: u64) -> Option<Path
         kind,
         mtime_ms,
         size,
-        done: Box::new(move |p| {
-            let _ = tx.send(p);
+        wanted: None,
+        done: Box::new(move |a| {
+            let _ = tx.send(match a {
+                Answer::Made(p) => Some(p),
+                _ => None,
+            });
         }),
     });
     // Longer than a worker's own patience, twice over: a child stuck on this very file is given
@@ -301,8 +325,12 @@ while True:
             kind: Kind::Image,
             mtime_ms: 1,
             size: Size::Normal,
-            done: Box::new(move |p| {
-                let _ = tx.send(p);
+            wanted: None,
+            done: Box::new(move |a| {
+                let _ = tx.send(match a {
+                    Answer::Made(p) => Some(p),
+                    _ => None,
+                });
             }),
         });
         rx

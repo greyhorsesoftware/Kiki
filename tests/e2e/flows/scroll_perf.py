@@ -51,7 +51,7 @@ def build_fixture():
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 HISTORY = os.environ.get("KIKI_SCROLL_HISTORY", os.path.join(ROOT, "bench", "scroll-history.jsonl"))
-KEPT = ("frames", "avgMs", "p95Ms", "worstMs", "over33", "blankFrames", "settleMs", "requests")
+KEPT = ("frames", "avgMs", "p95Ms", "worstMs", "over33", "blankFrames", "settleMs", "requests", "answers", "waitMs", "storeMs", "bindMs")
 
 
 def git(*args):
@@ -149,7 +149,8 @@ def run(ctx):
             results[f"{view}/{label}"] = {k: s[k] for k in KEPT}
             blank = 100 * s["blankFrames"] / max(1, s["frames"])
             print(f"  {view:8} {label:>6} {s['frames']:7d} {s['avgMs']:6.1f}ms {s['p95Ms']:4d}ms {s['worstMs']:4d}ms {s['over33']:6d}"
-                  f" {s['blankFrames']:6d} ({blank:3.0f}%) {s['settleMs']:5d}ms {s['requests']:9d}")
+                  f" {s['blankFrames']:6d} ({blank:3.0f}%) {s['settleMs']:5d}ms {s['requests']:9d}"
+                  f"   | per answer: wait {s.get('waitMs', 0):5.1f}ms  store {s.get('storeMs', 0):4.1f}ms  bind {s.get('bindMs', 0):5.1f}ms")
             c.check(f"{view}, {label}: it reached the last row", s["lastRow"] >= s["rows"] - 1, (s["lastRow"], s["rows"]))
             c.check(f"{view}, {label}: the view fills in within 2s of stopping", s["settleMs"] < 2000, f"{s['settleMs']}ms")
             c.check(f"{view}, {label}: no frame takes a second", s["worstMs"] < 1000, f"{s['worstMs']}ms")

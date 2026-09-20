@@ -51,13 +51,29 @@ pub struct Subscriber {
     pub client: u64,
     pub lid: u64,
     pub tx: Sender<Value>,
+    /// The rows this connection holds: the viewport plus the look-ahead it scrolls into.
     pub first: u32,
     pub count: u32,
+    /// The rows actually on screen. Thumbnails are made for these and no others: the look-ahead
+    /// above can be thousands of rows during a scroll, and a thumbnail for a row that is not being
+    /// looked at is a `pdftoppm` or an `ffmpeg` spawned for nobody. Rows must exist ahead of the
+    /// scroll; their pictures need not.
+    pub view_first: u32,
+    pub view_count: u32,
 }
 
 impl Subscriber {
     fn covers(&self, pos: u32) -> bool {
         pos >= self.first && pos < self.first + self.count
+    }
+
+    /// On screen, as opposed to merely held. A client that does not say where it is looking is
+    /// taken to be looking at everything it asked for, which is what the older behaviour was.
+    fn covers_view(&self, pos: u32) -> bool {
+        if self.view_count == 0 {
+            return self.covers(pos);
+        }
+        pos >= self.view_first && pos < self.view_first + self.view_count
     }
 }
 

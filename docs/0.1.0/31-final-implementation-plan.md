@@ -358,6 +358,69 @@ Plan 29 H, less what exists. `remote_transfers.py` has the servers and the nine 
 
 **Tests**: `a_file_that_kills_the_decoder_costs_only_itself` (a stand-in thumbnailer that speaks the framing and dies on a named file: the file is retried once, then given up on, and the files beside it are answered as if nothing happened); `a_decoder_that_hangs_is_killed` (`#[ignore]` — it waits out two 20 s watchdogs; `cargo test -- --ignored`. Its stand-in leaves a child of its own holding stdout, which is what a wedged `ffmpeg` looks like, so it is the process-group fix that it tests); `no_thumbnailer_answers_rather_than_hangs`; `a_remote_file_is_refused_without_asking`. In `listing_live`, against the real daemon: the thumbnailer is a separate process, it is `SIGKILL`ed mid-flow, the daemon and the folder carry on, what was made is still shown, and the next picture is thumbnailed by a child that was started again.
 
+**Asking for far less, after the benchmarks were pointed at it (owner, 2026-09-20).** Running `scroll_perf` and `gallery_perf` against the new process turned up three faults, each found only because the work had been moved somewhere it could be counted:
+
+- **Thumbnails were asked for the whole *held* range, not the part on screen.** A window holds a viewport plus the look-ahead it scrolls into — during a fling, up to 3,000 rows — and every thumbable row in it was asked for. That is a `pdftoppm` or an `ffmpeg` spawned for a row nobody is looking at. `Window` now carries **`viewFirst`/`viewCount`** beside `first`/`count`, `Subscriber` keeps both, and thumbnails are made for `covers_view` only (omit them and the whole range counts as on screen, which is what a client that does not say gets). Measured directly: a 512-row window with 40 rows on screen asks for **40** thumbnails, not 512.
+- **A queued thumbnail nobody can see any more is dropped unstarted** — the owner's ask. `Job` carries a `wanted` predicate, checked when a worker picks the job up rather than when it was queued, and `Answer::Dropped` is **not** `Answer::None`: "there is no thumbnail for this file" must stop the row asking again and "nobody is looking at that row" must not, so a drop calls `unask_thumb` and the row asks afresh if it is scrolled back to. *On its own it made scrolling worse* — 0.1 % → 12.6 % blank frames — because clearing the backlog let the workers reach live rows and the thumbnailer then spawned 19,000 decoders during one scroll, against 2,700 before. It is the pair that works: with the viewport change the queue never grows, and the same scroll came back at 0.0 % blank with no frame over 33 ms.
+- **A thumbnail asked for before the row's stat landed was made twice.** `window()` skipped a row with no metadata only if its stat was not *already* queued; otherwise it asked with a modification time of **zero**. A thumbnail is cached at `md5(uri).png` and keyed by mtime, so that one was thrown away the moment the real time arrived and made again over the top of itself — twice the decoding, and the same file on disk both times. Found because `gallery_perf` counts cache *files*: about fifteen pictures were made twice, the count never reached what was asked for, and the check read **3/s** where the thumbnailer was really doing **307/s**. It now waits for the stat; `run_stats` asks as soon as that lands. `gallery_perf`: 486 thumbnails in 1.6 s, 11 of 11 checks.
+
+**What the fling still is, measured properly (owner asked what could be done about it).** The
+ceiling is arithmetic: **one `Window` in flight, 512 rows an answer**, so what a client can take in
+is `512 / round-trip`. Measured over the 4-second fling — which is 100,000 rows, or 25,000 a second:
+
+| view | answers in 4 s | round trip | rows/s it can take | keeps up? |
+|---|---|---|---|---|
+| columns | ~205 | 20 ms | 25,600 | yes |
+| icon | ~147 | 27 ms | 19,000 | no |
+| list | ~125 | 32 ms | 16,000 | no, by about 2:1 |
+
+**The round trip is not the daemon's** — it answers a 512-row window out of memory. It is the window's
+own thread: the IPC, parsing the JSON, `_apply`, and then every delegate rebinding. What differs
+between the three views is exactly the delegate — a column's row is a name, an icon is artwork, and
+a `ListRow` is five formatted columns — which is the order the numbers come in.
+
+- **Done: ask about where the screen is going, not where it has been.** `_fill` anchored every
+  request at the first missing row, which during a fling is the hole *behind* the viewport — rows
+  nobody will look at again. It now predicts (`viewportFirst + velocity × round-trip`) and asks
+  there, but **only when the screen is outrunning the answers** (`lead > maxRequest`), so a view
+  that is keeping up is not perturbed into overshooting. Unit-tested both ways.
+- **Not claimed: that it moved the number.** Three runs a variant, medians `list` 53 % → 46 % → 59 %
+  and `icon` 50 % → 47 % → 47 %, with each variant's own range spanning twenty to thirty points. The
+  measurement cannot separate them, and this is written down rather than reported as a win. A
+  batched `_apply` prune was tried on the theory that `delete` deoptimises the row object, could not
+  be shown to help either, and was taken out again: an unproven change is not worth its risk.
+- **A "lean row" was proposed and then measured, and the measurement says not to build it.** The
+  idea was to send name and kind only while a view is moving fast, against the present name, kind,
+  isDir, isLink, size, three times, mode, owner, group, digest, opened, thumb and git — a quarter of
+  the bytes, and worth 2–4× if parsing were the cost. `ScrollProbe` now reports where an answer's
+  time actually goes (`waitMs` / `storeMs` / `bindMs`, in the history file from here on):
+
+  | view | pace | waiting for the answer | storing it | delegates re-reading |
+  |---|---|---|---|---|
+  | list | 20 s | 19–22 ms | 5 ms | 0.9 ms |
+  | list | fling | 15–18 ms | 1.8 ms | 3.0 ms |
+  | columns | 20 s | **7 ms** | 4 ms | 0.3 ms |
+  | columns | fling | 13–15 ms | 2.6 ms | 0.5 ms |
+
+  The daemon does the same work for both: the same listing, the same 512 rows. So **columns' 7 ms is
+  what an answer costs when the window's thread is free** — the daemon, the socket, and turning the
+  reply into JavaScript — and list's extra ~13 ms is the answer sitting in the queue while that
+  thread renders. Storing the rows is small and the synchronous `rowsUpdated` is almost nothing,
+  because QML bindings are lazy: a `ListRow`'s five columns are not evaluated there but in the
+  render pass, which is the very thing holding the answer up.
+
+  So **about two thirds of a round trip is the window rendering, not the data**, and a lean row
+  attacks the other third. It would still help a little — fewer bytes to convert, and empty columns
+  are cheaper to lay out — but nothing like 2–4×, and not enough to close a 2:1 gap. Reaching for it
+  first would have cost a day for a fraction of what it looked worth.
+- **What would actually matter**, if this were ever worth fixing: fewer delegate updates per frame
+  while the view is moving — a `ListView` scrolled 400 rows a frame rebinds every visible delegate
+  every frame, and each of those is five formatted columns. That is a rendering decision about what
+  a flung list should show, not a protocol one, and it is not 0.1.0's.
+- **And it is a stress figure, not a a user one.** 25,000 rows a second is 400 rows a frame: nothing
+  on that screen can be read. The pace a hand makes — 5,000 rows a second, itself very fast — is
+  **0–2 % blank in every view**, every run. That is what the budgets assert; the fling is recorded.
+
 **Not done, and deliberately**: git stays in the daemon — `git()` already shells out, so the slow and risky part is in another process already and moving the orchestration would buy nothing. `meta` and `opened` stay for the same reason in reverse: a `statx` and a local lookup cost less than the pipe would. **Post-0.1.0**: a real sandbox on the child (seccomp or Landlock: no network, no write outside the cache) — the process boundary is what 0.1.0 buys, and the confinement is the next step, not this one.
 
 ### Seen while running the app (owner, 2026-09-20) — **closed 2026-09-20**

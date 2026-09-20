@@ -101,7 +101,7 @@ impl Listing {
             // Thumbnails only for rows inside a live window, at low priority.
             let kind = inner.pool.kind(idx);
             let p = inner.pos[idx as usize];
-            let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers(p));
+            let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers_view(p));
             let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
             if visible && self.thumbable(kind) && inner.deco.wants_thumb(&name, mtime) {
                 inner.deco.set_thumb(&name, super::deco::Thumb::Asked);
@@ -130,31 +130,39 @@ impl Listing {
     /// Ask for one row's thumbnail. The caller has already marked it `Asked`.
     pub(super) fn submit_thumb(self: &Arc<Self>, idx: u32, kind: crate::kinds::Kind, mtime_ms: u64, name: &str) {
         let uri = self.uri.join(name);
-        let me = Arc::clone(self);
         let name = name.as_bytes().to_vec();
+        let wants = Arc::clone(self);
+        let wanted_name = name.clone();
+        let me = Arc::clone(self);
         crate::thumber::submit(crate::thumber::Job {
             uri,
             kind,
             mtime_ms,
             size: crate::thumbs::Size::Normal,
-            done: Box::new(move |path| {
+            // Still worth making by the time a worker gets to it? A scroll through a long folder
+            // asks about every row it passes, and by then most of them are far behind the window.
+            wanted: Some(Box::new(move || {
+                let inner = wants.inner.lock().unwrap();
+                let Some(at) = inner.at(idx, &wanted_name) else { return false };
+                let p = inner.pos[at as usize];
+                p != u32::MAX && inner.subscribers.iter().any(|s| s.covers_view(p))
+            })),
+            done: Box::new(move |answer| {
                 // The answer belongs to the name it was asked about, whatever row that name is on
                 // now: a rescan while the job ran has dealt the indexes again.
-                {
-                    let mut inner = me.inner.lock().unwrap();
-                    inner.deco.set_thumb(
-                        &name,
-                        match path {
-                            Some(p) => super::deco::Thumb::At { path: p.to_string_lossy().into_owned(), mtime_ms },
-                            None => super::deco::Thumb::None { mtime_ms },
-                        },
-                    );
-                    // `idx` is only a hint about where to look; the name is the truth.
-                    let at = if (idx as usize) < inner.pool.len() && !inner.pool.is_removed(idx) && inner.pool.name(idx) == name.as_slice() { Some(idx) } else { inner.pool.find(&name) };
-                    let Some(at) = at else { return };
-                    drop(inner);
-                    me.push_rows(&[at]);
+                let mut inner = me.inner.lock().unwrap();
+                match answer {
+                    crate::thumber::Answer::Made(p) => inner.deco.set_thumb(&name, super::deco::Thumb::At { path: p.to_string_lossy().into_owned(), mtime_ms }),
+                    crate::thumber::Answer::None => inner.deco.set_thumb(&name, super::deco::Thumb::None { mtime_ms }),
+                    // Never made, so nothing is known: the row asks again if it is looked at again.
+                    crate::thumber::Answer::Dropped => {
+                        inner.deco.unask_thumb(&name);
+                        return;
+                    }
                 }
+                let Some(at) = inner.at(idx, &name) else { return };
+                drop(inner);
+                me.push_rows(&[at]);
             }),
         });
     }

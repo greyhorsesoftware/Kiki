@@ -32,6 +32,7 @@ Item {
         _to = Math.max(0, target.contentHeight - target.height)
         _frames = []; _blankFrames = 0; _blankRows = 0; _stopped = 0
         _serial0 = cache._serial
+        cache.resetCost()
         _t0 = Date.now(); _last = _t0
         result = { running: true }
         running = true
@@ -72,6 +73,12 @@ Item {
                 blankFrames: probe._blankFrames, blankRows: probe._blankRows,
                 settleMs: now - probe._stopped,
                 requests: probe.cache._serial - probe._serial0,
+                // Where a round trip goes, per answer: waiting for it, storing it, and the
+                // delegates re-reading their rows. What a lean row could save is the wait.
+                answers: probe.cache._answers,
+                waitMs: probe.cache._answers ? Math.round(probe.cache._msWait / probe.cache._answers * 10) / 10 : 0,
+                storeMs: probe.cache._answers ? Math.round(probe.cache._msStore / probe.cache._answers * 10) / 10 : 0,
+                bindMs: probe.cache._answers ? Math.round(probe.cache._msBind / probe.cache._answers * 10) / 10 : 0,
                 lastRow: probe.cache.viewportFirst + probe.cache.viewportCount
             }
         }

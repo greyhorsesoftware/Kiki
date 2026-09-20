@@ -282,7 +282,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let t0 = Instant::now();
     let (l, _) = listing::open(&uri).expect("open");
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 0, lid: 1, tx, first: 0, count: 60 });
+    l.subscribe(Subscriber { client: 0, lid: 1, tx, first: 0, count: 60, view_first: 0, view_count: 60 });
     let (mut first_chunk, mut done) = (None, None);
     while done.is_none() {
         match rx.recv_timeout(Duration::from_secs(120)) {
@@ -301,14 +301,14 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     put(&mut m, "phase1_first_chunk_ms", ms(first_chunk.unwrap_or_default()));
     put(&mut m, "phase1_done_ms", ms(done.unwrap_or_default()));
     let t = Instant::now();
-    let w = l.window(0, 1, 0, 60);
+    let w = l.window(0, 1, 0, 60, None);
     put(&mut m, "window_ms", ms(t.elapsed()));
     put(&mut m, "window_rows", w.get("rows").and_then(Value::as_arr).map(|a| a.len()).unwrap_or(0) as f64);
     // phase 2 for the first window: wait until every row has meta
     let t = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let w = l.window(0, 1, 0, 60);
+        let w = l.window(0, 1, 0, 60, None);
         let all = w.get("rows").and_then(Value::as_arr).map(|a| a.iter().all(|r| r.get("meta").map(|v| *v != Value::Null).unwrap_or(false))).unwrap_or(true);
         if all || Instant::now() > deadline {
             break;

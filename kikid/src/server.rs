@@ -483,10 +483,12 @@ impl Client {
                         kind,
                         mtime_ms: mtime,
                         size,
-                        done: Box::new(move |p| {
-                            let _ = tx.send(match p {
-                                Some(p) => proto::ok(id, Value::obj().s("path", p.to_string_lossy()).done()),
-                                None => proto::err(id, "Unsupported", "no thumbnail"),
+                        // Someone asked for this one by name: it is wanted whatever happens.
+                        wanted: None,
+                        done: Box::new(move |a| {
+                            let _ = tx.send(match a {
+                                crate::thumber::Answer::Made(p) => proto::ok(id, Value::obj().s("path", p.to_string_lossy()).done()),
+                                _ => proto::err(id, "Unsupported", "no thumbnail"),
                             });
                         }),
                     });
@@ -564,7 +566,7 @@ impl Client {
         if let Some(old) = self.listings.insert(lid, Arc::clone(&l)) {
             old.unsubscribe(self.id, lid);
         }
-        l.subscribe(Subscriber { client: self.id, lid, tx: self.tx.clone(), first: 0, count: 0 });
+        l.subscribe(Subscriber { client: self.id, lid, tx: self.tx.clone(), first: 0, count: 0, view_first: 0, view_count: 0 });
         let (n, done) = l.count();
         // The first Count arrives with the reply so a client can size its model immediately.
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", done).done());
@@ -578,7 +580,11 @@ impl Client {
         let (lid, l) = self.lid(b)?;
         let first = b.u64_field("first").unwrap_or(0) as u32;
         let count = b.u64_field("count").unwrap_or(60) as u32;
-        Ok(Some(l.window(self.id, lid, first, count)))
+        let view = match (b.u64_field("viewFirst"), b.u64_field("viewCount")) {
+            (Some(f), Some(c)) => Some((f as u32, c as u32)),
+            _ => None,
+        };
+        Ok(Some(l.window(self.id, lid, first, count, view)))
     }
 
     fn sort(&mut self, b: &Value, id: u64) -> Result<Option<Value>, (&'static str, String)> {

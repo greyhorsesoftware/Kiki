@@ -27,7 +27,7 @@ fn a_recreated_folder_is_listed_afresh() {
 
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
-    assert_eq!(l.window(1, 1, 0, 10).u64_field("n"), Some(1));
+    assert_eq!(l.window(1, 1, 0, 10, None).u64_field("n"), Some(1));
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::create_dir_all(&dir).unwrap();
@@ -37,7 +37,7 @@ fn a_recreated_folder_is_listed_afresh() {
     let (l2, cached) = open(&uri).unwrap();
     assert!(!cached, "a replaced directory must not be served from the cache");
     assert!(wait_scan(&l2, Duration::from_secs(5)));
-    let w = l2.window(1, 2, 0, 10);
+    let w = l2.window(1, 2, 0, 10, None);
     assert_eq!(w.u64_field("n"), Some(2));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows[0].str_field("name"), Some("after-one.txt"));
@@ -52,8 +52,8 @@ fn open_window_and_stats() {
     assert!(!cached);
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 7, tx, first: 0, count: 10 });
-    let w = l.window(1, 7, 0, 10);
+    l.subscribe(Subscriber { client: 1, lid: 7, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    let w = l.window(1, 7, 0, 10, None);
     assert_eq!(w.u64_field("n"), Some(51));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows.len(), 10);
@@ -63,7 +63,7 @@ fn open_window_and_stats() {
     // small dir: enrichment lands soon; wait for a Rows event or metadata
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let w = l.window(1, 7, 0, 10);
+        let w = l.window(1, 7, 0, 10, None);
         let rows = w.get("rows").unwrap().as_arr().unwrap();
         if rows[1].get("meta").map(|m| m != &Value::Null).unwrap_or(false) {
             assert_eq!(rows[1].get("meta").unwrap().u64_field("size"), Some(0));
@@ -84,7 +84,7 @@ fn open_window_and_stats() {
     l.sort(SortRole::Size, false, Some((tx2, 99)));
     let reply = rx2.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(reply.u64_field("id"), Some(99));
-    let w = l.window(1, 7, 0, 3);
+    let w = l.window(1, 7, 0, 3, None);
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows[0].str_field("name"), Some("sub"));
     assert_eq!(rows[1].get("meta").unwrap().u64_field("size"), Some(6));
@@ -98,7 +98,7 @@ fn rescan_keeps_meta_for_unchanged() {
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 2, lid: 1, tx, first: 0, count: 10 });
+    l.subscribe(Subscriber { client: 2, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
     l.enrich(None);
     let deadline = Instant::now() + Duration::from_secs(5);
     while l.inner.lock().unwrap().meta.iter().any(Option::is_none) {
@@ -107,7 +107,7 @@ fn rescan_keeps_meta_for_unchanged() {
     }
     std::fs::write(dir.join("new.txt"), b"1").unwrap();
     l.rescan();
-    let w = l.window(2, 1, 0, 20);
+    let w = l.window(2, 1, 0, 20, None);
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows.len(), 7);
     let kept = rows.iter().find(|r| r.str_field("name") == Some("file1.txt")).unwrap();
@@ -132,7 +132,7 @@ fn dot_files_hidden_until_asked() {
     assert!(wait_scan(&l, Duration::from_secs(5)));
     assert_eq!(l.count().0, 1, "dot-files hidden by default");
     assert_eq!(l.set_hidden(true), 3);
-    let w = l.window(1, 1, 0, 10);
+    let w = l.window(1, 1, 0, 10, None);
     let names: Vec<&str> = w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap()).collect();
     assert_eq!(names, vec![".git", ".secret", "a.txt"]); // folders first, then dot-files sort with the rest
     assert_eq!(l.set_hidden(false), 1);
@@ -166,7 +166,7 @@ fn the_view_sorts_filters_and_seeks() {
     assert!(wait_scan(&l, Duration::from_secs(5)));
 
     let names = |l: &std::sync::Arc<Listing>| -> Vec<String> {
-        l.window(1, 1, 0, 50).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect()
+        l.window(1, 1, 0, 50, None).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect()
     };
 
     // Folders first, then case-insensitive natural order; dot-files are out of the way.
@@ -222,12 +222,12 @@ fn windows_are_clamped_not_refused() {
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
 
-    let w = l.window(1, 1, 0, WINDOW_MAX + 100);
+    let w = l.window(1, 1, 0, WINDOW_MAX + 100, None);
     assert_eq!(w.get("rows").unwrap().as_arr().unwrap().len(), 13, "the folder is shorter than the cap");
-    let w = l.window(1, 1, 11, 10);
+    let w = l.window(1, 1, 11, 10, None);
     assert_eq!(w.u64_field("first"), Some(11));
     assert_eq!(w.get("rows").unwrap().as_arr().unwrap().len(), 2);
-    let w = l.window(1, 1, 500, 10);
+    let w = l.window(1, 1, 500, 10, None);
     assert!(w.get("rows").unwrap().as_arr().unwrap().is_empty(), "past the end is empty, not an error");
     assert_eq!(w.u64_field("n"), Some(13));
     assert_eq!(l.count().0, 13);
@@ -235,7 +235,7 @@ fn windows_are_clamped_not_refused() {
 
     // A subscriber that leaves stops being sent to.
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 9, lid: 3, tx, first: 0, count: 5 });
+    l.subscribe(Subscriber { client: 9, lid: 3, tx, first: 0, count: 5, view_first: 0, view_count: 5 });
     l.unsubscribe(9, 3);
     l.filter("file1");
     assert!(drain(&rx).is_empty(), "no events after unsubscribing");
@@ -332,7 +332,7 @@ fn a_rescan_keeps_the_thumbnails_it_had() {
     std::fs::write(dir.join("aaa.txt"), b"1").unwrap();
     std::fs::remove_file(dir.join("file0.txt")).unwrap();
     l.rescan();
-    let w = l.window(1, 1, 0, 100);
+    let w = l.window(1, 1, 0, 100, None);
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     let thumb = |name: &str| rows.iter().find(|r| r.str_field("name") == Some(name)).unwrap().get("thumb").unwrap().clone();
     assert_eq!(thumb("file3.txt"), Value::Str("/cache/three.png".into()), "carried by name");
@@ -354,7 +354,10 @@ fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
         std::fs::remove_file(dir.join(format!("file{i}.txt"))).unwrap();
     }
     l.rescan();
-    // Not a picture, so the job fails and records "" — which is all this needs: where it lands.
+    // Somebody has to be looking at the row, or the job is dropped before it is ever started.
+    let (tx, _rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 100, view_first: 0, view_count: 100 });
+    // Not a picture, so the job fails and records "none" — which is all this needs: where it lands.
     l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(old_idx, crate::kinds::Kind::Image, 1, "file7.txt");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -381,8 +384,8 @@ fn a_small_change_is_spliced_not_reset() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50 });
-    let before = l.window(3, 9, 0, 50).u64_field("gen").unwrap();
+    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50, view_first: 0, view_count: 50 });
+    let before = l.window(3, 9, 0, 50, None).u64_field("gen").unwrap();
     let _ = drain(&rx);
 
     std::fs::write(dir.join("file1b.txt"), b"1").unwrap();
@@ -399,7 +402,7 @@ fn a_small_change_is_spliced_not_reset() {
     assert_eq!((ops[0].str_field("op"), ops[0].u64_field("pos")), (Some("remove"), Some(1)));
     assert_eq!((ops[1].str_field("op"), ops[1].u64_field("pos")), (Some("insert"), Some(2)));
     assert_eq!(ops[1].get("row").unwrap().str_field("name"), Some("file1b.txt"));
-    let w = l.window(3, 9, 0, 50);
+    let w = l.window(3, 9, 0, 50, None);
     assert_eq!(w.u64_field("gen"), Some(before + 1));
     let names: Vec<&str> = w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap()).collect();
     assert_eq!(&names[..4], ["sub", "file1.txt", "file1b.txt", "file2.txt"]);
@@ -409,7 +412,7 @@ fn a_small_change_is_spliced_not_reset() {
     l.patch(&[b".hidden".to_vec()], &[], &[]);
     let events = drain(&rx);
     assert!(!events.iter().any(|e| matches!(e.str_field("event"), Some("Reset" | "Splice"))), "{events:?}");
-    assert_eq!(l.window(3, 9, 0, 50).u64_field("n"), Some(7));
+    assert_eq!(l.window(3, 9, 0, 50, None).u64_field("n"), Some(7));
 
     // A filtered view cannot be spliced (the daemon rebuilds it): that is still a Reset.
     l.filter("file");
@@ -418,5 +421,44 @@ fn a_small_change_is_spliced_not_reset() {
     l.patch(&[b"file9.txt".to_vec()], &[], &[]);
     let events = drain(&rx);
     assert!(events.iter().any(|e| e.str_field("event") == Some("Reset") && e.u64_field("gen").is_some()), "{events:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Scrolling a long folder asks about every row it goes past. By the time a worker reaches one,
+/// the window has usually moved on — and a thumbnail nobody can see is worth nothing, so the job
+/// is dropped before it is started. Dropped, not answered: the row must ask again if it is looked
+/// at again, which "there is no thumbnail for this file" would have stopped for good.
+#[test]
+fn a_thumbnail_nobody_is_looking_at_any_more_is_dropped_unstarted() {
+    let dir = temp_tree(42);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let idx = l.inner.lock().unwrap().pool.find(b"file7.txt").unwrap();
+
+    // A window that does not reach this row — the scroll has gone past it.
+    let (tx, _rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 2, view_first: 0, view_count: 2 });
+    l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
+    l.submit_thumb(idx, crate::kinds::Kind::Image, 1, "file7.txt");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        {
+            let inner = l.inner.lock().unwrap();
+            let thumb = inner.deco.get(b"file7.txt").and_then(|d| d.thumb.as_ref());
+            if thumb.is_none() {
+                break; // unasked: nothing is known, so it can be asked again
+            }
+            assert!(matches!(thumb, Some(deco::Thumb::Asked)), "a dropped job must not record an answer");
+        }
+        assert!(Instant::now() < deadline, "the job was neither dropped nor answered");
+        thread::sleep(Duration::from_millis(5));
+    }
+    // And asking again is exactly what the row now does.
+    let mtime = {
+        let inner = l.inner.lock().unwrap();
+        inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)
+    };
+    assert!(l.inner.lock().unwrap().deco.wants_thumb(b"file7.txt", mtime));
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -38,13 +38,16 @@ impl Listing {
     }
 
     /// Answer a window immediately with what is known and queue stats for the rest.
-    pub fn window(self: &Arc<Self>, client: u64, lid: u64, first: u32, count: u32) -> Value {
+    pub fn window(self: &Arc<Self>, client: u64, lid: u64, first: u32, count: u32, view: Option<(u32, u32)>) -> Value {
         let count = count.min(WINDOW_MAX);
         let mut inner = self.inner.lock().unwrap();
         inner.last_used = Instant::now();
         if let Some(s) = inner.subscribers.iter_mut().find(|s| s.client == client && s.lid == lid) {
             s.first = first;
             s.count = count;
+            let (vf, vc) = view.unwrap_or((first, count));
+            s.view_first = vf;
+            s.view_count = vc;
         }
         let n = inner.view.len() as u32;
         let end = first.saturating_add(count).min(n);
@@ -61,8 +64,14 @@ impl Listing {
                 continue;
             }
             let kind = inner.pool.kind(idx);
-            let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
-            if self.thumbable(kind) && inner.deco.wants_thumb(inner.pool.name(idx), mtime) {
+            // Not until the file's time is known. A thumbnail is cached under `md5(uri)` and keyed
+            // by mtime, so one made before the stat lands is made against a time of zero, thrown
+            // away the moment the real one arrives, and made again over the top of itself — twice
+            // the decoding for one picture. The row above is already queued for its stat, and
+            // `run_stats` asks for the thumbnail as soon as that lands.
+            let Some(mtime) = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms) else { continue };
+            // Only what is on screen. During a scroll `first..count` runs thousands of rows ahead.
+            if self.thumbable(kind) && inner.subscribers.iter().any(|s| s.covers_view(p)) && inner.deco.wants_thumb(inner.pool.name(idx), mtime) {
                 let name = String::from_utf8_lossy(inner.pool.name(idx)).into_owned();
                 inner.deco.set_thumb(name.as_bytes(), deco::Thumb::Asked);
                 want_thumbs.push((idx, kind, mtime, name));
@@ -116,6 +125,16 @@ impl Listing {
 }
 
 impl Inner {
+
+    /// Where a name is now. `idx` is a hint from when the work was asked for — right unless a
+    /// rescan has dealt the indexes again since, which is why it is checked rather than trusted.
+    /// The fallback scans the pool, so the hint is what keeps a queue of thousands cheap.
+    pub(super) fn at(&self, idx: u32, name: &[u8]) -> Option<u32> {
+        if (idx as usize) < self.pool.len() && !self.pool.is_removed(idx) && self.pool.name(idx) == name {
+            return Some(idx);
+        }
+        self.pool.find(name)
+    }
 
     pub(super) fn row_json(&self, idx: u32) -> Value {
         let t = self.pool.entry_type(idx);

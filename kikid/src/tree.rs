@@ -31,7 +31,7 @@ fn children_of(uri: &Uri) -> Result<Vec<Node>, VfsError> {
     if !listing::wait_scan(&l, Duration::from_secs(10)) {
         return Err(VfsError::Io("listing timed out".into()));
     }
-    let w = l.window(0, 0, 0, 100_000);
+    let w = l.window(0, 0, 0, 100_000, None);
     let rows: Vec<Value> = w.get("rows").and_then(Value::as_arr).map(|a| a.to_vec()).unwrap_or_default();
     let dir = if uri.is_local() { Some(uri.to_path()) } else { None };
     Ok(rows

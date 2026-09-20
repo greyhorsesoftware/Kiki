@@ -54,7 +54,7 @@ A listing is opened with a client-chosen `lid` so that `Open` and the first `Win
 | Request | Fields | Reply |
 |---|---|---|
 | `Open` | `lid: u32`, `uri: Uri` | `{ cached: bool }` |
-| `Window` | `lid`, `first: u32`, `count: u32` (max 512) | `{ first, rows: [Row], n: u32, done: bool, gen: u64 }` in the current sort and filter; becomes the connection's live window for this `lid`. `gen` numbers the state of the view the rows describe (below) |
+| `Window` | `lid`, `first: u32`, `count: u32` (max 512), `viewFirst?`, `viewCount?` | `{ first, rows: [Row], n: u32, done: bool, gen: u64 }` in the current sort and filter; becomes the connection's live window for this `lid`. `gen` numbers the state of the view the rows describe (below). `viewFirst`/`viewCount` say which of those rows are **on screen** rather than held against a scroll; thumbnails are made for those only. Omit them and the whole range counts as on screen |
 | `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime" \| "atime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
 | `Filter` | `lid`, `text: string` (substring, case-insensitive; empty clears) | `{ n }` then `Reset` |
 | `SeekName` | `lid`, `prefix`, `after?` | `{ index }` first view position whose name starts with `prefix` (case-insensitive), after `after` with wrap; `null` when none (type-ahead, plan 23) |
