@@ -780,6 +780,8 @@ fn title_for(op: &Value) -> String {
     }
 }
 
+/// For this module's tests, which is all that calls it: a short poll is fine there.
+#[cfg(test)]
 pub fn wait(id: u64, timeout: Duration) -> Option<State> {
     let start = Instant::now();
     loop {

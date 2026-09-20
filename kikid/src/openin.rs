@@ -120,6 +120,46 @@ pub struct Prepared {
     pub env: Vec<(String, String)>,
 }
 
+/// Where a tool's control socket goes (`nvim --listen`). Whoever can reach that socket can drive
+/// the editor — open files, run commands — as the user, so it must be somewhere only the user can
+/// get to. `$XDG_RUNTIME_DIR` is (0700, the user's). Without one this used to fall back to plain
+/// `/tmp`, where any local user could connect; now it is a folder of our own there, made 0700 and
+/// refused unless it is a real directory, ours, and closed to everyone else.
+pub fn socket_dir() -> std::io::Result<std::path::PathBuf> {
+    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        return Ok(rt.into());
+    }
+    private_dir(&std::env::temp_dir().join(format!("kiki-{}", rustix::process::getuid().as_raw())))
+}
+
+fn private_dir(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    // Not followed: a symlink planted under this name is not a directory of ours.
+    let md = std::fs::symlink_metadata(dir)?;
+    let mine = md.uid() == rustix::process::getuid().as_raw();
+    if !md.is_dir() || !mine || md.permissions().mode() & 0o077 != 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{} is not a private directory of this user", dir.display())));
+    }
+    Ok(dir.to_path_buf())
+}
+
+fn socket_path(id: &str) -> std::io::Result<std::path::PathBuf> {
+    Ok(socket_dir()?.join(format!("kiki-{id}.sock")))
+}
+
+/// A session that has ended leaves its socket file behind, and the next `--listen` on that path
+/// fails with "address already in use": cleared before a launch and when a session is closed.
+fn clear_socket(id: &str) {
+    if let Ok(p) = socket_path(id) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 /// Substitutes placeholders. `line` is 1-based; `socket` is per-entry under the runtime dir.
 pub fn prepare(tool: &Value, uris: &[Uri], line: Option<u64>, template: &str) -> Result<Prepared, String> {
     let id = tool.str_field("id").unwrap_or("tool");
@@ -137,8 +177,7 @@ pub fn prepare(tool: &Value, uris: &[Uri], line: Option<u64>, template: &str) ->
     if accepts == "folder" && !is_dir && template.contains("{file}") {
         return Err("this tool opens folders".into());
     }
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let socket = format!("{runtime}/kiki-{id}.sock");
+    let socket = socket_path(id).map_err(|e| format!("no private place for the editor's socket: {e}"))?.to_string_lossy().into_owned();
     let files = paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect::<Vec<_>>().join(" ");
     let file = if is_dir { String::new() } else { shell_quote(&first.to_string_lossy()) };
     let prompt = tool.str_field("prompt").unwrap_or("").replace("{files}", &files);
@@ -216,6 +255,9 @@ pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, b
             return Ok((s.child.id(), true));
         }
     }
+    // Nothing of ours is listening (or this would have been a reuse): a socket file still there
+    // is the last session's, and would stop this one from listening.
+    clear_socket(&id);
     let p = prepare(&tool, uris, line, tool.str_field("command").unwrap_or(""))?;
     let mut cmd = if p.terminal {
         let t = terminal_command();
@@ -264,6 +306,7 @@ pub fn close(id: &str) -> bool {
         Some(mut v) => {
             let _ = v.child.kill();
             let _ = v.child.wait();
+            clear_socket(id);
             true
         }
         None => false,
@@ -299,5 +342,32 @@ mod tests {
         assert!(prepare(&Value::obj().s("id", "x").s("accepts", "folder").done(), &uris, None, "x {file}").is_err());
         assert!(list_json().as_arr().unwrap().iter().any(|t| t.str_field("id") == Some("system")));
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The fallback when there is no runtime directory: ours, 0700, and nothing else will do.
+    #[test]
+    fn the_socket_directory_is_private_or_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("kiki-sockdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        let fresh = base.join("fresh");
+        assert_eq!(private_dir(&fresh).unwrap(), fresh);
+        assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o700, "made closed to everyone else");
+        assert!(private_dir(&fresh).is_ok(), "and accepted again as it is");
+
+        // Somebody else could have made it first, open: a socket in there is anybody's.
+        let open = base.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(private_dir(&open).is_err(), "a directory others can enter is refused");
+
+        // Or planted a link under the name, pointing somewhere of their choosing.
+        let link = base.join("link");
+        std::os::unix::fs::symlink(&fresh, &link).unwrap();
+        assert!(private_dir(&link).is_err(), "a symlink is not a directory of ours");
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

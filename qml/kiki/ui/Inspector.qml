@@ -51,6 +51,8 @@ Rectangle {
     /// Git's detail for the file (plan 15): its branch and last commit. Asked for only when the
     /// row says it is in a repository, since it costs a `git log`; the state itself is the row's.
     property var gitInfo: null
+    /// Mute is the panel's, not one player's: the next video starts the way the last was left.
+    property bool videoMuted: false
     function gitLine() {
         const g = row && row.git ? row.git : null
         if (!g) return ""
@@ -109,6 +111,7 @@ Rectangle {
         // The preview is of the file, not of a tab: it stays while the tabs change under it.
         Rectangle {
             id: previewBox
+            objectName: "inspector-preview"
             readonly property bool markdown: insp.preview && insp.preview.markdown === true
             // A local picture needs no answer from the daemon to start drawing: it is the file.
             readonly property bool isImage: localImage || (insp.preview && insp.preview.path !== undefined)
@@ -122,9 +125,11 @@ Rectangle {
             Connections { target: insp; function onUriChanged() { previewBox.videoOn = false } }
             // An image preview takes the width of the panel and keeps its own ratio, rather
             // than sitting letterboxed in a short box.
-            readonly property int imageHeight: img.implicitWidth > 0
-                ? Math.min(400, Math.round((width - 12) * img.implicitHeight / img.implicitWidth) + 12)
-                : 240
+            // The picture's height over its width, SET when it has loaded rather than bound to its
+            // implicit size: the picture fills this box, so a height bound to the picture is bound
+            // to itself ("Binding loop detected for property height", on every image).
+            property real ratio: 0
+            readonly property int imageHeight: ratio > 0 ? Math.min(400, Math.round((width - 12) * ratio) + 12) : 240
             // A folder (or anything with no preview) is just its icon: no box around it.
             readonly property bool iconOnly: !isImage && (!insp.preview || insp.preview.children !== undefined)
             width: parent.width
@@ -162,6 +167,8 @@ Rectangle {
                 // Decoded at the size it is drawn at, on this screen: anything less shows.
                 sourceSize: Qt.size(Math.round(previewBox.width * Screen.devicePixelRatio),
                                     Math.round(400 * Screen.devicePixelRatio))
+                onStatusChanged: previewBox.ratio = (status === Image.Ready && implicitWidth > 0) ? implicitHeight / implicitWidth : 0
+                onSourceChanged: if (source == "") previewBox.ratio = 0
             }
             Loader {
                 id: video
@@ -171,6 +178,7 @@ Rectangle {
                 source: "VideoPreview.qml"
                 onLoaded: item.source = insp.uri
             }
+            Binding { target: video.item; property: "muted"; value: insp.videoMuted; when: video.item !== null }
             // The still is the play button; the one floating over its middle shows under the
             // pointer and pauses as well. Below the panel's own close box and resize grip.
             MouseArea {
@@ -183,7 +191,7 @@ Rectangle {
                 // Two round buttons over the middle of the picture: play/pause, and open it in
                 // the app that owns the type. `hovered` spans the buttons too — a MouseArea
                 // inside another takes the pointer from it, and the pair would blink out.
-                readonly property bool hovered: containsMouse || playArea.containsMouse || openArea.containsMouse
+                readonly property bool hovered: containsMouse || playArea.containsMouse || openArea.containsMouse || muteArea.containsMouse || scrubArea.containsMouse || scrubArea.pressed
                 Row {
                     objectName: "inspector-video-buttons"
                     visible: videoHover.hovered
@@ -210,6 +218,47 @@ Rectangle {
                 }
             }
             function toggleVideo() { if (!videoOn) videoOn = true; else if (video.item) video.item.toggle() }
+            // Under the picture, once it is a player: sound, where it is, and how long it is. A
+            // preview nobody can silence or wind on is a bad neighbour (plan 29 F).
+            Rectangle {
+                objectName: "inspector-video-strip"
+                visible: previewBox.videoOn && !!video.item && (videoHover.hovered || !video.item.playing)
+                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 6
+                height: 28; color: Qt.rgba(0, 0, 0, 0.6)
+                Row {
+                    anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 8; spacing: 8
+                    Item {
+                        objectName: "inspector-video-mute"
+                        width: 22; height: parent.height
+                        Icon { anchors.centerIn: parent; name: insp.videoMuted ? "volume-off" : "volume"; size: 14; color: video.item && !video.item.hasAudio ? Qt.rgba(1, 1, 1, 0.35) : "white" }
+                        Tip { visible: muteArea.containsMouse; text: video.item && !video.item.hasAudio ? "No sound in this video" : (insp.videoMuted ? "Unmute" : "Mute") }
+                        // A click soon after the one that started the video arrives as the second half of a
+                        // double click, which a MouseArea reports instead of `clicked`: it counts too.
+                        MouseArea { id: muteArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: insp.videoMuted = !insp.videoMuted; onDoubleClicked: insp.videoMuted = !insp.videoMuted }
+                    }
+                    Item {
+                        objectName: "inspector-video-scrub"
+                        width: parent.width - 22 - clockText.width - 2 * parent.spacing; height: parent.height
+                        readonly property real fraction: video.item && video.item.duration > 0 ? video.item.position / video.item.duration : 0
+                        Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 3; radius: 1.5; color: Qt.rgba(1, 1, 1, 0.25) }
+                        Rectangle { anchors.verticalCenter: parent.verticalCenter; width: Math.round(parent.width * parent.fraction); height: 3; radius: 1.5; color: Kiki.Theme.accent }
+                        Rectangle { visible: scrubArea.containsMouse || scrubArea.pressed; anchors.verticalCenter: parent.verticalCenter; x: Math.round(parent.width * parent.fraction) - 5; width: 10; height: 10; radius: 5; color: "white" }
+                        MouseArea {
+                            id: scrubArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; preventStealing: true
+                            function go(x) { if (video.item && video.item.duration > 0) video.item.seek(video.item.duration * Math.max(0, Math.min(1, x / width))) }
+                            onPressed: mouse => go(mouse.x)
+                            onPositionChanged: mouse => { if (pressed) go(mouse.x) }
+                        }
+                    }
+                    Text {
+                        id: clockText
+                        objectName: "inspector-video-clock"
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: video.item ? Kiki.Format.clock(video.item.position) + " / " + Kiki.Format.clock(video.item.duration) : ""
+                        color: "white"; font.family: Kiki.Theme.mono; font.pixelSize: 10
+                    }
+                }
+            }
             Column {
                 visible: insp.preview && insp.preview.members !== undefined
                 anchors.fill: parent; anchors.margins: 10

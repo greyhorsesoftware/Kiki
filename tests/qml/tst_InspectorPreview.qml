@@ -78,6 +78,50 @@ TestCase {
         verify(!area.visible)
     }
 
+    // Sound, where it is, how long it is: the strip under a playing video (plan 29 F).
+    function test_a_playing_video_can_be_muted_and_the_choice_outlives_it() {
+        show("clip.mp4", "video")
+        Wire.replyTo("Preview", { path: "/tmp/still.png" })
+        const player = findChild(insp, "inspector-video")
+        const area = findChild(insp, "inspector-video-area")
+        verify(!findChild(insp, "inspector-video-strip").visible, "no strip until it is a player")
+        mouseClick(area, area.width / 2, area.height / 2)
+        tryCompare(player, "status", Loader.Ready)
+        verify(!player.item.muted, "sound is on to begin with")
+
+        const mute = findChild(insp, "inspector-video-mute")
+        mouseMove(mute, mute.width / 2, mute.height / 2)
+        tryVerify(() => findChild(insp, "inspector-video-strip").visible)
+        wait(600)   // or this click reads as the back half of a double click on the still
+        mouseClick(mute, mute.width / 2, mute.height / 2)
+        verify(insp.videoMuted)
+        verify(player.item.muted)
+
+        // The next video starts the way this one was left.
+        show("other.mp4", "video")
+        Wire.replyTo("Preview", { path: "/tmp/still2.png" })
+        mouseClick(area, area.width / 2, area.height / 2)
+        tryCompare(player, "status", Loader.Ready)
+        verify(player.item.muted)
+        insp.videoMuted = false
+    }
+
+    function test_the_scrub_bar_seeks_to_where_it_is_pressed() {
+        show("clip.mp4", "video")
+        Wire.replyTo("Preview", { path: "/tmp/still.png" })
+        const player = findChild(insp, "inspector-video")
+        const area = findChild(insp, "inspector-video-area")
+        mouseClick(area, area.width / 2, area.height / 2)
+        tryCompare(player, "status", Loader.Ready)
+        // No real file behind it, so no duration: a press must be harmless, not an exception.
+        const scrub = findChild(insp, "inspector-video-scrub")
+        mouseMove(scrub, 5, scrub.height / 2)
+        mousePress(scrub, scrub.width / 2, scrub.height / 2)
+        mouseRelease(scrub, scrub.width / 2, scrub.height / 2)
+        compare(scrub.fraction, 0)
+        compare(findChild(insp, "inspector-video-clock").text, "0:00 / 0:00")
+    }
+
     function test_the_play_button_floats_in_only_under_the_pointer() {
         show("clip.mp4", "video")
         Wire.replyTo("Preview", { path: "/tmp/still.png" })

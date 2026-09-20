@@ -32,6 +32,8 @@ var paths = {
   "x": "<path d=\"m4 4 8 8\"></path><path d=\"m12 4-8 8\"></path>",
   "play": "<path d=\"M5.5 3.5 12.5 8l-7 4.5z\"></path>",
   "pause": "<path d=\"M6 3.5v9\"></path><path d=\"M10 3.5v9\"></path>",
+  "volume": "<path d=\"M2.5 6.5H5L8 4v8L5 9.5H2.5z\"></path><path d=\"M10.2 6.2a2.6 2.6 0 0 1 0 3.6\"></path><path d=\"M12 4.6a4.8 4.8 0 0 1 0 6.8\"></path>",
+  "volume-off": "<path d=\"M2.5 6.5H5L8 4v8L5 9.5H2.5z\"></path><path d=\"m10.5 6.5 3 3\"></path><path d=\"m13.5 6.5-3 3\"></path>",
   "mail": "<rect x=\"2\" y=\"3.5\" width=\"12\" height=\"9\" rx=\"1.5\"></rect><path d=\"m2.5 5 5.5 4.2L13.5 5\"></path>",
   "message": "<path d=\"M2.5 4.5A1.5 1.5 0 0 1 4 3h8a1.5 1.5 0 0 1 1.5 1.5v5A1.5 1.5 0 0 1 12 11H6.5L3.5 13.5V11H4a1.5 1.5 0 0 1-1.5-1.5z\"></path>",
   "share": "<circle cx=\"12\" cy=\"4\" r=\"2\"></circle><circle cx=\"4\" cy=\"8\" r=\"2\"></circle><circle cx=\"12\" cy=\"12\" r=\"2\"></circle><path d=\"m5.8 7.1 4.4-2.2\"></path><path d=\"m5.8 8.9 4.4 2.2\"></path>",

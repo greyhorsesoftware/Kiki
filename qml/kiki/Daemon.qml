@@ -57,7 +57,12 @@ Singleton {
             return
         }
         if (msg.event !== undefined) {
-            if (msg.lid !== undefined && _listings[msg.lid]) _listings[msg.lid].handleEvent(msg)
+            // A listing that was destroyed without unbinding leaves a dead object here, and calling
+            // into it is "handleEvent is not a function". WindowCache unbinds on destruction now;
+            // this is so that the next thing to forget costs a dropped event and not an exception.
+            const l = msg.lid !== undefined ? _listings[msg.lid] : null
+            if (l && typeof l.handleEvent === "function") l.handleEvent(msg)
+            else if (l) delete _listings[msg.lid]
             daemon.event(msg)
         }
     }

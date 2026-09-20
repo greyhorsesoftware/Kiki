@@ -46,4 +46,13 @@ TestCase {
         compare(Kiki.Format.crumbs("file:///home/david/Projects/kiki", "/home/david"), ["~", "Projects", "kiki"])
         compare(Kiki.Format.crumbs("file:///", "/home/david"), ["/"])
     }
+
+    function test_clock() {
+        compare(Kiki.Format.clock(0), "0:00")
+        compare(Kiki.Format.clock(7400), "0:07")
+        compare(Kiki.Format.clock(220000), "3:40")
+        compare(Kiki.Format.clock(3725000), "1:02:05")
+        compare(Kiki.Format.clock(undefined), "0:00")
+        compare(Kiki.Format.clock(-5), "0:00")
+    }
 }

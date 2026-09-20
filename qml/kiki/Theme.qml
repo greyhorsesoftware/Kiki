@@ -115,36 +115,49 @@ Singleton {
     readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/"
     readonly property string configDir: Quickshell.env("HOME") + "/.config/omarchy/current/theme/"
     property string themeFile: stateDir + "colors.toml"
-    property string fallbackFile: configDir + "alacritty.toml"
+    /// Where an Omarchy without colors.toml keeps its palette: beside it today, under ~/.config on
+    /// the older layout. Both are tried, quietly — neither need exist.
+    property string fallbackFile: stateDir + "alacritty.toml"
+    property string olderFallbackFile: configDir + "alacritty.toml"
 
+    // None of the files under `current/theme` is watched: Omarchy switches theme by deleting that
+    // folder and moving a new one into its place, so a watch on anything inside it is on a dead
+    // inode after the first switch. What it does last is write `theme.name`, IN PLACE — same
+    // inode, every time — so that one watch survives every switch and is the trigger for
+    // re-reading the rest (`themeName` below). This replaced a timer that re-read four files
+    // every two seconds, for ever, in every window (plan 30, W4).
     property FileView omarchy: FileView {
         path: theme.themeFile
-        watchChanges: true
+        printErrors: false
         onLoaded: theme._applyColors(text())
-        onFileChanged: reload()
     }
     /// Only used when there is no colors.toml: an older Omarchy, or a theme that predates it.
     property FileView legacy: FileView {
         path: theme.fallbackFile
-        watchChanges: true
+        printErrors: false
         onLoaded: if (!theme._haveColors) theme._applyAlacritty(text())
-        onFileChanged: reload()
+    }
+    property FileView olderLegacy: FileView {
+        path: theme.olderFallbackFile
+        printErrors: false
+        onLoaded: if (!theme._haveColors) theme._applyAlacritty(text())
     }
     property bool _haveColors: false
     /// Omarchy publishes the icon theme beside the palette.
     property FileView iconsFile: FileView {
         path: theme.stateDir + "icons.theme"
-        watchChanges: true
+        printErrors: false
         onLoaded: theme.iconTheme = text().trim()
-        onFileChanged: reload()
     }
     /// Not on Omarchy: GTK's own setting, which every desktop writes.
     property FileView gtk4: FileView {
         path: Quickshell.env("HOME") + "/.config/gtk-4.0/settings.ini"
+        printErrors: false
         onLoaded: theme._gtkIcons(text())
     }
     property FileView gtk3: FileView {
         path: Quickshell.env("HOME") + "/.config/gtk-3.0/settings.ini"
+        printErrors: false
         onLoaded: theme._gtkIcons(text())
     }
     function _gtkIcons(text) {
@@ -155,19 +168,18 @@ Singleton {
     property FileView themeName: FileView {
         path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme.name"
         watchChanges: true
-        onLoaded: theme.name = text().trim()
-        onFileChanged: reload()
+        printErrors: false
+        // Truncated and then written: the first of the two events can find it empty.
+        onLoaded: { const n = text().trim(); if (n) theme.name = n }
+        onFileChanged: { reload(); theme.rereadTheme() }
     }
-    property Timer poll: Timer {
-        interval: 2000; running: true; repeat: true
-        // Every file behind the `current` symlink, which Omarchy replaces wholesale: a watch is
-        // on the old inode the moment the theme changes, so they are all re-read.
-        onTriggered: {
-            theme.omarchy.reload()
-            theme.themeName.reload()
-            theme.iconsFile.reload()
-            if (!theme._haveColors) theme.legacy.reload()
-        }
+    /// The theme changed under us: read again everything that came from it.
+    function rereadTheme() {
+        theme._haveColors = false
+        theme.omarchy.reload()
+        theme.iconsFile.reload()
+        theme.legacy.reload()
+        theme.olderLegacy.reload()
     }
 
     /// Omarchy's own palette: one flat table of named colours.

@@ -70,6 +70,13 @@ QtObject {
     function gitDimmed(row) {
         return !!row && !!row.git && row.git.state === "ignored" && Kiki.Settings.git.showIgnored !== "normal"
     }
+    /// A length of time as a player shows it: 0:07, 3:40, 1:02:05.
+    function clock(ms) {
+        const t = Math.max(0, Math.floor((ms || 0) / 1000))
+        const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60
+        const two = n => (n < 10 ? "0" : "") + n
+        return h > 0 ? h + ":" + two(m) + ":" + two(s) : m + ":" + two(s)
+    }
     function gitBadge(g) { if (!g) return ""; return { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!", untracked: "?", ignored: "", clean: "" }[g.state] || "" }
     function gitColor(g) {
         const t = Qt.resolvedUrl("") // no-op to keep this a plain function
