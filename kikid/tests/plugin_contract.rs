@@ -242,7 +242,7 @@ fn mirror_uploads_to_a_location_and_settles(dir: &std::path::Path) {
     let mkdirs = plan.actions.iter().filter(|a| a.kind == ActionKind::Mkdir).count();
     assert_eq!((copies, mkdirs), (3, 1), "three files and the notes/ folder");
 
-    let ctx = ExecCtx { cancel: &cancel, workers: 3, on_change: &|_| {}, on_bytes: &|_| {} };
+    let ctx = ExecCtx { cancel: &cancel, workers: 3, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
     let out = mirror::execute(&Arc::new(Mutex::new(plan)), &spec, &ctx).unwrap();
     assert_eq!((out.copies, out.deletes), (3, 0));
 
@@ -304,7 +304,7 @@ fn mirror_uploads_to_a_location_and_settles(dir: &std::path::Path) {
     std::fs::write(master.join("notes/a.txt"), b"a third draft that must not arrive at all").unwrap();
     let plan = mirror::scan(&mut spec, &cancel).unwrap();
     let stop = AtomicBool::new(true);
-    let stopped = ExecCtx { cancel: &stop, workers: 1, on_change: &|_| {}, on_bytes: &|_| {} };
+    let stopped = ExecCtx { cancel: &stop, workers: 1, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
     let _ = mirror::execute(&Arc::new(Mutex::new(plan)), &spec, &stopped);
     assert_eq!(read("/upload/notes/a.txt").unwrap(), b"a longer second draft", "the replica's file survives a cancelled upload");
     assert!(session.plugin.request(Value::obj().s("type", "Stat").s("location", "lab").s("path", part).done()).is_err(), "and the part file is removed");

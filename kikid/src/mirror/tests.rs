@@ -94,7 +94,7 @@ fn local_end_to_end_is_idempotent() {
     assert_eq!(plan.actions.iter().filter(|a| a.kind == ActionKind::Copy).count(), 3);
     assert_eq!(plan.actions.iter().filter(|a| a.kind == ActionKind::Mkdir).count(), 1);
     let plan = Arc::new(Mutex::new(plan));
-    let ctx = ExecCtx { cancel: &cancel, workers: 3, on_change: &|_| {}, on_bytes: &|_| {} };
+    let ctx = ExecCtx { cancel: &cancel, workers: 3, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
     let out = execute(&plan, &s, &ctx).unwrap();
     assert_eq!((out.copies, out.deletes, out.skipped), (3, 0, 0));
     assert_eq!(std::fs::read(d.join("r/sub/b.txt")).unwrap(), b"bb");
@@ -319,7 +319,7 @@ fn a_scanned_plan_is_kept_for_the_run_that_follows() {
 #[test]
 fn the_guards_refuse_before_anything_is_deleted() {
     let cancel = AtomicBool::new(false);
-    let ctx = ExecCtx { cancel: &cancel, workers: 1, on_change: &|_| {}, on_bytes: &|_| {} };
+    let ctx = ExecCtx { cancel: &cancel, workers: 1, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
     let d = std::env::temp_dir().join(format!("kiki-mirror-guards-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(d.join("r")).unwrap();

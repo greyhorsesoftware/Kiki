@@ -170,7 +170,7 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     let mut lost: Vec<(String, String)> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
     let on_bytes = |n: u64| job.progress(0, n);
-    let ctx = ExecCtx { cancel, workers: 1, on_change: &|_| {}, on_bytes: &on_bytes };
+    let ctx = ExecCtx { cancel, workers: 1, on_change: &|_| {}, on_bytes: &on_bytes, exact_times: true };
     for it in &plan {
         if cancel.load(Ordering::Relaxed) {
             return Err(VfsError::Io("cancelled".into()));

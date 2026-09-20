@@ -992,7 +992,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     _ => job.progress(0, 0),
                 }
             };
-            let ctx = crate::mirror::ExecCtx { cancel: &cancel, workers, on_change: &on_change, on_bytes: &|n| job.progress(0, n) };
+            let ctx = crate::mirror::ExecCtx { cancel: &cancel, workers, on_change: &on_change, on_bytes: &|n| job.progress(0, n), exact_times: false };
             let out = crate::mirror::execute(&stored.plan, &spec, &ctx)?;
             // For the completion line: "412 copied, 9 deleted, 3 skipped".
             job.set_result(Value::obj().u("copies", out.copies).u("deletes", out.deletes).u("skipped", out.skipped).done());

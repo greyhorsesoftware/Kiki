@@ -39,6 +39,13 @@ pub struct ExecCtx<'a> {
     /// Called after every action state change with the action index.
     pub on_change: &'a (dyn Fn(usize) + Sync),
     pub on_bytes: &'a (dyn Fn(u64) + Sync),
+    /// Stamp a download with the server's EXACT time for the file, asked of it (`Stat`), where
+    /// the listing could only say the minute or the day (FTP's LIST). Right for a plain download,
+    /// where the truest time is the best one. **Wrong for a mirror, and off there**: the next scan
+    /// will read the listing again, so the replica must carry the time the LISTING gave — the
+    /// one the comparison will see — or every such file looks changed on every run. (RelaySFTP's
+    /// rule, which this engine is ported from: "stamp it back to the source so re-scans match".)
+    pub exact_times: bool,
 }
 
 /// Runs the checked actions: creates level by level (parents first), then deletes deepest first.
@@ -221,8 +228,13 @@ fn put(s: &Arc<locations::Session>, path: &str, bytes: u64, mtime: u64, ctx: &Ex
     // Best-effort mtime so size+mtime stays idempotent on the next run — asked only of a plugin
     // that can do it. FTP cannot, and asking anyway was a wasted round trip on every file.
     let can = s.plugin.describe().get("features").and_then(|f| f.get("setMtime")).and_then(Value::as_bool).unwrap_or(true);
-    if can {
-        let _ = s.plugin.request(s.req("SetMtime").s("path", path).u("mtime", mtime).done());
+    if can && mtime > 0 {
+        // Not every server allows it (SETSTAT refused, a read-only attribute). The copy stands;
+        // the audit log says the time could not be kept, because the next run's size-and-time
+        // comparison will see that file as changed and this is the line that explains why.
+        if let Err(e) = s.plugin.request(s.req("SetMtime").s("path", path).u("mtime", mtime).done()) {
+            audit(&format!("mirror-mtime-skip {path} {}", e.message()));
+        }
     }
     Ok(())
 }
@@ -281,12 +293,13 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
                 return Err(e);
             }
             std::fs::rename(&tmp, &dst)?;
+            // (Plain downloads only — see `ExecCtx::exact_times`.)
             // A time that is a whole minute came from a listing that could say no better: FTP's
             // LIST gives minutes for a recent file and only the DAY for one older than six months
             // (a file from 16:53 came down dated midnight). The server knows the second — that is
             // what `Stat` asks it (MDTM) — so it is asked, once, for such a file. A listing with
             // real times (SFTP, MLSD) almost never lands on a whole minute and is not asked again.
-            let mtime = if mtime > 0 && mtime.is_multiple_of(60_000) {
+            let mtime = if ctx.exact_times && mtime > 0 && mtime.is_multiple_of(60_000) {
                 s.plugin.request(s.req("Stat").s("path", join_rel(mroot, a.rel)).done()).ok().and_then(|m| m.u64_field("mtime")).filter(|t| *t > 0).unwrap_or(mtime)
             } else {
                 mtime

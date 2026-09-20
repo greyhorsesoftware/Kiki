@@ -129,6 +129,17 @@ def build(root):
     put(root, TREE)
 
 
+def mirror(d, master, replica, direction):
+    """Scan, read the plan's summary, run it. Returns (files to copy, the report's text)."""
+    import re
+    scan = d.submit({"op": "mirrorScan", "spec": {"master": master, "replica": replica, "direction": direction}})
+    text = d.ok("MirrorReport", job=scan)["text"]
+    n = int(re.search(r"Summary: (\d+) to copy", text).group(1))
+    if n:
+        d.wait_job(d.ok("Submit", op={"op": "mirrorRun", "plan": scan, "spec": {"master": master, "replica": replica, "direction": direction}})["job"], timeout=JOB_TIMEOUT)
+    return n, text
+
+
 def run(ctx):
     c, d = ctx.checks, ctx.daemon
     base = ctx.base
@@ -326,6 +337,35 @@ def run(ctx):
             d.submit({"op": "copy", "items": [r_uri(f"dated-in-{tag}/served.txt")], "dest": ends["local"][1](f"dated-out-{tag}")})
             down = os.path.getmtime(os.path.join(local_root, f"dated-out-{tag}", "served.txt"))
             c.check(f"{tag}: a downloaded file takes the time the server gives it", abs(down - old) <= 2, down)
+
+        # A mirror settles (plan 08; the rule is RelaySFTP's, which the engine is ported from): what
+        # is copied is stamped with the time the NEXT SCAN will see, so a second run finds nothing
+        # to do. The test of it is a file old enough that FTP's LIST gives only its day — if the
+        # replica were stamped with anything truer than the listing, it would be copied for ever.
+        for tag in ports:
+            if tag not in ends:
+                continue
+            r_root, r_uri = ends[tag]
+            for way in ("download", "upload"):
+                here = os.path.join(local_root, f"mirror-{way}-{tag}")
+                there = os.path.join(r_root, f"mirror-{way}-{tag}")
+                os.makedirs(here); os.makedirs(there)
+                src = there if way == "download" else here
+                os.makedirs(os.path.join(src, "sub"))
+                for n, (rel, age) in enumerate((("old.txt", 12 * 365 * 86400), ("sub/last-year.txt", 400 * 86400), ("sub/this-morning.txt", 3 * 3600 + 17), ("now.txt", 0))):
+                    with open(os.path.join(src, rel), "w") as f:
+                        f.write(f"file {n} " * (n + 3))
+                    t = time.time() - age
+                    os.utime(os.path.join(src, rel), (t, t))
+                local_u, remote_u = ends["local"][1](f"mirror-{way}-{tag}"), r_uri(f"mirror-{way}-{tag}")
+                master, replica = (remote_u, local_u) if way == "download" else (local_u, remote_u)
+                first, _ = mirror(d, master, replica, way)
+                c.check(f"{tag} mirror {way}: the first run copies the four files", first == 4, first)
+                dst = here if way == "download" else there
+                c.check(f"{tag} mirror {way}: and they arrive", sorted(k for k, v in snapshot(dst).items() if v != "d") == ["now.txt", "old.txt", "sub/last-year.txt", "sub/this-morning.txt"], sorted(snapshot(dst)))
+                again, report = mirror(d, master, replica, way)
+                c.check(f"{tag} mirror {way}: a second run finds nothing to do — old files, this morning's and this minute's alike", again == 0, report[-900:])
+
     finally:
         for name in ("e2e-sftp", "e2e-ftps"):
             d.call("RemoveLocation", name=name)
