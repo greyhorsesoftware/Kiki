@@ -2,7 +2,8 @@
 
 A fast file manager for [Omarchy](https://omarchy.org): a lean Rust daemon (`kikid`) does the work, a
 Quickshell (QML) front end draws it. Locations (SFTP, FTPS), one-way mirroring, search over a name
-index, git badges, project mode beside your editor and agent, sharing, and Jarvis, which asks the AI you use in Omarchy about a file.
+index, git badges, project mode beside your editor and agent, sharing, and "Open AI here…", which
+starts the AI you use in Omarchy in a terminal beside your files.
 
 ## Layout
 

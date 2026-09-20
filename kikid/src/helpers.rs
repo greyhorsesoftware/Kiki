@@ -1,4 +1,4 @@
-//! Service plugins (highlight, dbus, ai): fixed-name plugins the daemon uses itself. Same directory as every other plugin.
+//! Service plugins (dbus): fixed-name plugins the daemon uses itself. Same directory as every other plugin.
 
 use crate::plugin::Plugin;
 use crate::vfs::VfsError;
@@ -32,10 +32,6 @@ pub fn get(name: &str) -> Result<Arc<Plugin>, VfsError> {
     }
     running().lock().unwrap().insert(name.to_string(), Arc::clone(&p));
     Ok(p)
-}
-
-pub fn highlight() -> Result<Arc<Plugin>, VfsError> {
-    get("kiki-plugin-highlight")
 }
 
 pub fn running_named(name: &str) -> bool {

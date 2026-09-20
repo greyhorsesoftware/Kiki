@@ -116,7 +116,7 @@ pub fn settings() -> Value {
             .done(),
     );
     m.insert("timers".into(), Value::obj().u("toastMs", 8000).u("searchDebounceMs", 150).u("mirrorPollMs", 400).done());
-    m.insert("editor".into(), Value::obj().s("terminal", "auto").s("placement", "right").u("tabWidth", 4).done());
+    m.insert("editor".into(), Value::obj().s("terminal", "auto").s("placement", "right").done());
     m.insert("git".into(), Value::obj().b("enabled", true).s("showIgnored", "dim").s("folders", "aggregate").done());
     m.insert("project".into(), Value::obj().u("width", 320).b("arrange", true).b("agent", true).done());
     m.insert("jarvis".into(), Value::obj().s("provider", "omarchy").s("cliCommand", "").done());
@@ -201,7 +201,7 @@ pub fn keymap() -> Value {
         ("Alt+Shift+Enter", "open in… list", "14"),
         ("Ctrl+Shift+P", "project mode", "16"),
         ("Alt+S", "share", "18"),
-        ("Alt+Q", "AI query", "19"),
+        ("Alt+Q", "open AI here", "29"),
         ("Ctrl+,", "settings", "20"),
         ("?", "keybinding cheat sheet", "10"),
     ];

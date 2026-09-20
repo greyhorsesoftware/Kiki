@@ -19,6 +19,10 @@ all: build
 ## plugin::LOCATION_KINDS. Other location plugins build with `cargo build -p …`.
 build:
 	$(CARGO) build --release
+	@# One binary, two kinds (plan 25): what the package does with a symlink, done here too, or
+	@# SMB and WebDAV are invisible to `make run` and to every test.
+	@ln -sf kiki-plugin-gio target/release/kiki-plugin-smb
+	@ln -sf kiki-plugin-gio target/release/kiki-plugin-dav
 
 ## Clippy is part of the suite, not a separate chore: a warning fails `make test` (plan 30 W5).
 test: clippy test-rust test-qml test-e2e

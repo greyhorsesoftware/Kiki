@@ -28,13 +28,16 @@ pub fn find_binary(scheme: &str) -> Option<PathBuf> {
     plugin_dirs().into_iter().map(|d| d.join(&name)).find(|p| p.is_file())
 }
 
-const SERVICES: &[&str] = &["dbus", "highlight"];
+const SERVICES: &[&str] = &["dbus"];
 
 /// The location kinds this build ships. Discovery, `Describe`, the Add-location dialog and
 /// `AddLocation` never see anything else, so this list and the workspace's default members are
 /// together the whole answer to "which protocols does this kiki speak". The stub is the contract
 /// test's plugin, so it counts only under the `stub` feature.
-pub const LOCATION_KINDS: &[&str] = if cfg!(feature = "stub") { &["ftps", "sftp", "stub"] } else { &["ftps", "sftp"] };
+///
+/// `dav` and `smb` are one binary, `kiki-plugin-gio`, installed under both names (plan 25): a kind
+/// is the suffix of the name a plugin is run by, so `gio` itself is never listed.
+pub const LOCATION_KINDS: &[&str] = if cfg!(feature = "stub") { &["dav", "ftps", "sftp", "smb", "stub"] } else { &["dav", "ftps", "sftp", "smb"] };
 
 /// Whether this build can connect to a location kind at all.
 pub fn ships(scheme: &str) -> bool {

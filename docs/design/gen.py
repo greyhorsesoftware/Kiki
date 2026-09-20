@@ -867,7 +867,7 @@ OPEN = open_dialog()
 
 # ---------- Settings window (plan 20) ----------
 def settings_nav(active):
-    pages = ["General", "Keys", "Locations", "Search", "Open in", "Share", "Git", "Project mode", "Jarvis", "Plugins", "About"]
+    pages = ["General", "Keys", "Locations", "Search", "Open in", "Share", "Git", "Project mode", "AI", "Plugins", "About"]
     rows = ""
     for pg in pages:
         on = pg == active
@@ -934,29 +934,6 @@ SHARE_SHEET = f"""<div style="position: absolute; inset: 0; display: flex; align
 share_main = f'<div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: hidden;">{lhead}<div style="display: flex; flex-direction: column; padding: 4px 0;">{lrows}</div>{SHARE_SHEET}</div>'
 SHARE = window(sidebar("home"), toolbar(["~"], "list", "Search Home") + share_main + statusbar("12 items · 2 selected"))
 
-# ---------- Jarvis panel (plan 19) ----------
-def chat(role, text):
-    if role == "user":
-        return f'<div style="align-self: flex-end; max-width: 85%; padding: 8px 10px; background: {HL}; color: {FG}; border-radius: 2px; white-space: pre-wrap;">{text}</div>'
-    return f'<div style="align-self: flex-start; max-width: 92%; padding: 8px 10px; color: {FGD}; white-space: pre-wrap; line-height: 1.5;">{text}</div>'
-
-JARVIS_PANEL = f"""<div style="display: flex; flex-direction: column; width: 400px; flex: none; border-left: 1px solid {LINE}; background: {BG}; font-size: 12px;">
-  <div style="display: flex; align-items: center; gap: 8px; height: 40px; flex: none; padding: 0 14px; border-bottom: 1px solid {LINE};">
-    {ico("sparkle", size=14, color=PURPLE)}<span style="font-weight: 600; color: {FG};">Jarvis</span><span style="font-size: 11px; color: {CM};">claude · from Omarchy</span><span style="flex-grow: 1;"></span>
-    <span style="font-size: 11px; color: {CM};">notes.md</span><span style="color: {CM};">{ico("x", size=12)}</span>
-  </div>
-  <div style="display: flex; flex-direction: column; gap: 10px; flex-grow: 1; min-height: 0; padding: 14px; overflow: hidden;">
-    {chat("user", "how many times does 'omarchy' appear in this file?")}
-    {chat("assistant", "12 times (lines 3, 8, 14, 21, 27, 33, 40, 41, 55, 62, 70, 88).")}
-    {chat("user", "summarise the TODO section")}
-    {chat("assistant", "Three open items: finish the SFTP fast-scan fallback, add a Trash view with Restore, and write the release workflow for aarch64. The first two are marked for this week; the third has no date.")}
-    <span style="font-size: 11px; color: {CM};">count lines · word count · file size are answered locally; everything else runs <span style="color: {FGD};">claude -p</span> with the file attached</span>
-  </div>
-  <div style="display: flex; align-items: center; gap: 8px; height: 40px; flex: none; margin: 0 12px 12px; padding: 0 10px; border: 1px solid {BLUE}; border-radius: 2px; color: {FG};"><span style="color: {PURPLE};">›</span><span>Ask about notes.md<span style="display: inline-block; width: 1px; height: 14px; margin-left: 1px; background: {FG}; vertical-align: -2px;"></span></span><span style="flex-grow: 1;"></span><span style="font-size: 10px; padding: 1px 5px; border: 1px solid {GUT}; border-radius: 2px; color: {GUT};">Enter</span></div>
-</div>"""
-jarvis_main = f'<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;"><div style="display: flex; flex-direction: column; flex-grow: 1; min-width: 0; overflow: hidden;">{lhead}<div style="display: flex; flex-direction: column; padding: 4px 0;">{lrows}</div></div>{JARVIS_PANEL}</div>'
-JARVIS = window(sidebar("home"), toolbar(["~"], "list", "Search Home") + jarvis_main + statusbar("12 items · 1 selected", keys=[("Enter","ask"),("Esc","close"),("^L","clear"),("⌥Q","toggle Jarvis"),("?","all keys")]))
-
 # ---------- Trash view (plan 04) ----------
 def trash_row(name, kind, original, deleted, size, selected=False):
     icon, color = KIND[kind]
@@ -981,7 +958,7 @@ trash_bar = f"""<div style="display: flex; align-items: center; gap: 10px; heigh
 trash_main = f'<div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: hidden;">{trash_bar}{trash_head}<div style="display: flex; flex-direction: column; padding: 4px 0;">{"".join(trash_row(*r) for r in TRASH_ROWS)}</div>{TRASH_MENU}</div>'
 TRASH = window(sidebar("trash"), toolbar(["Trash"], "list", "Search Trash") + trash_main + statusbar("5 items · 1 selected", keys=[("Enter","restore"),("Del","delete permanently"),("^A","select all"),("?","all keys")]))
 
-files = {"Main.dc.html": MAIN, "Settings.dc.html": SETTINGS, "ShareSheet.dc.html": SHARE, "Jarvis.dc.html": JARVIS, "TrashView.dc.html": TRASH, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
+files = {"Main.dc.html": MAIN, "Settings.dc.html": SETTINGS, "ShareSheet.dc.html": SHARE, "TrashView.dc.html": TRASH, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
 for name, body in files.items():
     with open(os.path.join(OUT, name), "w") as f:
         f.write(doc(body))

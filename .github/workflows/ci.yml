@@ -42,8 +42,10 @@ jobs:
         run: make test-rust
       - name: Protocol and plugin contract tests
         run: cargo test --test '*' -- --include-ignored
-      - name: Build the plugins that are not in the default build
-        run: cargo build --release -p kiki-plugin-mtp -p kiki-plugin-ptp -p kiki-plugin-afc -p kiki-plugin-gio
+      # Not in 0.1.0 (plan 31), but still in the tree: built here so they cannot rot. This is the
+      # only job that needs libmtp, libgphoto2 and libimobiledevice.
+      - name: Build the device plugins, which are not in the default build
+        run: cargo build --release -p kiki-plugin-mtp -p kiki-plugin-ptp -p kiki-plugin-afc
       - name: JSON reader fuzz smoke
         run: |
           cargo install cargo-fuzz --locked
@@ -80,7 +82,7 @@ jobs:
     steps:
       - name: Install build tools
         run: |
-          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo libmtp libgphoto2 libimobiledevice usbmuxd glib2 gvfs gvfs-smb
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo glib2 gvfs gvfs-smb
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v4
       - name: makepkg
@@ -152,7 +154,7 @@ jobs:
     needs: rust
     steps:
       - name: Install toolchain
-        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf libmtp libgphoto2 libimobiledevice usbmuxd glib2 gvfs gvfs-smb
+        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf glib2 gvfs gvfs-smb
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:

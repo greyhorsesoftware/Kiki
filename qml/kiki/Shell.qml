@@ -269,9 +269,6 @@ FloatingWindow {
         })
     }
     // AI (plan 19)
-    property bool aiOpen: false
-    property var aiStatus: ({ configured: false })
-    function loadAi() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) aiStatus = ok }) }
     /// "Open AI here…" and "Open Terminal here…": both lead OUT of kiki, to a terminal window
     /// started in `dir`. "Here" is the folder under the pointer when that is what was clicked,
     /// else the folder being shown; the AI — the one chosen in Settings, as its own command-line
@@ -295,7 +292,6 @@ FloatingWindow {
     function openTerminalHere(dir) {
         Kiki.Daemon.request("OpenTerminal", { dir: dir }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
-    function aiQuery() { const u = selectedUris(); if (!u.length) return; if (!aiStatus.configured) { settingsWin.open("ai"); return } aiOpen = true; inspector = false; aiPanel.openFor(u) }
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
@@ -658,7 +654,7 @@ FloatingWindow {
 
     Connections {
         target: Kiki.Daemon
-        function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); win.loadAi(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } }
+        function onReadyChanged() { if (Kiki.Daemon.ready) { win.loadSidebar(); win.loadOpenIn(); win.loadShare(); if (!win.pane.uri) win.start(Quickshell.env("KIKI_START")) } }
         // A restarted daemon knows nothing of the listings this window had open: their ids died
         // with it, so every pane opens its folder again.
         function onReconnected() {
@@ -674,7 +670,7 @@ FloatingWindow {
         anchors.fill: parent
         focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
-            && !shareSheet.visible && !compressDialog.visible && !win.aiOpen && !win.projectMode
+            && !shareSheet.visible && !compressDialog.visible && !win.projectMode
             && !keysWin.visible && !aboutDlg.visible
             && win.pane.renamingIndex < 0
         // No re-grab here on purpose: taking the focus back whenever this item loses it races
@@ -773,8 +769,6 @@ FloatingWindow {
             if (p.targets === "none" && !target) win.shareNow(p, null, uris)
             else win.shareTargets(p, uris)
         }
-        function aiQuery(uri: string, question: string): void { win.pane.selection.clear(); win.aiOpen = true; aiPanel.openFor([uri]); if (question) aiPanel.ask(question) }
-        function aiClose(): void { win.aiOpen = false }
         function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else { settingsWin.close(); keys.forceActiveFocus() } }
         function mirror(on: string): void { if (on === "open") win.startMirror(true); else win.mirrorOpen = false }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
@@ -947,7 +941,7 @@ FloatingWindow {
                 Column {
                     id: leftCol
                     objectName: "pane-left"
-                    width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0) - (aiPanel.visible && !win.split ? aiPanel.width : 0)); height: parent.height
+                    width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0)); height: parent.height
                     UI.PaneHeader { objectName: "pane-header-left"; visible: win.split; width: parent.width; pane: win.left; home: win.home; id: leftHeader; onClicked: win.focusPane(win.left); onPathMenu: c => win.paneHeaderPathMenu(win.left, c) }
                     UI.FilterBar {
                         id: leftFilter
@@ -1026,11 +1020,10 @@ FloatingWindow {
                         UI.PaneError { anchors.fill: parent; z: 50; pane: win.right; onRetry: win.right.listing.open(win.right.uri) }
                     }
                 }
-                UI.AiPanel { id: aiPanel; visible: win.aiOpen; width: Math.min(420, Math.floor(parent.width * 0.6)); height: parent.height; home: win.home; onClose: win.aiOpen = false }
                 UI.Inspector {
                     id: inspectorPanel
                     // Columns view supplies its own inspector column; icon and list show it with the selection.
-                    visible: !win.aiOpen && win.pane.view !== "columns" && win.inspector
+                    visible: win.pane.view !== "columns" && win.inspector
                     width: Math.min(win.inspectorW, Math.floor(parent.width * 0.7)); height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onClosed: win.inspectorRequested = false

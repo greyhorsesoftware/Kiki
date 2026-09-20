@@ -161,7 +161,6 @@ impl Gio {
             Err(e) => Err(match e.kind::<gio::IOErrorEnum>() {
                 Some(gio::IOErrorEnum::PermissionDenied) | Some(gio::IOErrorEnum::FailedHandled) => PluginError::auth(e.message()),
                 Some(gio::IOErrorEnum::NotFound) => PluginError::invalid(if self.scheme == "smb" { "share" } else { "host" }, e.message()),
-                Some(gio::IOErrorEnum::NotSupported) if cfg(config, "encryption") == "required" => PluginError::invalid("encryption", "the server does not offer encrypted SMB3; set Encryption to Auto"),
                 _ => gerr(e),
             }),
         }
@@ -196,8 +195,8 @@ impl Handler for Gio {
                     sdk::field("prefix", "Path prefix", "text", false, Some("/")),
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
-                    sdk::field("remotePath", "Remote path", "path", false, Some("/")),
-                    sdk::field("localPath", "Local path", "path", false, None),
+                    sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
+                    sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
             ),
             "afp" => (
@@ -209,8 +208,8 @@ impl Handler for Gio {
                     sdk::select_field("auth", "Authentication", &["password", "guest"], "password"),
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
-                    sdk::field("remotePath", "Remote path", "path", false, Some("/")),
-                    sdk::field("localPath", "Local path", "path", false, None),
+                    sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
+                    sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
             ),
             _ => (
@@ -223,9 +222,8 @@ impl Handler for Gio {
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
                     sdk::field("domain", "Domain / workgroup", "text", false, Some("WORKGROUP")),
-                    sdk::field("remotePath", "Remote path", "path", false, Some("/")),
-                    sdk::field("localPath", "Local path", "path", false, None),
-                    sdk::select_field("encryption", "Encryption", &["auto", "required", "off"], "auto"),
+                    sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
+                    sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
             ),
         };
@@ -240,7 +238,7 @@ impl Handler for Gio {
             detector_upload: "sizeMtime",
             detector_download: "sizeMtime",
             features: Features { set_mtime: true, mode: false, real_dirs: true, meta_in_scan: true, pipelining: false, partial_read: true },
-            available: Some((available, if available { String::new() } else { "GVfs is not running or has no backend for this scheme (install gvfs-smb / gvfs)".into() })),
+            available: Some((available, if available { String::new() } else { format!("{display} needs GVfs and its {display} backend: install {}", if self.scheme == "dav" { "gvfs-dnssd" } else { "gvfs-smb" }) })),
         }
     }
 

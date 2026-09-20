@@ -34,7 +34,7 @@ Rectangle {
 
     readonly property var pages: [
         { id: "general", label: "General" }, { id: "search", label: "Search" },
-        { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "Jarvis" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
+        { id: "share", label: "Share" }, { id: "git", label: "Git" }, { id: "project", label: "Project mode" }, { id: "ai", label: "AI" }, { id: "omarchy", label: "Omarchy" }, { id: "about", label: "About" }
     ]
 
     MouseArea { anchors.fill: parent; onClicked: sw.close() }
@@ -239,13 +239,13 @@ Rectangle {
         property var status: ({})
         function refresh() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok }) }
         Component.onCompleted: refresh()
-        Text { text: status.configured ? "Jarvis runs " + status.cli + " for " + status.provider + " (using its own login)" : "Jarvis needs " + (status.cli || "a command-line tool") + " for " + (status.provider || "…") + " on PATH, or a custom command"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WordWrap; width: 560 }
+        Text { text: status.configured ? "\"Open AI here…\" starts " + status.cli + " for " + status.provider + " in a terminal (using its own login)" : "\"Open AI here…\" needs " + (status.cli || "a command-line tool") + " for " + (status.provider || "…") + " on PATH, or a custom command"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WordWrap; width: 560 }
         Row2 { label: "AI"; Choice { options: ["omarchy", "anthropic", "openai", "gemini", "xai", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } }
-        Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each in print mode."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
+        Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each started for a conversation."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
         Row2 { label: "Custom command"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.cliCommand || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { cliCommand: text }, () => { Kiki.Settings.load(); refresh(); sw.saved() })
-                Text { visible: !parent.text.length && !parent.activeFocus; text: "e.g. mytool --ask {prompt}"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } } }
-        Text { text: "The command runs in the file's folder with {prompt} (the question, naming the files) and {files} substituted; its output streams into the Jarvis panel."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
+                Text { visible: !parent.text.length && !parent.activeFocus; text: "e.g. mytool --chat {prompt}"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } } }
+        Text { text: "The command is run as written, in a terminal window opened in the folder. {prompt} becomes the opening message naming the selected files; with nothing selected, the word holding it is left out."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
     } }
     Component { id: sharePage; Column { spacing: 10
         Repeater { model: sw.sharePlugins; delegate: Column { required property var modelData; spacing: 6; width: parent.width

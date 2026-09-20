@@ -65,6 +65,9 @@ Rectangle {
     function defaults(p) { const v = {}; for (const f of (p ? p.form : [])) v[f.key] = (p.defaults && p.defaults[f.key]) || f.default || ""; return v }
     function uriPath(u) { if (!u) return "/"; const i = u.indexOf("://"); const rest = u.slice(i + 3); const s = rest.indexOf("/"); return s < 0 ? "/" : decodeURIComponent(rest.slice(s)) }
     function current() { return plugins[tab] }
+    /// A kind whose plugin says it cannot work here — SMB without gvfs-smb, say — shows why
+    /// instead of a form that could only fail (plan 25). Absent means available.
+    readonly property bool usable: !current() || current().available !== false
     // ---- the form as rows
     /// The tabs this form has: the distinct `group`s of its fields, in the order they appear.
     function groups() { const g = []; for (const f of (current() ? current().form : [])) if (f.group && g.indexOf(f.group) < 0) g.push(f.group); return g }
@@ -186,6 +189,7 @@ Rectangle {
     /// verify-the-server step in `openAfter`, so trusting a key does what you originally asked.
     property bool openAfter: false
     function connect(trust, thenOpen) {
+        if (!usable) return
         if (thenOpen !== undefined) openAfter = thenOpen === true
         if (!validate()) return
         busy = true; status = trust ? "Saving…" : (openAfter ? "Connecting…" : "Saving…")
@@ -273,7 +277,7 @@ Rectangle {
                 Row {
                     id: pageStrip
                     objectName: "page-tabs"
-                    visible: dlg.pages().length > 0
+                    visible: dlg.usable && dlg.pages().length > 0
                     height: visible ? 30 : 0; spacing: 0
                     Repeater {
                         model: dlg.pages()
@@ -290,8 +294,16 @@ Rectangle {
                         }
                     }
                 }
+                Column {
+                    objectName: "location-unavailable"
+                    visible: !dlg.usable
+                    width: parent.width; spacing: 10; topPadding: 24
+                    Text { text: dlg.current() ? dlg.current().displayName + " is not available on this machine" : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
+                    Text { objectName: "location-unavailable-reason"; width: parent.width; wrapMode: Text.WordWrap; text: dlg.current() ? (dlg.current().unavailableReason || "") : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                }
             Flickable {
                 objectName: "location-form"
+                visible: dlg.usable
                 NaturalScroll { }
                 width: parent.width; height: Math.max(0, parent.height - pageStrip.height - (pageStrip.visible ? parent.spacing : 0))
                 clip: true; contentHeight: fields.height
@@ -408,8 +420,8 @@ Rectangle {
                     objectName: "location-buttons"
                     anchors.horizontalCenter: parent.horizontalCenter; spacing: 10
                     readonly property string verb: dlg.editingName ? "Save" : "Add"
-                    Button { objectName: "location-add"; text: dlg.busy && !dlg.openAfter ? "Saving…" : parent.verb; enabled: !dlg.busy; onClicked: dlg.connect(undefined, false) }
-                    Button { objectName: "location-add-connect"; text: dlg.busy && dlg.openAfter ? "Connecting…" : parent.verb + " and Connect"; primary: true; enabled: !dlg.busy; onClicked: dlg.connect(undefined, true) }
+                    Button { objectName: "location-add"; text: dlg.busy && !dlg.openAfter ? "Saving…" : parent.verb; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, false) }
+                    Button { objectName: "location-add-connect"; text: dlg.busy && dlg.openAfter ? "Connecting…" : parent.verb + " and Connect"; primary: true; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, true) }
                 }
                 // What is happening, or went wrong, under it — the full width to say it in.
                 Text {

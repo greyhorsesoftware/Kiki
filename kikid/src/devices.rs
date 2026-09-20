@@ -191,9 +191,18 @@ fn sysfs_root() -> PathBuf {
     std::env::var("KIKI_SYSFS_USB").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/sys/bus/usb/devices"))
 }
 
+/// The kinds a device can be. A build that ships none of them never looks for devices.
+const KINDS: &[&str] = &["ptp", "mtp", "afc"];
+
+/// Only devices this build can open are devices at all: one whose kind does not ship would sit
+/// in the sidebar and fail with `Unsupported` when clicked (plan 31, phase 1).
+fn openable(found: Vec<Device>, ships: impl Fn(&str) -> bool) -> Vec<Device> {
+    found.into_iter().filter(|d| ships(d.kind)).collect()
+}
+
 /// One pass: rescan, diff against the registry, broadcast changes.
 pub fn refresh() {
-    let now = scan_sysfs(&sysfs_root());
+    let now = openable(scan_sysfs(&sysfs_root()), crate::plugin::ships);
     let (added, removed) = {
         let mut r = registry().lock().unwrap();
         r.ejected.retain(|a| now.iter().any(|d| &d.authority == a));
@@ -213,6 +222,9 @@ pub fn refresh() {
 }
 
 pub fn start() {
+    if !KINDS.iter().any(|k| crate::plugin::ships(k)) {
+        return;
+    }
     #[cfg(target_os = "linux")]
     {
         std::thread::Builder::new()
@@ -375,6 +387,11 @@ mod tests {
         let loc = devs[2].location();
         assert_eq!(loc.str_field("plugin"), Some("mtp"));
         assert_eq!(loc.get("config").unwrap().str_field("serial"), Some("ZX9"));
+        // A kind this build does not ship is not a device: it could only fail when opened.
+        let only_mtp: Vec<&str> = openable(devs.clone(), |k| k == "mtp").iter().map(|d| d.kind).collect();
+        assert_eq!(only_mtp, vec!["mtp"]);
+        assert!(openable(devs, |_| false).is_empty());
+        assert!(!KINDS.iter().any(|k| crate::plugin::ships(k)), "0.1.0 ships no device kind (plan 31); update this when one does");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

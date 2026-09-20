@@ -8,7 +8,15 @@ pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (bin
 arch=('x86_64' 'aarch64')
 url="https://github.com/davidjclark/kiki"
 license=('MIT')
-depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'qt6-declarative' 'libmtp' 'libgphoto2' 'libimobiledevice' 'usbmuxd')
+# Keep in step with packaging/PKGBUILD.
+depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'
+         'udisks2' 'git' 'qt6-declarative' 'glib2' 'gvfs')
+optdepends=('poppler: PDF thumbnails'
+            'openssh: SFTP host key tools'
+            'gvfs-smb: SMB (Windows share) locations'
+            'gvfs-dnssd: WebDAV locations'
+            'gvfs-wsdd: find Windows computers on the network'
+            'tailscale: share files over Taildrop')
 provides=('kiki')
 conflicts=('kiki')
 install=kiki.install

@@ -129,17 +129,9 @@
       "h": 760
     },
     {
-      "file": "Jarvis.dc.html",
-      "title": "Jarvis · query panel",
-      "x": 2600,
-      "y": 3500,
-      "w": 1200,
-      "h": 760
-    },
-    {
       "file": "Settings.dc.html",
       "title": "Settings · General",
-      "x": 3900,
+      "x": 2600,
       "y": 3500,
       "w": 900,
       "h": 640
@@ -200,7 +192,7 @@
       "x": 0,
       "y": 3380,
       "w": 1100,
-      "text": "Row 5: the Trash view (trash:// listing with the original location, Restore on Enter, Delete permanently on Del, Empty Trash), the Share sheet (plan 18: share plugins on the left, LocalSend's nearby devices with manual entry, compose fields from the plugin), the Jarvis panel (plan 19: chat about the selected files; local answers for counts, otherwise the AI Omarchy selected, run as its CLI) and the Settings window (plan 20: one page per area, writes through immediately)."
+      "text": "Row 5: the Trash view (trash:// listing with the original location, Restore on Enter, Delete permanently on Del, Empty Trash), the Share sheet (plan 18: share plugins on the left, LocalSend's nearby devices with manual entry, compose fields from the plugin) and the Settings window (plan 20: one page per area, writes through immediately)."
     }
   ],
   "launch": {

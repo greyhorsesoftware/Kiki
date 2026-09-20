@@ -16,7 +16,7 @@ QtObject {
     }
     function loadViewPrefs() { Kiki.Daemon.request("ViewPrefs", {}, ok => { if (ok) viewPrefs = ok.folders }) }
     property var timers: ({ toastMs: 8000, searchDebounceMs: 150, mirrorPollMs: 400 })
-    property var editor: ({ terminal: "auto", placement: "right", tabWidth: 4 })
+    property var editor: ({ terminal: "auto", placement: "right" })
     property var git: ({ enabled: true, showIgnored: "dim", folders: "aggregate" })
     property var project: ({ width: 320, arrange: true, agent: true })
     property var jarvis: ({ provider: "omarchy", cliCommand: "" })

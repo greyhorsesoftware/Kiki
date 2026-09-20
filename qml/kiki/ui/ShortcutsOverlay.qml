@@ -54,7 +54,7 @@ Rectangle {
             ["Alt+Enter", "open with the default tool"],
             ["Alt+Shift+Enter", "open with…"],
             ["Alt+S", "share"],
-            ["Alt+Q", "ask Jarvis"],
+            ["Alt+Q", "open AI here"],
         ] },
     ]
 

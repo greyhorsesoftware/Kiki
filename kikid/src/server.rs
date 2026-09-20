@@ -37,7 +37,6 @@ struct Client {
     /// Search results served as windowed views: lid -> rows
     searches: HashMap<u64, Vec<Value>>,
     trees: HashMap<u64, crate::tree::Tree>,
-    texts: HashMap<u64, std::path::PathBuf>,
 }
 
 impl Client {
@@ -75,7 +74,7 @@ impl Client {
                 }
             })
             .expect("spawn writer");
-        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new(), texts: HashMap::new() };
+        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new() };
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -166,9 +165,6 @@ impl Client {
                     if self.plans.contains_key(&lid) {
                         return self.reply(id, self.plan_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
                     }
-                    if self.texts.contains_key(&lid) {
-                        return self.reply(id, self.text_window(lid, b.u64_field("first").unwrap_or(0) as usize, b.u64_field("count").unwrap_or(60) as usize));
-                    }
                     if let Some(t) = self.trees.get(&lid) {
                         let first = b.u64_field("first").unwrap_or(0) as usize;
                         let count = b.u64_field("count").unwrap_or(60).min(512) as usize;
@@ -184,20 +180,6 @@ impl Client {
                 }
                 self.window(b)
             }
-            "TextFind" => {
-                let lid = b.u64_field("lid").unwrap_or(0);
-                let needle = b.str_field("text").unwrap_or("").to_ascii_lowercase();
-                match self.texts.get(&lid) {
-                    Some(path) if !needle.is_empty() => {
-                        let text = std::fs::read_to_string(path).unwrap_or_default();
-                        let matches: Vec<Value> = text.lines().enumerate().filter(|(_, l)| l.to_ascii_lowercase().contains(&needle)).map(|(i, _)| Value::Uint(i as u64)).take(10_000).collect();
-                        Ok(Some(Value::obj().u("n", matches.len() as u64).v("lines", Value::Arr(matches)).done()))
-                    }
-                    Some(_) => Ok(Some(Value::obj().u("n", 0).v("lines", Value::Arr(vec![])).done())),
-                    None => Err(("NotFound", "no text view".into())),
-                }
-            }
-            "OpenText" => self.open_text(b),
             "OpenTree" => match (b.u64_field("lid"), parse_uri(b, "uri")) {
                 (Some(lid), Ok(u)) => match crate::tree::Tree::open(&u) {
                     Ok(t) => {
@@ -248,7 +230,6 @@ impl Client {
             }
             "AiStatus" => Ok(Some(crate::ai::status())),
             "AiConfigure" => crate::ai::configure(b.str_field("provider"), b.str_field("cliCommand")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
-            "AiCancel" => Ok(Some(Value::obj().b("cancelled", b.u64_field("id").map(crate::ai::cancel).unwrap_or(false)).done())),
             "AiOpen" => {
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 match parse_uri(b, "dir") {
@@ -260,18 +241,6 @@ impl Client {
                 Ok(dir) => crate::ai::open_terminal(&dir).map(|_| Some(Value::obj().done())).map_err(vfs_err),
                 Err(e) => Err(e),
             },
-            "AiQuery" => {
-                let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
-                crate::ai::query(
-                    self.tx.clone(),
-                    id,
-                    b.str_field("session").unwrap_or("default").to_string(),
-                    uris,
-                    b.str_field("question").unwrap_or("").to_string(),
-                    b.get("history").cloned().unwrap_or(Value::Arr(vec![])),
-                );
-                Ok(Some(Value::obj().u("id", id).done()))
-            }
             "Search" => self.search(b),
             "IndexStatus" => Ok(Some(crate::index::status_json())),
             "IndexRebuild" => {
@@ -624,7 +593,6 @@ impl Client {
         }
         self.searches.remove(&lid);
         self.trees.remove(&lid);
-        self.texts.remove(&lid);
         Ok(Some(Value::obj().done()))
     }
 
@@ -768,7 +736,6 @@ impl Client {
         Ok(Some(Value::obj().u("row", row as u64).done()))
     }
 
-    /// Text views (plan 13): lines come from the highlight helper per window.
     fn misc_op(&mut self, t: &str, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
         match t {
             "Mount" => {
@@ -836,32 +803,6 @@ impl Client {
             }
             _ => Err(("Protocol", format!("unknown {t}"))),
         }
-    }
-
-    fn open_text(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
-        if let Some(u) = b.str_field("uri") {
-            crate::access::record(u);
-        }
-        let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
-        let u = parse_uri(b, "uri")?;
-        if !u.is_local() {
-            return Err(("Unsupported", "code view of remote files is a later version".into()));
-        }
-        let helper = crate::helpers::highlight().map_err(vfs_err)?;
-        let r = helper.request(Value::obj().s("type", "Highlight").s("path", u.to_path().to_string_lossy()).u("first", 0).u("count", 1).done()).map_err(vfs_err)?;
-        let total = r.u64_field("total").unwrap_or(0);
-        let lang = r.str_field("lang").unwrap_or("plain").to_string();
-        self.texts.insert(lid, u.to_path());
-        let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", total).b("done", true).done());
-        Ok(Some(Value::obj().u("total", total).s("lang", lang).done()))
-    }
-
-    fn text_window(&self, lid: u64, first: usize, count: usize) -> Result<Value, (&'static str, String)> {
-        let path = self.texts.get(&lid).ok_or(("NotFound", "no text view".to_string()))?;
-        let helper = crate::helpers::highlight().map_err(vfs_err)?;
-        let r = helper.request(Value::obj().s("type", "Highlight").s("path", path.to_string_lossy()).u("first", first as u64).u("count", count.min(512) as u64).done()).map_err(vfs_err)?;
-        let rows = r.get("lines").cloned().unwrap_or(Value::Arr(vec![]));
-        Ok(Value::obj().u("first", first as u64).u("n", r.u64_field("total").unwrap_or(0)).b("done", true).v("rows", rows).done())
     }
 
     fn mirror_plan(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {

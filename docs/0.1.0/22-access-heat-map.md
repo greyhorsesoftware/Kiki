@@ -25,7 +25,7 @@ A glance at a folder shows what was touched recently. The **Accessed** column re
 
 For heat that means "what I opened in kiki" regardless of mount options:
 
-- The daemon records an open in `~/.local/share/kiki/access.log` whenever a file is opened from kiki (`Open`, Open with…, Open in…, the code viewer, a share, a Jarvis query): `unix_ms\tURI`, appended, one line per open, compacted to the newest entry per URI when it passes 50,000 lines.
+- The daemon records an open in `~/.local/share/kiki/access.log` whenever a file is opened from kiki (`Open`, Open with…, Open in…, a share): `unix_ms\tURI`, appended, one line per open, compacted to the newest entry per URI when it passes 50,000 lines.
 - With the setting **Heat source** = "kiki opens" the column takes its time from the log and falls back to `atime` for files kiki never opened, marked with a hollow swatch so the two sources are distinguishable. "Filesystem" (the default) uses `atime` only.
 - The log is local, never leaves the machine, and "Clear access log" on the General page empties it.
 
