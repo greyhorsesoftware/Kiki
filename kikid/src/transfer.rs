@@ -102,7 +102,9 @@ fn unique(taken: &HashMap<String, (bool, Meta)>, name: &str) -> String {
         Some(i) => (&name[..i], &name[i..]),
         None => (name, ""),
     };
-    (1..).map(|n| if n == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {n}{ext}") }).find(|c| !taken.contains_key(c)).unwrap()
+    // The same name a local copy is given (`ops::unique_name`): "a (2).txt", then "a (3).txt". It
+    // was "a copy.txt" here — one choice, two names, depending on where the file happened to be.
+    (2..).map(|n| format!("{stem} ({n}){ext}")).find(|c| !taken.contains_key(c)).unwrap()
 }
 
 fn same_place(a: &Side, b: &Side) -> bool {
@@ -371,12 +373,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_taken_name_gets_copy_and_a_number_with_its_extension_kept() {
+    fn a_taken_name_gets_the_number_a_local_copy_would_with_its_extension_kept() {
         let mut t: HashMap<String, (bool, Meta)> = HashMap::new();
-        assert_eq!(unique(&t, "site"), "site copy");
-        t.insert("index copy.html".into(), (false, Meta::default()));
-        assert_eq!(unique(&t, "index.html"), "index copy 2.html");
-        assert_eq!(unique(&t, ".env"), ".env copy", "a leading dot is not an extension");
+        assert_eq!(unique(&t, "site"), "site (2)");
+        t.insert("index (2).html".into(), (false, Meta::default()));
+        assert_eq!(unique(&t, "index.html"), "index (3).html");
+        assert_eq!(unique(&t, ".env"), ".env (2)", "a leading dot is not an extension");
+        // The same answer `ops::unique_name` gives on this machine: one choice, one name.
+        let d = std::env::temp_dir().join(format!("kiki-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("a.txt"), b"").unwrap();
+        assert_eq!(crate::ops::unique_name(&d, "a.txt"), unique(&HashMap::from([("a.txt".to_string(), (false, Meta::default()))]), "a.txt"));
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

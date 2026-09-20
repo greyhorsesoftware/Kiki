@@ -268,6 +268,64 @@ def run(ctx):
             deep = [x["uri"] for x in rows if x["uri"].endswith("/site/images/2026/may.txt")]
             c.check(f"{tag}: a search of the location finds a file three folders down", "ok" in r and len(deep) >= 1, r if "ok" not in r else f"{len(rows)} rows")
             d.call("Close", lid=lid)
+
+        # The other things a job does on a server (plan 31, phase 4): make a folder, rename, delete
+        # a folder with things in it; a name that is taken; and what time the file says it is.
+        for tag in ports:
+            if tag not in ends:
+                continue
+            r_root, r_uri = ends[tag]
+            work = os.path.join(r_root, f"ops-{tag}")
+            os.makedirs(os.path.join(work, "doomed", "deep"))
+            for rel, text in (("old.txt", "renamed"), ("doomed/a.txt", "a"), ("doomed/deep/b.txt", "b"), ("bystander.txt", "stays"), ("a.txt", "existing")):
+                with open(os.path.join(work, rel), "w") as f:
+                    f.write(text)
+
+            d.submit({"op": "mkdir", "uri": r_uri(f"ops-{tag}/made")})
+            c.check(f"{tag}: New Folder on the server makes it", os.path.isdir(os.path.join(work, "made")))
+            d.submit({"op": "rename", "uri": r_uri(f"ops-{tag}/old.txt"), "name": "new name.txt"})
+            c.check(f"{tag}: Rename renames it there", not os.path.exists(os.path.join(work, "old.txt")) and open(os.path.join(work, "new name.txt")).read() == "renamed", os.listdir(work))
+            d.submit({"op": "delete", "items": [r_uri(f"ops-{tag}/doomed")]})
+            c.check(f"{tag}: Delete removes a folder and everything in it", not os.path.exists(os.path.join(work, "doomed")), os.listdir(work))
+            c.check(f"{tag}: and nothing beside it", open(os.path.join(work, "bystander.txt")).read() == "stays")
+
+            # A name that is taken, answered each way.
+            mine = os.path.join(local_root, f"clash-{tag}")
+            os.makedirs(mine)
+            with open(os.path.join(mine, "a.txt"), "w") as f:
+                f.write("incoming")
+            for answer, want in (("skip", {"a.txt": "existing"}), ("keepBoth", {"a.txt": "existing", "a (2).txt": "incoming"}), ("replace", {"a.txt": "incoming", "a (2).txt": "incoming"})):
+                job = d.ok("Submit", op={"op": "copy", "items": [ends["local"][1](f"clash-{tag}/a.txt")], "dest": r_uri(f"ops-{tag}")})["job"]
+                prompt = d.wait_event(lambda e: e.get("event") == "Prompt" and e.get("job") == job, timeout=20)
+                c.check(f"{tag} {answer}: a name taken on the server is asked about, by name", prompt is not None and prompt["uri"].endswith("/a.txt"), prompt)
+                if prompt:
+                    d.ok("PromptReply", job=job, choice=answer, applyToAll=False)
+                d.wait_job(job, timeout=JOB_TIMEOUT)
+                got = {n: open(os.path.join(work, n)).read() for n in os.listdir(work) if n.startswith("a")}
+                c.check(f"{tag} {answer}: and it does what was chosen — the same name a local copy would get", got == want, got)
+
+            # What time it is. Up: only where the protocol can say (FTP cannot set a file's time).
+            # Down: always — the file on this machine takes the time the server gives for it.
+            old = 1_400_000_000
+            dated = os.path.join(local_root, f"dated-{tag}.txt")
+            with open(dated, "w") as f:
+                f.write("from 2014")
+            os.utime(dated, (old, old))
+            os.makedirs(os.path.join(r_root, f"dated-in-{tag}"))
+            d.submit({"op": "copy", "items": [ends["local"][1](f"dated-{tag}.txt")], "dest": r_uri(f"dated-in-{tag}")})
+            up = os.path.getmtime(os.path.join(r_root, f"dated-in-{tag}", f"dated-{tag}.txt"))
+            if tag == "sftp":
+                c.check("sftp: an uploaded file keeps its time", abs(up - old) <= 2, up)
+            else:
+                c.check("ftps: an uploaded file is dated now — FTP has no way to set it, and kiki does not pretend", abs(up - time.time()) < 120, up)
+            served = os.path.join(r_root, f"dated-in-{tag}", "served.txt")
+            with open(served, "w") as f:
+                f.write("from 2014, on the server")
+            os.utime(served, (old, old))
+            os.makedirs(os.path.join(local_root, f"dated-out-{tag}"))
+            d.submit({"op": "copy", "items": [r_uri(f"dated-in-{tag}/served.txt")], "dest": ends["local"][1](f"dated-out-{tag}")})
+            down = os.path.getmtime(os.path.join(local_root, f"dated-out-{tag}", "served.txt"))
+            c.check(f"{tag}: a downloaded file takes the time the server gives it", abs(down - old) <= 2, down)
     finally:
         for name in ("e2e-sftp", "e2e-ftps"):
             d.call("RemoveLocation", name=name)

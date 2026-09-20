@@ -93,7 +93,8 @@ TestCase {
         verify(findChild(pop, "activity-entry-1") !== null)
         verify(findChild(pop, "activity-entry-2") === null, "an undo's inverse op is not activity")
         verify(findChild(pop, "activity-entry-3") !== null && findChild(pop, "activity-entry-4") !== null)
-        verify(findChild(pop, "activity-entry-4").y < findChild(pop, "activity-entry-1").y, "newest at the top")
+        // Laid out on a later frame, however long that takes on a busy machine.
+        tryVerify(() => findChild(pop, "activity-entry-4").y < findChild(pop, "activity-entry-1").y, 2000, "newest at the top")
         verify(!findChild(pop, "activity-empty").visible)
         compare(findChild(findChild(pop, "activity-entry-1"), "activity-completion").text, "Uploaded 9 items")
         compare(findChild(findChild(pop, "activity-entry-3"), "activity-status").text, "Waiting…")
@@ -118,6 +119,10 @@ TestCase {
         set([job({ id: 1 }), job({ id: 2, state: "done", revealUri: "file:///home/t/Downloads/site" }), job({ id: 3, state: "failed", error: "Denied" })])
         clickOrb()
         const b = (id, name) => findChild(findChild(pop, "activity-entry-" + id), name)
+        // The rows and their buttons are in place before anything is clicked: until the layout
+        // has run they sit on top of one another, and a click lands on whichever is uppermost.
+        tryVerify(() => findChild(pop, "activity-entry-1") !== null && findChild(pop, "activity-entry-3") !== null
+                        && findChild(pop, "activity-entry-3").y < findChild(pop, "activity-entry-1").y && b(1, "activity-cancel").x > 0, 2000)
         verify(b(1, "activity-cancel").visible && !b(1, "activity-reveal").visible && !b(1, "activity-dismiss").visible)
         verify(b(2, "activity-reveal").visible && !b(2, "activity-cancel").visible)
         verify(b(3, "activity-dismiss").visible && !b(3, "activity-reveal").visible)

@@ -281,6 +281,16 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
                 return Err(e);
             }
             std::fs::rename(&tmp, &dst)?;
+            // A time that is a whole minute came from a listing that could say no better: FTP's
+            // LIST gives minutes for a recent file and only the DAY for one older than six months
+            // (a file from 16:53 came down dated midnight). The server knows the second — that is
+            // what `Stat` asks it (MDTM) — so it is asked, once, for such a file. A listing with
+            // real times (SFTP, MLSD) almost never lands on a whole minute and is not asked again.
+            let mtime = if mtime > 0 && mtime.is_multiple_of(60_000) {
+                s.plugin.request(s.req("Stat").s("path", join_rel(mroot, a.rel)).done()).ok().and_then(|m| m.u64_field("mtime")).filter(|t| *t > 0).unwrap_or(mtime)
+            } else {
+                mtime
+            };
             if mtime > 0 {
                 let _ = crate::ops::set_mtime(&dst, std::time::UNIX_EPOCH + std::time::Duration::from_millis(mtime));
             }
