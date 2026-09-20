@@ -404,6 +404,9 @@ fn emit(out: &Shared, v: &Value) -> io::Result<()> {
 
 // ---------------------------------------------------------------- the library log
 
+/// For a plugin's own lines in a job's log: `sdk::log::info!(target: "kiki", …)`.
+pub use log;
+
 /// What the libraries under a plugin say as they work — russh, suppaftp, rustls, all through the
 /// `log` facade — sent to the daemon as `Log` events, so that a job's log can show what the SSH or
 /// FTP library was doing when a transfer went wrong. Nobody was listening before: every line was

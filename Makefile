@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test clippy test-rust test-qml test-e2e e2e-servers coverage run daemon shell fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e coverage run daemon shell fmt lint clean
 
 all: build
 
@@ -41,12 +41,8 @@ test-qml:
 
 ## End to end against a real daemon and a real tree. Without cage it runs the daemon-only flows
 ## and says which it skipped.
-# What the remote_transfers flow needs and no distribution ships: an FTPS server to test against
-# (sshd, for SFTP, comes with openssh). Once; without it the flow runs the SFTP pairs and says so.
-e2e-servers:
-	python3 -m venv tests/e2e/.venv
-	tests/e2e/.venv/bin/pip -q install pyftpdlib pyOpenSSL
-
+# The remote flows want real servers — `sudo pacman -S openssh vsftpd` — and skip, by name, the
+# pairs whose server is not installed.
 test-e2e: build
 	tests/e2e/run.sh
 

@@ -34,8 +34,91 @@ pub fn gen(profile: &str, dir: &Path) -> std::io::Result<()> {
         // What the gallery is asked to survive: a thousand full-size photographs, none of them
         // thumbnailed yet. Sized and encoded like something off a camera, not a test pattern.
         "gallery1k" => jpegs(dir, 1_000, 1_600, 1_200),
+        // What a transfer is asked to survive (plan 31, phase 4): a great many small files in a
+        // deep tree, a few very large ones, and the awkward cases. Not one of PROFILES — it is
+        // gigabytes, and it is for the transfer flows, which ask for it by name. `transfer-lite`
+        // is the same shape at a tenth of the size, for a run that should take a minute.
+        "transfer" => transfer(dir, 50_000, 2_000, &[1 << 30, 3 << 29]),
+        "transfer-lite" => transfer(dir, 5_000, 250, &[256 << 20, 64 << 20]),
+        // For a protocol that pays a connection per file (FTP opens a data connection, and over
+        // TLS shakes hands, for every one): the same shape, a tenth again.
+        "transfer-tiny" => transfer(dir, 500, 40, &[64 << 20, 16 << 20]),
         other => Err(std::io::Error::other(format!("unknown profile {other}"))),
     }
+}
+
+/// `files` small files spread over `dirs` folders up to eight deep, one file per size in `big`,
+/// and a folder of awkward things. Deterministic: the same call writes the same tree, so two runs
+/// can be compared. `MANIFEST.txt` at the top says what is there, for a flow to check against.
+fn transfer(dir: &Path, files: usize, dirs: usize, big: &[u64]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    // The folders: a path of up to eight parts, chosen so that every depth is used.
+    let folder = |i: usize| -> std::path::PathBuf {
+        let depth = 1 + i % 8;
+        let mut p = dir.join("tree");
+        let mut n = i;
+        for level in 0..depth {
+            p.push(format!("d{level}-{:02}", n % 7));
+            n /= 7;
+        }
+        p.push(format!("f{i:05}"));
+        p
+    };
+    let folders: Vec<std::path::PathBuf> = (0..dirs).map(folder).collect();
+    for f in &folders {
+        std::fs::create_dir_all(f)?;
+    }
+    // Small files: sizes from nothing to a few tens of KB, times spread over ten years.
+    let decade = 10 * 365 * 24 * 3600u64;
+    let now = std::time::SystemTime::now();
+    let mut small_bytes = 0u64;
+    for i in 0..files {
+        let path = folders[i % dirs].join(format!("file-{i:06}.{}", ["txt", "jpg", "rs", "md", "bin"][i % 5]));
+        let size = (i * 7919) % 40_000;
+        let body: Vec<u8> = (0..size).map(|b| ((b * 31 + i) % 251) as u8).collect();
+        std::fs::write(&path, &body)?;
+        small_bytes += size as u64;
+        let age = std::time::Duration::from_secs((i as u64).wrapping_mul(2_654_435_761) % decade);
+        let _ = crate::ops::set_mtime(&path, now - age);
+    }
+    // The large ones: a block that differs from file to file and from place to place within one,
+    // so that a transfer which repeats or drops a chunk does not hash the same.
+    std::fs::create_dir_all(dir.join("large"))?;
+    for (n, size) in big.iter().enumerate() {
+        let mut f = std::fs::File::create(dir.join("large").join(format!("large-{n}.bin")))?;
+        let mut block = vec![0u8; 1 << 20];
+        let mut written = 0u64;
+        let mut chunk = 0u64;
+        while written < *size {
+            for (i, b) in block.iter_mut().enumerate() {
+                *b = ((i as u64).wrapping_mul(2_654_435_761).wrapping_add(chunk * 40_503).wrapping_add(n as u64) >> 7) as u8;
+            }
+            let take = ((*size - written) as usize).min(block.len());
+            f.write_all(&block[..take])?;
+            written += take as u64;
+            chunk += 1;
+        }
+    }
+    // The awkward ones, together, so a flow can say what it expects of each.
+    let odd = dir.join("awkward");
+    std::fs::create_dir_all(odd.join("empty folder"))?;
+    std::fs::create_dir_all(odd.join("nested/empty/too"))?;
+    std::fs::write(odd.join("zero-bytes"), b"")?;
+    std::fs::write(odd.join("name with spaces and ünïcödé.txt"), b"unicode")?;
+    std::fs::write(odd.join("line\nbreak.txt"), b"a newline in the name")?;
+    std::fs::write(odd.join(std::ffi::OsStr::from_bytes(b"not-utf8-\xff\xfe.txt")), b"bytes that are not text")?;
+    std::fs::write(odd.join("read-only.txt"), b"can be read, cannot be written")?;
+    std::fs::set_permissions(odd.join("read-only.txt"), std::fs::Permissions::from_mode(0o444))?;
+    std::fs::write(odd.join("target.txt"), b"what the link points at")?;
+    let _ = std::fs::remove_file(odd.join("link-to-target"));
+    std::os::unix::fs::symlink("target.txt", odd.join("link-to-target"))?;
+    std::fs::write(
+        dir.join("MANIFEST.txt"),
+        format!("files {files}\nfolders {dirs}\nsmall_bytes {small_bytes}\nlarge {}\nlarge_bytes {}\nawkward 7\n", big.len(), big.iter().sum::<u64>()),
+    )
 }
 
 fn flat(dir: &Path, n: usize) -> std::io::Result<()> {
@@ -316,7 +399,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     if wrote {
         let cancel = AtomicBool::new(false);
         let mut bytes = 0u64;
-        let mut p = crate::ops::Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None };
+        let mut p = crate::ops::Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None, failed: None };
         let t = Instant::now();
         if crate::ops::copy_file(&src, &dst, &mut p).is_ok() {
             let el = t.elapsed();
@@ -503,5 +586,64 @@ mod tests {
         std::env::remove_var("KIKI_CACHE_DIR");
         std::env::remove_var("XDG_CACHE_HOME");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_transfer_fixture_has_every_awkward_case_and_is_the_same_every_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("kiki-bench-transfer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        transfer(&d.join("a"), 300, 40, &[3 << 20, 1 << 20]).unwrap();
+        transfer(&d.join("b"), 300, 40, &[3 << 20, 1 << 20]).unwrap();
+        let count = |root: &Path| {
+            let (mut files, mut dirs, mut depth) = (0, 0, 0);
+            let mut stack = vec![(root.to_path_buf(), 0usize)];
+            while let Some((p, at)) = stack.pop() {
+                for e in std::fs::read_dir(&p).unwrap().flatten() {
+                    let md = e.path().symlink_metadata().unwrap();
+                    if md.is_dir() {
+                        dirs += 1;
+                        depth = depth.max(at + 1);
+                        stack.push((e.path(), at + 1));
+                    } else {
+                        files += 1;
+                    }
+                }
+            }
+            (files, dirs, depth)
+        };
+        let (files, _, depth) = count(&d.join("a/tree"));
+        assert_eq!(files, 300);
+        assert!(depth >= 8, "folders nest at least eight deep: {depth}");
+        assert_eq!(std::fs::metadata(d.join("a/large/large-0.bin")).unwrap().len(), 3 << 20);
+        let odd = d.join("a/awkward");
+        assert!(odd.join("link-to-target").symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_dir(odd.join("empty folder")).unwrap().count(), 0);
+        assert_eq!(std::fs::metadata(odd.join("zero-bytes")).unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(odd.join("read-only.txt")).unwrap().permissions().mode() & 0o222, 0);
+        assert!(std::fs::read_dir(&odd).unwrap().flatten().any(|e| e.file_name().to_str().is_none()), "a name that is not UTF-8");
+        assert!(odd.join("line\nbreak.txt").exists());
+        // Deterministic, the large files included.
+        assert_eq!(std::fs::read(d.join("a/large/large-1.bin")).unwrap(), std::fs::read(d.join("b/large/large-1.bin")).unwrap());
+        assert_eq!(std::fs::read(d.join("a/tree/d0-00/f00000/file-000000.txt")).ok(), std::fs::read(d.join("b/tree/d0-00/f00000/file-000000.txt")).ok());
+        // …and not the same block over and over.
+        let big = std::fs::read(d.join("a/large/large-0.bin")).unwrap();
+        assert_ne!(big[..1 << 20], big[1 << 20..2 << 20]);
+        let mtimes: std::collections::HashSet<u64> = (0..300).filter_map(|i| std::fs::metadata(folder_of(&d.join("a"), i, 40).join(format!("file-{i:06}.{}", ["txt", "jpg", "rs", "md", "bin"][i % 5]))).ok()).filter_map(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / (365 * 24 * 3600)).collect();
+        assert!(mtimes.len() >= 5, "times spread over years: {mtimes:?}");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn folder_of(dir: &Path, i: usize, dirs: usize) -> std::path::PathBuf {
+        let i = i % dirs;
+        let depth = 1 + i % 8;
+        let mut p = dir.join("tree");
+        let mut n = i;
+        for level in 0..depth {
+            p.push(format!("d{level}-{:02}", n % 7));
+            n /= 7;
+        }
+        p.push(format!("f{i:05}"));
+        p
     }
 }

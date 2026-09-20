@@ -60,7 +60,12 @@ qs_conf="${KIKI_SHELL_DIR:-${qs_default:-$root/qml}}"
 export KIKI_SHELL_DIR="$qs_conf"
 export KIKI_E2E_OUT="$out"
 
+# Servers a flow started (tests/e2e/servers.py notes their pids here) and did not live to stop.
+export KIKI_E2E_PIDS="$work/server-pids"
 cleanup() {
+  if [ -f "$KIKI_E2E_PIDS" ]; then
+    while read -r pid; do kill "$pid" 2>/dev/null || true; done < "$KIKI_E2E_PIDS"
+  fi
   [ -n "${KIKI_E2E_KEEP:-}" ] && { echo "fixture kept at $work"; return; }
   rm -rf "$work"
 }

@@ -878,3 +878,38 @@ fn wrong_password_is_an_auth_error_and_validate_checks_fields() {
     // Nothing touched a data connection, so only the "no PASV" half of the passive check applies.
     assert!(m.counters.violations.lock().unwrap().is_empty());
 }
+
+/// FTP is a text protocol and a command is a line: a name with a line break in it is two commands.
+/// Found by a fixture file called "line\nbreak.txt" — which also threw every reply after it out of
+/// step, failing fifteen files that had nothing wrong with them.
+#[test]
+fn a_line_break_in_a_name_never_reaches_the_wire() {
+    let (m, mut p) = connected(false);
+    assert!(p.write("/victim.txt", b"keep me", 0).get("ok").is_some());
+
+    // The write that would have been `STOR /a` and then `DELE /victim.txt`.
+    let r = p.write("/a\r\nDELE /victim.txt", b"x", 0);
+    let e = err_of(&r);
+    assert_eq!(e.str_field("code"), Some("Invalid"), "{}", json::to_string(&r));
+    assert!(m.fs.lock().unwrap().get("/victim.txt").is_some(), "nothing was deleted");
+    assert!(m.fs.lock().unwrap().get("/a").is_none(), "and nothing was stored");
+
+    // Every way in that takes a name, a bare LF and a NUL included.
+    for (ty, field, value) in [("Mkdir", "path", "/d\nRMD /x"), ("Delete", "path", "/victim.txt\r\nNOOP"), ("Stat", "path", "/s\n"), ("Scan", "path", "/l\r\n")] {
+        let (_, r) = p.req(Value::obj().s("type", ty).s("location", "lab").s(field, value).done());
+        assert_eq!(err_of(&r).str_field("code"), Some("Invalid"), "{ty}: {}", json::to_string(&r));
+    }
+    for (from, to) in [("/victim.txt\r\nDELE /victim.txt", "/b"), ("/victim.txt", "/b\r\nDELE /victim.txt")] {
+        let (_, r) = p.req(Value::obj().s("type", "Rename").s("location", "lab").s("from", from).s("to", to).done());
+        assert_eq!(err_of(&r).str_field("code"), Some("Invalid"));
+    }
+    // A read ends its (empty) stream before it answers, so it is asked the way reads are.
+    let (bytes, r) = p.read_raw("/r\0", 0);
+    assert!(bytes.is_empty());
+    assert_eq!(err_of(&r).str_field("code"), Some("Invalid"));
+    assert!(m.fs.lock().unwrap().get("/victim.txt").is_some());
+
+    // And the conversation is still in step: what comes next is answered for what it is.
+    assert_eq!(p.read("/victim.txt", 0), b"keep me");
+    assert!(p.write("/after.txt", b"fine", 0).get("ok").is_some());
+}

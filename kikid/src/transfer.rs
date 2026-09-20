@@ -164,12 +164,17 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     // 2. One at a time, asking when the name is taken.
     let mut there = names(&to, cancel)?;
     let mut created: Vec<Uri> = Vec::new();
+    // Files that could not be copied (name, why), and originals a move could not remove.
+    let mut lost: Vec<(String, String)> = Vec::new();
+    let mut kept: Vec<String> = Vec::new();
     let on_bytes = |n: u64| job.progress(0, n);
     let ctx = ExecCtx { cancel, workers: 1, on_change: &|_| {}, on_bytes: &on_bytes };
     for it in &plan {
         if cancel.load(Ordering::Relaxed) {
             return Err(VfsError::Io("cancelled".into()));
         }
+        // Did every part of this item arrive? Decides whether a move may take the original away.
+        let mut whole = true;
         let mut target = it.name.clone();
         if let Some((_, existing)) = there.get(&target) {
             match job.ask_collision_meta(&dest.join(&target), existing, &it.meta).as_str() {
@@ -192,12 +197,28 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
                 if cancel.load(Ordering::Relaxed) {
                     return Err(VfsError::Io("cancelled".into()));
                 }
-                if *is_dir {
-                    mkdir(&dst_root, rel)?;
+                let shown = format!("{}/{rel}", it.name);
+                // A file inside a folder that failed is not attempted: there is nowhere for it.
+                if lost.iter().any(|(gone, _)| shown.starts_with(&format!("{gone}/"))) {
+                    continue;
+                }
+                let done = if *is_dir {
+                    mkdir(&dst_root, rel)
                 } else {
-                    job.file_started(&format!("{}/{rel}", it.name), *size);
-                    copy_file(&src_root, rel, &dst_root, rel, *size, *mtime, &ctx).map_err(|e| naming(e, &format!("{}/{rel}", it.name)))?;
-                    job.progress(1, 0);
+                    job.file_started(&shown, *size);
+                    copy_file(&src_root, rel, &dst_root, rel, *size, *mtime, &ctx).and_then(|_| if moving { arrived_whole(&dst_root, rel, *size) } else { Ok(()) })
+                };
+                match done {
+                    Ok(()) if !*is_dir => job.progress(1, 0),
+                    Ok(()) => {}
+                    Err(e) if is_cancel(&e) => return Err(e),
+                    // One bad file does not stop the other four hundred: it is noted, the rest
+                    // goes on, and the job fails at the end saying which (as a mirror skips).
+                    Err(e) => {
+                        crate::joblog::say(job.id, "error", format!("{shown}: {}", e.message()));
+                        lost.push((shown.clone(), why_lost(&shown, &e)));
+                        whole = false;
+                    }
                 }
             }
             if it.tree.iter().all(|t| t.1) {
@@ -205,12 +226,29 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
             }
         } else {
             job.file_started(&it.name, it.meta.size);
-            copy_file(&it.from, &it.name, &to, &target, it.meta.size, it.meta.mtime_ms, &ctx).map_err(|e| naming(e, &it.name))?;
-            job.progress(1, 0);
+            match copy_file(&it.from, &it.name, &to, &target, it.meta.size, it.meta.mtime_ms, &ctx).and_then(|_| if moving { arrived_whole(&to, &target, it.meta.size) } else { Ok(()) }) {
+                Ok(()) => job.progress(1, 0),
+                Err(e) if is_cancel(&e) => return Err(e),
+                Err(e) => {
+                    crate::joblog::say(job.id, "error", format!("{}: {}", it.name, e.message()));
+                    lost.push((it.name.clone(), why_lost(&it.name, &e)));
+                    whole = false;
+                }
+            }
         }
-        // The original goes only once everything of it has arrived.
-        if moving && !same_place(&it.from, &to) {
-            delete(&it.from, &it.name, it.is_dir, cancel)?;
+        // The original goes only once ALL of it has arrived and been seen to: a move between
+        // machines is a copy and then a delete, and it loses nothing only in that order. An item
+        // with anything missing keeps its original, whole.
+        if moving && !same_place(&it.from, &to) && whole {
+            crate::joblog::say(job.id, "debug", format!("{}: arrived and checked, removing the original", it.name));
+            if let Err(e) = delete(&it.from, &it.name, it.is_dir, cancel) {
+                if is_cancel(&e) {
+                    return Err(e);
+                }
+                // Not "the move failed": everything is where it was sent. Say what is true.
+                crate::joblog::say(job.id, "warn", format!("{}: copied, but the original could not be removed: {}", it.name, e.message()));
+                kept.push(format!("{} ({})", it.name, e.message()));
+            }
         }
         there.insert(target.clone(), (it.is_dir, it.meta.clone()));
         created.push(dest.join(&target));
@@ -226,21 +264,55 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     for u in items.iter().filter_map(|u| u.parent()).chain(std::iter::once(dest.clone())) {
         invalidate(&u);
     }
+    if !lost.is_empty() {
+        let first: Vec<String> = lost.iter().take(3).map(|(n, why)| format!("{n} ({why})")).collect();
+        let more = if lost.len() > 3 { format!(", and {} more — see the log", lost.len() - 3) } else { String::new() };
+        return Err(VfsError::Io(format!("{} of {} could not be {}: {}{more}", lost.len(), files.max(plan.len() as u64), if moving { "moved; their originals are untouched" } else { "copied" }, first.join(", "))));
+    }
+    if !kept.is_empty() {
+        return Err(VfsError::Io(format!("copied, but the original could not be removed: {}", kept.join(", "))));
+    }
     Ok((!moving && dest.is_local()).then(|| arrived(&created)))
+}
+
+/// Why a file did not make it, for the person reading. One case gets words of its own: a name
+/// that is not valid UTF-8. A transfer knows its files by text paths, so such a name has already
+/// lost its odd bytes by the time it is opened, and "NotFound" for a file that is plainly there
+/// explains nothing. (A limit of 0.1.0, recorded in plan 31; the listing itself shows such files.)
+fn why_lost(name: &str, e: &VfsError) -> String {
+    if name.contains('\u{FFFD}') && matches!(e, VfsError::NotFound) {
+        "its name is not valid UTF-8, which kiki cannot transfer yet".to_string()
+    } else {
+        e.message()
+    }
+}
+
+fn is_cancel(e: &VfsError) -> bool {
+    matches!(e, VfsError::Io(m) if m == "cancelled")
+}
+
+/// Before a move deletes the original: is what arrived as long as what was sent? Asked of the
+/// destination itself — the local file's length, or a `Stat` of the server's — and not taken
+/// from the copy's own count of what it wrote. (Size only: FTP cannot set a file's time, so a
+/// time that differs proves nothing there.)
+fn arrived_whole(to: &Side, rel: &str, size: u64) -> Result<(), VfsError> {
+    let got = match to {
+        Side::Local(root) => std::fs::metadata(root.join(rel))?.len(),
+        Side::Remote(sess, root) => {
+            let path = format!("{}/{}", root.trim_end_matches('/'), rel);
+            sess.plugin.request(sess.req("Stat").s("path", path).done())?.u64_field("size").unwrap_or(u64::MAX)
+        }
+    };
+    if got == size {
+        Ok(())
+    } else {
+        Err(VfsError::Io(format!("arrived as {got} bytes of {size}; the original is kept")))
+    }
 }
 
 /// The inverse of a download: delete what arrived.
 fn arrived(created: &[Uri]) -> Value {
     Value::obj().s("op", "delete").v("items", Value::Arr(created.iter().map(|u| Value::Str(u.to_string())).collect())).b("_silent", true).done()
-}
-
-/// An error that says which file it was about. A plugin's "Denied" or "NotFound" is a bare code;
-/// in a transfer of four hundred files that is no help at all.
-fn naming(e: VfsError, file: &str) -> VfsError {
-    match e {
-        VfsError::Io(m) if m == "cancelled" => VfsError::Io(m),
-        other => VfsError::Io(format!("{file}: {}", other.message())),
-    }
 }
 
 fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsError> {

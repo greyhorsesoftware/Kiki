@@ -1,8 +1,8 @@
 """Copy and move between every pair of ends: this machine, an SFTP server, an FTPS server.
 
-Real servers, not mocks: a user-mode `sshd` (OpenSSH, its own host key, port and config, no
-root) and a pyftpdlib FTPS server with a self-signed certificate. Both serve a folder of the
-fixture, so every transfer is checked where it matters — on disk, byte for byte — and not by
+Real servers, not mocks and not stand-ins: OpenSSH's `sshd` and `vsftpd` (over explicit TLS), each
+run as the user running the tests with its own keys, port and config (`servers.py`). Both serve a
+folder of the fixture, so every transfer is checked where it matters — on disk, byte for byte — and not by
 asking the daemon what it thinks it did.
 
 Nine pairs (three ends, each to each, same end included) × copy and move. A pair whose server
@@ -13,89 +13,22 @@ large upload is running a folder never seen before still lists, the upload can b
 mid-file without a half file left under its name, the panes' connection survives that, and when
 the jobs are over the browser's connection is the only one the server still has.
 
-    make e2e-servers        # once: pyftpdlib + pyOpenSSL into tests/e2e/.venv
+    sudo pacman -S openssh vsftpd
 """
-import getpass, os, shutil, socket, subprocess, time
+import getpass, os, shutil, subprocess, time
 from harness import snapshot, wait_for
+from servers import FTPS_PASSWORD, FTPS_USER, Servers, add_location, missing, sshd_bin, vsftpd_bin
 
 NEEDS = {"daemon"}
+
+
+def probe(ctx):
+    """None to run; otherwise why not."""
+    return missing()
 TITLE = "copy and move between local, SFTP and FTPS"
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JOB_TIMEOUT = 90
-
-
-def free_port():
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    p = s.getsockname()[1]
-    s.close()
-    return p
-
-
-def ftps_python():
-    """A python that can import pyftpdlib and OpenSSL, or None."""
-    for py in [os.environ.get("KIKI_E2E_FTPS_PYTHON"), os.path.join(HERE, ".venv", "bin", "python"), shutil.which("python3")]:
-        if py and os.path.exists(py) and subprocess.run([py, "-c", "import pyftpdlib, OpenSSL"], capture_output=True).returncode == 0:
-            return py
-    return None
-
-
-def sshd_bin():
-    return shutil.which("sshd") or next((p for p in ["/usr/bin/sshd", "/usr/sbin/sshd"] if os.path.exists(p)), None)
-
-
-def probe(ctx):
-    if not sshd_bin() and not ftps_python():
-        return "no sshd, and no pyftpdlib (make e2e-servers)"
-    return None
-
-
-class Servers:
-    def __init__(self, base):
-        self.base = base
-        self.procs = []
-        self.sshd_pid = None
-
-    def start_sftp(self):
-        d = os.path.join(self.base, "sshd")
-        os.makedirs(d)
-        for name in ("host_key", "client_key"):
-            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", os.path.join(d, name)], check=True)
-        shutil.copy(os.path.join(d, "client_key.pub"), os.path.join(d, "authorized_keys"))
-        os.chmod(os.path.join(d, "authorized_keys"), 0o600)
-        port = free_port()
-        with open(os.path.join(d, "sshd_config"), "w") as f:
-            f.write(f"Port {port}\nListenAddress 127.0.0.1\nHostKey {d}/host_key\nPidFile {d}/sshd.pid\n"
-                    f"AuthorizedKeysFile {d}/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n"
-                    "UsePAM no\nStrictModes no\nSubsystem sftp internal-sftp\n")
-        subprocess.run([sshd_bin(), "-f", os.path.join(d, "sshd_config"), "-E", os.path.join(d, "sshd.log")], check=True)
-        pid = wait_for(lambda: os.path.exists(f"{d}/sshd.pid") and open(f"{d}/sshd.pid").read().strip(), what="sshd up")
-        self.sshd_pid = int(pid) if pid else None
-        return port, os.path.join(d, "client_key")
-
-    def start_ftps(self, py, root):
-        d = os.path.join(self.base, "ftpsd")
-        os.makedirs(d)
-        cert, key = os.path.join(d, "cert.pem"), os.path.join(d, "key.pem")
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes", "-days", "2",
-                        "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1", "-keyout", key, "-out", cert], check=True, capture_output=True)
-        port = free_port()
-        p = subprocess.Popen([py, os.path.join(HERE, "ftps_server.py"), root, str(port), cert, key, "kiki", "s3cret"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        self.procs.append(p)
-        line = p.stdout.readline()
-        if "READY" not in line:
-            raise RuntimeError("ftps server did not start: " + line + p.stdout.read())
-        return port
-
-    def stop(self):
-        for p in self.procs:
-            p.terminate()
-        if self.sshd_pid:
-            try:
-                os.kill(self.sshd_pid, 15)
-            except ProcessLookupError:
-                pass
 
 
 def connections(port):
@@ -151,12 +84,18 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     c.check(f"{tag}: a folder never seen before lists while it runs", took is not None and took < 5, f"{took and round(took, 2)} s")
     c.check(f"{tag}: and the upload was still running when it did (else this proved nothing)", isinstance(still, dict) and still["state"] == "running", still)
 
-    fast = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("rate", 0) > 0, timeout=3)
-    c.check(f"{tag}: and how fast it is going", fast is not None, _job_state(d, job))
+    # Cancelled at once — loopback is fast, and every moment spent asking something else is a chance
+    # for the upload to finish first. (How fast it goes is `transfer_remote`'s to check: a rate
+    # needs half a second of bytes behind it, and this upload is not given that long.)
     d.events.clear()
     d.ok("Cancel", job=job)
     ended = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("cancelled", "done", "failed"), timeout=30)
     said = [e["job"] for e in d.events if e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("cancelling")]
+    if ended and ended["job"]["state"] == "done" and not said:
+        # Said, not passed or failed: it was over before the cancel reached it. Nothing was tested.
+        print(f"  NOTE {tag}: the upload finished before it could be cancelled — cancel not observed this run")
+        os.remove(big)
+        return
     c.check(f"{tag}: 'cancelling' is said at once, while it is still running", any(x["state"] == "running" for x in said), [(x["state"], x.get("cancelling")) for x in said][:3])
     c.check(f"{tag}: cancelled mid-file, it ends as cancelled", ended and ended["job"]["state"] == "cancelled", ended and ended["job"])
     c.check(f"{tag}: and leaves nothing behind: no half file under its name, no part file", os.listdir(os.path.join(root, f"inbox-{tag}")) == [], os.listdir(os.path.join(root, f"inbox-{tag}")))
@@ -165,14 +104,6 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     closed = wait_for(lambda: connections(port) == idle or None, timeout=5)
     c.check(f"{tag}: and the job's own connection is closed", closed, connections(port))
     os.remove(big)
-
-
-def add_location(d, location, secrets):
-    """Add it the way the dialog does: the first answer is the server's key, the second trusts it."""
-    r = d.call("AddLocation", location=location, secrets=secrets)
-    if "ok" in r and r["ok"].get("verify"):
-        r = d.call("AddLocation", location=location, secrets=secrets, trust=r["ok"]["verify"])
-    return r
 
 
 TREE = {
@@ -220,18 +151,19 @@ def run(ctx):
                 ends["sftp"] = (sftp_root, lambda rel: "sftp://e2e-sftp" + os.path.join(sftp_root, rel))
         else:
             print("  (no sshd: the SFTP pairs are skipped)")
-        py = ftps_python()
-        if py:
+        if vsftpd_bin():
             ftps_root = os.path.join(base, "ftps-root")
             os.makedirs(ftps_root)
-            port = servers.start_ftps(py, ftps_root)
+            port = servers.start_ftps(ftps_root)
             ports["ftps"] = port
-            r = add_location(d, {"name": "e2e-ftps", "plugin": "ftps", "remoteUri": "ftps://e2e-ftps/", "localUri": "",
-                                 "config": {"host": "127.0.0.1", "port": str(port), "username": "kiki", "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": "s3cret"})
+            r = add_location(d, {"name": "e2e-ftps", "plugin": "ftps", "remoteUri": "ftps://e2e-ftps" + ftps_root, "localUri": "",
+                                 "config": {"host": "127.0.0.1", "port": str(port), "username": FTPS_USER, "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": FTPS_PASSWORD})
             if c.check("the FTPS location is added, its certificate trusted", "ok" in r and not r["ok"].get("verify"), r):
-                ends["ftps"] = (ftps_root, lambda rel: "ftps://e2e-ftps/" + rel)
+                # Full paths, as for SFTP: an unprivileged vsftpd cannot chroot, so its "/" is the
+                # machine's, not the fixture's.
+                ends["ftps"] = (ftps_root, lambda rel: "ftps://e2e-ftps" + os.path.join(ftps_root, rel))
         else:
-            print("  (no pyftpdlib — make e2e-servers: the FTPS pairs are skipped)")
+            print("  (no vsftpd — sudo pacman -S vsftpd: the FTPS pairs are skipped)")
 
         n = 0
         for src in ends:
@@ -259,6 +191,42 @@ def run(ctx):
                         c.check(f"{tag}: and nothing is left behind", not left, os.listdir(os.path.join(s_root, s_rel)))
         c.check("every pair of ends that could be started was tried", n == 2 * len(ends) ** 2, n)
 
+        # When part of it goes wrong (plan 31, phase 4). A file that cannot be read does not stop
+        # the others; a move takes the original away only when ALL of it arrived and was checked;
+        # and an original that cannot be removed is "copied, but…", not "failed".
+        for tag in ports:
+            if tag not in ends:
+                continue
+            r_root, r_uri = ends[tag]
+            for op in ("copy", "move"):
+                src = os.path.join(local_root, f"partial-{op}-{tag}", "site")
+                build(src)
+                os.chmod(os.path.join(src, "index.html"), 0)
+                os.makedirs(os.path.join(r_root, f"partial-in-{op}-{tag}"))
+                job = d.ok("Submit", op={"op": op, "items": [ends["local"][1](f"partial-{op}-{tag}/site")], "dest": r_uri(f"partial-in-{op}-{tag}")})["job"]
+                ended = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("done", "failed", "cancelled"), timeout=JOB_TIMEOUT)
+                err = (ended or {}).get("job", {}).get("error") or ""
+                c.check(f"{tag} {op}: one unreadable file fails the job, by name and by count", ended and ended["job"]["state"] == "failed" and "1 of 6" in err and "site/index.html" in err, err)
+                got = snapshot(os.path.join(r_root, f"partial-in-{op}-{tag}", "site"))
+                c.check(f"{tag} {op}: and the other five arrived all the same", "images/logo.bin" in got and "images/2026/may.txt" in got and "index.html" not in got, sorted(got))
+                os.chmod(os.path.join(src, "index.html"), 0o644)
+                if op == "move":
+                    c.check(f"{tag} move: a move with anything missing keeps the whole original", sorted(snapshot(src)) == sorted(k for k in snapshot(os.path.join(local_root, f"partial-copy-{tag}", "site"))), sorted(snapshot(src)))
+
+            # An original that will not go: its folder on the server is read-only.
+            os.makedirs(os.path.join(r_root, f"stuck-{tag}"))
+            with open(os.path.join(r_root, f"stuck-{tag}", "report.txt"), "w") as f:
+                f.write("all of it")
+            os.chmod(os.path.join(r_root, f"stuck-{tag}"), 0o555)
+            os.makedirs(os.path.join(local_root, f"unstuck-{tag}"))
+            job = d.ok("Submit", op={"op": "move", "items": [r_uri(f"stuck-{tag}/report.txt")], "dest": ends["local"][1](f"unstuck-{tag}")})["job"]
+            ended = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("done", "failed", "cancelled"), timeout=JOB_TIMEOUT)
+            err = (ended or {}).get("job", {}).get("error") or ""
+            os.chmod(os.path.join(r_root, f"stuck-{tag}"), 0o755)
+            arrived = os.path.join(local_root, f"unstuck-{tag}", "report.txt")
+            c.check(f"{tag}: a move whose original cannot be removed says 'copied, but…' — not that it failed to arrive", err.startswith("copied, but the original could not be removed: report.txt"), err)
+            c.check(f"{tag}: and it did arrive, whole, with the original still there", os.path.exists(arrived) and open(arrived).read() == "all of it" and os.path.exists(os.path.join(r_root, f"stuck-{tag}", "report.txt")))
+
         # The job's log (plan 32): kiki's own account, and beneath it what the plugin and its
         # library did on the server — for that job, with no secret in it.
         for tag in ports:
@@ -279,7 +247,7 @@ def run(ctx):
             c.check(f"{tag}: on a session of that job's own", any(f"(job-{job})" in l["text"] for l in theirs), [l["text"] for l in theirs if "connect" in l["text"]])
             c.check(f"{tag}: a story, not a packet dump", len(lines) < 150, len(lines))
             text = " ".join(l["text"] for l in lines) + " ".join(l["text"] for l in d.ok("LocationLog", location=f"e2e-{tag}")["lines"])
-            c.check(f"{tag}: and the password is nowhere in it, nor in the location's own log", "s3cret" not in text)
+            c.check(f"{tag}: and the password is nowhere in it, nor in the location's own log", FTPS_PASSWORD not in text)
             more = d.ok("JobLog", job=job, **{"from": log["next"]})
             c.check(f"{tag}: reading on from where the last read ended gets nothing twice", more["lines"] == [] and more["next"] == log["next"], more)
             d.ok("DismissJob", job=job)

@@ -18,6 +18,60 @@ struct Session {
     ftp: RustlsFtpStream,
     mlsd: bool,
     fingerprint: Option<String>,
+    /// Signed in the way a server that demands TLS session reuse needs (see `Held`).
+    reusing: bool,
+    /// What it takes to sign in again, that way, the first time such a server says so.
+    config: Value,
+    password: String,
+}
+
+/// **TLS session reuse.** vsftpd (by default), ProFTPD and FileZilla Server refuse a data
+/// connection whose TLS session is not the control connection's own — "522 SSL connection failed:
+/// session reuse required" — so that nobody can slip into a transfer they did not sign in for.
+/// Under TLS 1.3 that cannot be satisfied for long: a ticket is used once, the control connection
+/// is given two, and the third file fails (measured against vsftpd: two uploaded, then 522). A
+/// TLS 1.2 session can be offered again as often as wanted. So when a server says 522 the session
+/// is signed in again over TLS 1.2 with this store, which keeps the FIRST session it is given —
+/// the control connection's — and hands exactly that one to every data connection after it.
+#[derive(Debug, Default)]
+struct Held {
+    control: Mutex<Option<rustls::client::Tls12ClientSessionValue>>,
+    group: Mutex<Option<rustls::NamedGroup>>,
+}
+
+impl rustls::client::ClientSessionStore for Held {
+    fn set_kx_hint(&self, _: ServerName<'static>, group: rustls::NamedGroup) {
+        *self.group.lock().unwrap() = Some(group);
+    }
+    fn kx_hint(&self, _: &ServerName<'_>) -> Option<rustls::NamedGroup> {
+        *self.group.lock().unwrap()
+    }
+    fn set_tls12_session(&self, _: ServerName<'static>, value: rustls::client::Tls12ClientSessionValue) {
+        let mut held = self.control.lock().unwrap();
+        if held.is_none() {
+            *held = Some(value);
+        }
+    }
+    fn tls12_session(&self, _: &ServerName<'_>) -> Option<rustls::client::Tls12ClientSessionValue> {
+        self.control.lock().unwrap().clone()
+    }
+    // Never forgotten: it is the one thing every data connection has to present.
+    fn remove_tls12_session(&self, _: &ServerName<'static>) {}
+    fn insert_tls13_ticket(&self, _: ServerName<'static>, _: rustls::client::Tls13ClientSessionValue) {}
+    fn take_tls13_ticket(&self, _: &ServerName<'static>) -> Option<rustls::client::Tls13ClientSessionValue> {
+        None
+    }
+}
+
+/// Servers already found to demand reuse (`host:port`), so a later session — a job's own, say —
+/// signs in the right way at once instead of failing its first transfer to find out.
+fn demanding() -> &'static Mutex<std::collections::HashSet<String>> {
+    static D: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    D.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
+}
+
+fn wants_reuse(e: &FtpError) -> bool {
+    matches!(e, FtpError::UnexpectedResponse(r) if String::from_utf8_lossy(&r.body).to_ascii_lowercase().contains("session reuse"))
 }
 
 /// Requests run concurrently (SDK worker threads); an FTP session is one control connection with
@@ -28,6 +82,20 @@ struct Ftps {
 
 fn key(location: &str, role: &str) -> String {
     format!("{location}\u{0}{role}")
+}
+
+/// FTP is a text protocol: a command is a line, and whatever is put on the line is the command.
+/// A path, a user name or a password with a line break in it is therefore not one command but
+/// two — `STOR a\r\nDELE b` stores `a` and then deletes `b` — and, at best, leaves every reply
+/// after it answering the wrong question (seen: one file with a newline in its name failed
+/// fifteen innocent ones after it). Nothing with CR, LF or NUL in it goes on the wire. A file so
+/// named cannot be stored over FTP at all; that one fails, by name, and the rest go on.
+fn on_the_wire<'a>(what: &'static str, value: &'a str) -> Result<&'a str> {
+    if value.contains(['\r', '\n', '\0']) {
+        Err(PluginError::invalid(what, "FTP cannot carry a name with a line break in it"))
+    } else {
+        Ok(value)
+    }
 }
 
 fn cfg<'a>(config: &'a Value, k: &str) -> &'a str {
@@ -110,12 +178,24 @@ impl ServerCertVerifier for PinVerifier {
     }
 }
 
-fn tls_config(pinned: Option<String>, insecure: bool, seen: Arc<Mutex<Option<String>>>, rejected: Arc<AtomicBool>) -> Arc<ClientConfig> {
+fn tls_config(pinned: Option<String>, insecure: bool, seen: Arc<Mutex<Option<String>>>, rejected: Arc<AtomicBool>, reusing: bool) -> Arc<ClientConfig> {
     let mut roots = RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     let inner = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots)).build().expect("webpki verifier");
     let verifier = PinVerifier { pinned, insecure, seen, rejected, inner };
-    Arc::new(ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(verifier)).with_no_client_auth())
+    if !reusing {
+        // No resumption at all here, on purpose. With it, a server that demands reuse accepts the
+        // first data connection or two (the control connection's TLS 1.3 tickets) and refuses the
+        // third — by which time files are moving. Without it such a server refuses the FIRST,
+        // which is the question `open_ftp` asks before anything is transferred. A server that
+        // does not care loses nothing but a millisecond of handshake per file.
+        let mut c = ClientConfig::builder().dangerous().with_custom_certificate_verifier(Arc::new(verifier)).with_no_client_auth();
+        c.resumption = rustls::client::Resumption::disabled();
+        return Arc::new(c);
+    }
+    let mut c = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS12]).dangerous().with_custom_certificate_verifier(Arc::new(verifier)).with_no_client_auth();
+    c.resumption = rustls::client::Resumption::store(Arc::new(Held::default()));
+    Arc::new(c)
 }
 
 fn entry_from(f: &ListFile) -> Entry {
@@ -187,6 +267,66 @@ fn mlsx_time_ms(v: &str) -> u64 {
     secs.max(0) as u64 * 1000
 }
 
+fn server_of(config: &Value) -> String {
+    format!("{}:{}", cfg(config, "host"), cfg(config, "port"))
+}
+
+/// Connect, secure, sign in. `reusing`: over TLS 1.2 with the control session held for the data
+/// connections (see `Held`).
+fn open_ftp(config: &Value, password: &str, reusing: bool) -> Result<(RustlsFtpStream, bool, Option<String>)> {
+    for field in ["host", "username"] {
+        on_the_wire(field, cfg(config, field))?;
+    }
+    on_the_wire("password", password)?;
+    let host = cfg(config, "host").to_string();
+    let port: u16 = cfg(config, "port").parse().unwrap_or(21);
+    let implicit = cfg(config, "encryption").starts_with("Implicit");
+    let seen = Arc::new(Mutex::new(None));
+    let rejected = Arc::new(AtomicBool::new(false));
+    let tls = tls_config(config.str_field("trustedFingerprint").map(str::to_string), config.get("insecure").and_then(Value::as_bool).unwrap_or(false), Arc::clone(&seen), Arc::clone(&rejected), reusing);
+    let connector = RustlsConnector::from(tls);
+    let addr = format!("{host}:{port}");
+    // A handshake that failed because the verifier refused the certificate is reported as
+    // Invalid/fingerprint with the fingerprint in the message, so kiki can offer to pin it.
+    let cert_err = |e: FtpError| if rejected.load(Ordering::SeqCst) { PluginError::invalid("fingerprint", seen.lock().unwrap().clone().unwrap_or_default()) } else { ftp_err(e) };
+    let mut ftp = if implicit {
+        let mut ftp = RustlsFtpStream::connect_secure_implicit(&addr, connector, &host).map_err(&cert_err)?;
+        // The data channel starts out unprotected (RFC 4217); into_secure does this for explicit mode.
+        ftp.custom_command("PBSZ 0", &[Status::CommandOk]).map_err(ftp_err)?;
+        ftp.custom_command("PROT P", &[Status::CommandOk]).map_err(ftp_err)?;
+        ftp
+    } else {
+        let plain = RustlsFtpStream::connect(&addr).map_err(ftp_err)?;
+        plain.into_secure(connector, &host).map_err(&cert_err)?
+    };
+    ftp.login(cfg(config, "username"), password).map_err(ftp_err)?;
+    ftp.set_mode(Mode::Passive);
+    let _ = ftp.transfer_type(FileType::Binary);
+    let mlsd = ftp.feat().map(|f| f.iter().any(|(k, _)| k.eq_ignore_ascii_case("MLST"))).unwrap_or(false);
+    let fingerprint = seen.lock().unwrap().clone();
+    Ok((ftp, mlsd, fingerprint))
+}
+
+/// Open a data connection with `open`; and if the server answers that it demands TLS session
+/// reuse, sign in again the way it wants and open it once more. The refusal comes as the data
+/// connection is set up — before a byte of the file has moved in either direction — so trying
+/// again is safe for an upload too: nothing of it has been read yet.
+fn opening<T>(sess: &mut Session, mut open: impl FnMut(&mut RustlsFtpStream) -> std::result::Result<T, FtpError>) -> Result<T> {
+    match open(&mut sess.ftp) {
+        Err(e) if wants_reuse(&e) && !sess.reusing => {
+            sdk::log::info!(target: "kiki", "this server demands TLS session reuse: signing in again over TLS 1.2, holding the control session for the data connections");
+            demanding().lock().unwrap().insert(server_of(&sess.config));
+            let (ftp, mlsd, fingerprint) = open_ftp(&sess.config, &sess.password, true)?;
+            let _ = std::mem::replace(&mut sess.ftp, ftp).quit();
+            sess.mlsd = mlsd;
+            sess.fingerprint = fingerprint;
+            sess.reusing = true;
+            open(&mut sess.ftp).map_err(ftp_err)
+        }
+        r => r.map_err(ftp_err),
+    }
+}
+
 impl Ftps {
     fn session(&self, location: &str) -> Result<Arc<Mutex<Session>>> {
         self.sessions.lock().unwrap().get(&key(location, &sdk::current_role())).cloned().ok_or_else(|| PluginError::network("not connected"))
@@ -254,33 +394,27 @@ impl Handler for Ftps {
         if let Some(s) = self.sessions.lock().unwrap().get(&k) {
             return Ok(Value::obj().opt_s("fingerprint", s.lock().unwrap().fingerprint.as_deref()).v("banner", Value::Null).done());
         }
-        let host = cfg(config, "host").to_string();
-        let port: u16 = cfg(config, "port").parse().unwrap_or(21);
-        let implicit = cfg(config, "encryption").starts_with("Implicit");
-        let seen = Arc::new(Mutex::new(None));
-        let rejected = Arc::new(AtomicBool::new(false));
-        let tls = tls_config(config.str_field("trustedFingerprint").map(str::to_string), config.get("insecure").and_then(Value::as_bool).unwrap_or(false), Arc::clone(&seen), Arc::clone(&rejected));
-        let connector = RustlsConnector::from(tls);
-        let addr = format!("{host}:{port}");
-        // A handshake that failed because the verifier refused the certificate is reported as
-        // Invalid/fingerprint with the fingerprint in the message, so kiki can offer to pin it.
-        let cert_err = |e: FtpError| if rejected.load(Ordering::SeqCst) { PluginError::invalid("fingerprint", seen.lock().unwrap().clone().unwrap_or_default()) } else { ftp_err(e) };
-        let mut ftp = if implicit {
-            let mut ftp = RustlsFtpStream::connect_secure_implicit(&addr, connector, &host).map_err(&cert_err)?;
-            // The data channel starts out unprotected (RFC 4217); into_secure does this for explicit mode.
-            ftp.custom_command("PBSZ 0", &[Status::CommandOk]).map_err(ftp_err)?;
-            ftp.custom_command("PROT P", &[Status::CommandOk]).map_err(ftp_err)?;
-            ftp
-        } else {
-            let plain = RustlsFtpStream::connect(&addr).map_err(ftp_err)?;
-            plain.into_secure(connector, &host).map_err(&cert_err)?
-        };
-        ftp.login(cfg(config, "username"), secrets.str_field("password").unwrap_or("")).map_err(ftp_err)?;
-        ftp.set_mode(Mode::Passive);
-        let _ = ftp.transfer_type(FileType::Binary);
-        let mlsd = ftp.feat().map(|f| f.iter().any(|(k, _)| k.eq_ignore_ascii_case("MLST"))).unwrap_or(false);
-        let fingerprint = seen.lock().unwrap().clone();
-        self.sessions.lock().unwrap().insert(k, Arc::new(Mutex::new(Session { ftp, mlsd, fingerprint: fingerprint.clone() })));
+        let password = secrets.str_field("password").unwrap_or("").to_string();
+        let mut reusing = demanding().lock().unwrap().contains(&server_of(config));
+        let (mut ftp, mut mlsd, mut fingerprint) = open_ftp(config, &password, reusing)?;
+        // Asked once per server, before any file moves: does it demand TLS session reuse? A
+        // listing of a name that is not there costs one data connection and transfers nothing.
+        // (An upload cannot find this out safely: vsftpd says "150, go ahead", takes the bytes,
+        // and only then answers 522 — and the bytes are gone.)
+        if !reusing {
+            // LIST, not NLST: every server has it (a mock that did not know NLST left the client
+            // waiting on a data connection that was never going to be answered).
+            if let Err(e) = ftp.list(Some(".kiki-does-not-exist")) {
+                if wants_reuse(&e) {
+                    sdk::log::info!(target: "kiki", "this server demands TLS session reuse: signing in over TLS 1.2, holding the control session for the data connections");
+                    demanding().lock().unwrap().insert(server_of(config));
+                    let _ = ftp.quit();
+                    (ftp, mlsd, fingerprint) = open_ftp(config, &password, true)?;
+                    reusing = true;
+                }
+            }
+        }
+        self.sessions.lock().unwrap().insert(k, Arc::new(Mutex::new(Session { ftp, mlsd, fingerprint: fingerprint.clone(), reusing, config: config.clone(), password })));
         Ok(Value::obj().opt_s("fingerprint", fingerprint.as_deref()).v("banner", Value::Null).done())
     }
 
@@ -296,12 +430,14 @@ impl Handler for Ftps {
     }
 
     fn scan(&self, location: &str, path: &str, recursive: bool, sink: &mut dyn FnMut(Vec<Entry>)) -> Result<u64> {
+        on_the_wire("path", path)?;
         if recursive {
             return Err(PluginError::unsupported());
         }
         let s = self.session(location)?;
         let mut sess = s.lock().unwrap();
-        let lines = if sess.mlsd { sess.ftp.mlsd(Some(path)).map_err(ftp_err)? } else { sess.ftp.list(Some(path)).map_err(ftp_err)? };
+        let mlsd = sess.mlsd;
+        let lines = opening(&mut sess, |ftp| if mlsd { ftp.mlsd(Some(path)) } else { ftp.list(Some(path)) })?;
         let mut batch = Vec::with_capacity(256);
         let mut n = 0u64;
         for line in &lines {
@@ -324,6 +460,7 @@ impl Handler for Ftps {
     }
 
     fn stat(&self, location: &str, path: &str) -> Result<Meta> {
+        on_the_wire("path", path)?;
         let s = self.session(location)?;
         let mut sess = s.lock().unwrap();
         let size = sess.ftp.size(path).map_err(ftp_err)? as u64;
@@ -332,12 +469,16 @@ impl Handler for Ftps {
     }
 
     fn read(&self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
+        on_the_wire("path", path)?;
         let s = self.session(location)?;
         let mut sess = s.lock().unwrap();
-        if offset > 0 {
-            sess.ftp.resume_transfer(offset as usize).map_err(ftp_err)?;
-        }
-        let mut stream = sess.ftp.retr_as_stream(path).map_err(ftp_err)?;
+        // The restart point is the connection's, so it is set again if the connection is.
+        let mut stream = opening(&mut sess, |ftp| {
+            if offset > 0 {
+                ftp.resume_transfer(offset as usize)?;
+            }
+            ftp.retr_as_stream(path)
+        })?;
         let mut buf = vec![0u8; 256 * 1024];
         loop {
             if sdk::cancelled() {
@@ -354,9 +495,10 @@ impl Handler for Ftps {
     }
 
     fn write(&self, location: &str, path: &str, mut args: WriteArgs) -> Result<u64> {
+        on_the_wire("path", path)?;
         let s = self.session(location)?;
         let mut sess = s.lock().unwrap();
-        let mut data = sess.ftp.put_with_stream(path).map_err(ftp_err)?;
+        let mut data = opening(&mut sess, |ftp| ftp.put_with_stream(path))?;
         let n = std::io::copy(&mut args.data, &mut data).map_err(PluginError::io)?;
         // A second handle on the socket keeps it open while the library's stream is dropped —
         // which is where it flushes and sends TLS's close_notify — so that the close itself can
@@ -369,14 +511,18 @@ impl Handler for Ftps {
     }
 
     fn mkdir(&self, location: &str, path: &str) -> Result<()> {
+        on_the_wire("path", path)?;
         self.session(location)?.lock().unwrap().ftp.mkdir(path).map_err(ftp_err)
     }
 
     fn rename(&self, location: &str, from: &str, to: &str) -> Result<()> {
+        on_the_wire("from", from)?;
+        on_the_wire("to", to)?;
         self.session(location)?.lock().unwrap().ftp.rename(from, to).map_err(ftp_err)
     }
 
     fn delete(&self, location: &str, path: &str) -> Result<()> {
+        on_the_wire("path", path)?;
         let s = self.session(location)?;
         let mut sess = s.lock().unwrap();
         match sess.ftp.rm(path) {

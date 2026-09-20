@@ -5,4 +5,3 @@ target/
 docs/design/kiki-file-manager.html
 tests/e2e/out/
 __pycache__/
-tests/e2e/.venv/

@@ -734,6 +734,8 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             job.set_totals(files.max(items.len() as u64), bytes);
             let mut created: Vec<PathBuf> = Vec::new();
             let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+            // What could not be copied, noted so that the rest goes on (see `ops::Progress`).
+            let mut failed: Vec<(PathBuf, String)> = Vec::new();
             for src in &items {
                 if cancel.load(Ordering::Relaxed) {
                     return Err(VfsError::Io("cancelled".into()));
@@ -758,7 +760,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     ops::FileEvent::Start(path, size) => job.file_started(&path.strip_prefix(&root).unwrap_or(path).to_string_lossy(), size),
                     ops::FileEvent::Done => job.progress(1, 0),
                 };
-                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: Some(&mut on_file) };
+                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: Some(&mut on_file), failed: Some(&mut failed) };
                 if job.kind == "copy" {
                     // Recorded before it is whole: a folder cancelled half way is half a folder
                     // at the destination, and undo has to be able to take that away too.
@@ -767,10 +769,25 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     ops::copy_tree(src, &target, &mut p).map_err(|e| about_file(e, &name))?;
                 } else {
                     ops::move_path(src, &target, &mut p).map_err(|e| about_file(e, &name))?;
-                    moved.push((src.clone(), target.clone()));
-                    job.undo_so_far(move_inverse(&moved));
+                    // Still there means part of it could not be copied and the original was
+                    // kept: that is not a move to be undone by moving it back on top of itself.
+                    if src.symlink_metadata().is_err() {
+                        moved.push((src.clone(), target.clone()));
+                        job.undo_so_far(move_inverse(&moved));
+                    }
                 }
                 job.set_reveal(&Uri::from_path(&target).to_string());
+            }
+            if !failed.is_empty() {
+                // Fail at the end, saying which; the partial inverse (`undo_so_far`) is what the
+                // journal gets, so what did arrive can still be taken back.
+                for (path, why) in &failed {
+                    crate::joblog::say(job.id, "error", format!("{}: {why}", path.display()));
+                }
+                let first: Vec<String> = failed.iter().take(3).map(|(p, why)| format!("{} ({why})", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).collect();
+                let more = if failed.len() > 3 { format!(", and {} more — see the log", failed.len() - 3) } else { String::new() };
+                let what = if job.kind == "move" { "moved; their originals are untouched" } else { "copied" };
+                return Err(VfsError::Io(format!("{} of {} could not be {what}: {}{more}", failed.len(), files.max(items.len() as u64), first.join(", "))));
             }
             if job.kind == "copy" {
                 Some(copy_inverse(&created))
@@ -786,7 +803,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 let a = pair.as_arr().ok_or(VfsError::Io("bad pair".into()))?;
                 let from = ops::local_path(&Uri::parse(a[0].as_str().unwrap_or("")).map_err(|e| VfsError::Io(e.0.into()))?)?;
                 let to = ops::local_path(&Uri::parse(a[1].as_str().unwrap_or("")).map_err(|e| VfsError::Io(e.0.into()))?)?;
-                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: None };
+                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: None, failed: None };
                 ops::move_path(&from, &to, &mut p)?;
                 back.push(Value::Arr(vec![Value::Str(Uri::from_path(&to).to_string()), Value::Str(Uri::from_path(&from).to_string())]));
                 job.progress(1, 0);
@@ -1224,6 +1241,38 @@ mod tests {
         let cleared = rx2.try_iter().find(|e| e.str_field("event") == Some("JobsCleared")).expect("JobsCleared");
         assert_eq!(cleared.get("jobs").and_then(Value::as_arr).map(|a| a.len()), Some(1));
         assert_eq!(dismiss(Some(id)), 0, "and only once");
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// One file that cannot be read does not stop the rest: they arrive, the job fails at the end
+    /// naming the one that did not, and what arrived can still be taken back.
+    #[test]
+    fn a_copy_carries_on_past_a_file_it_cannot_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-carry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("site/img")).unwrap();
+        std::fs::create_dir_all(d.join("dst")).unwrap();
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        for name in ["site/a.txt", "site/locked.txt", "site/img/z.bin"] {
+            std::fs::write(d.join(name), b"data").unwrap();
+        }
+        std::fs::set_permissions(d.join("site/locked.txt"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(d.join("site/locked.txt")).is_ok() {
+            return; // running as root: nothing is unreadable
+        }
+        let (tx, _rx) = mpsc::channel();
+        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone())).unwrap();
+        let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
+        assert!(why.starts_with("1 of 3 could not be copied: locked.txt"), "{why}");
+        assert!(d.join("dst/site/a.txt").exists() && d.join("dst/site/img/z.bin").exists(), "the others arrived, the one after it included");
+        assert!(!d.join("dst/site/locked.txt").exists());
+        let uid = undo(Some(tx)).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert!(!d.join("dst/site").exists(), "and undo takes back what did arrive");
+        std::fs::set_permissions(d.join("site/locked.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
         std::env::remove_var("KIKI_STATE_DIR");
         std::fs::remove_dir_all(&d).unwrap();
     }

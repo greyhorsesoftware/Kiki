@@ -16,6 +16,10 @@ pub struct Progress<'a> {
     /// Told as each file of a tree is begun and finished: what the activity view names as the
     /// file being copied, and what lets a folder copy count files rather than end at "1 of 458".
     pub file: Option<&'a mut dyn FnMut(FileEvent)>,
+    /// With somewhere to note them, a file or folder that cannot be copied is noted and the rest
+    /// of the tree goes on — one unreadable file does not stop the other four hundred — and the
+    /// caller fails the job at the end, saying which. Without, the first error ends the copy.
+    pub failed: Option<&'a mut Vec<(PathBuf, String)>>,
 }
 
 pub enum FileEvent<'a> {
@@ -24,6 +28,24 @@ pub enum FileEvent<'a> {
 }
 
 impl Progress<'_> {
+    /// Note a failure and carry on, or hand it back to end the copy. A cancel always ends it.
+    fn excuse(&mut self, at: &Path, e: VfsError) -> Result<()> {
+        if matches!(&e, VfsError::Io(m) if m == "cancelled") {
+            return Err(e);
+        }
+        match self.failed.as_mut() {
+            Some(list) => {
+                list.push((at.to_path_buf(), e.message()));
+                Ok(())
+            }
+            None => Err(e),
+        }
+    }
+
+    fn failures(&self) -> usize {
+        self.failed.as_ref().map(|f| f.len()).unwrap_or(0)
+    }
+
     fn tell(&mut self, e: FileEvent) {
         if let Some(f) = self.file.as_mut() {
             f(e);
@@ -137,7 +159,12 @@ pub fn copy_tree(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
     }
     if md.is_dir() {
         fs::create_dir(dst)?;
-        for e in fs::read_dir(src)? {
+        let entries = match fs::read_dir(src) {
+            Ok(rd) => rd,
+            // A folder that cannot be opened is one thing that did not copy, not the end of it.
+            Err(e) => return p.excuse(src, e.into()),
+        };
+        for e in entries {
             let e = e?;
             copy_tree(&e.path(), &dst.join(e.file_name()), p)?;
         }
@@ -145,8 +172,10 @@ pub fn copy_tree(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
         return Ok(());
     }
     p.tell(FileEvent::Start(src, md.len()));
-    copy_file(src, dst, p)?;
-    p.tell(FileEvent::Done);
+    match copy_file(src, dst, p) {
+        Ok(_) => p.tell(FileEvent::Done),
+        Err(e) => p.excuse(src, e)?,
+    }
     Ok(())
 }
 
@@ -187,8 +216,15 @@ pub fn move_path(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
     match fs::rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {
+            // Copy, then delete — and the delete only if ALL of it copied: with anything missing
+            // the original stays whole, and the caller reports what did not make it.
+            let before = p.failures();
             copy_tree(src, dst, p)?;
-            remove_tree(src)
+            if p.failures() == before {
+                remove_tree(src)
+            } else {
+                Ok(())
+            }
         }
         Err(e) => Err(e.into()),
     }
@@ -235,7 +271,7 @@ pub fn trash(path: &Path) -> Result<String> {
     let info = format!("[Trash Info]\nPath={}\nDeletionDate={}\n", percent_path(path), iso_local(now));
     fs::write(td.join("info").join(format!("{name}.trashinfo")), info)?;
     let mut dummy = AtomicBool::new(false);
-    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None };
+    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None, failed: None };
     if let Err(e) = move_path(path, &td.join("files").join(&name), &mut p) {
         let _ = fs::remove_file(td.join("info").join(format!("{name}.trashinfo")));
         return Err(e);
@@ -253,7 +289,7 @@ pub fn restore(name: &str) -> Result<PathBuf> {
         return Err(VfsError::Exists);
     }
     let mut dummy = AtomicBool::new(false);
-    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None };
+    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None, failed: None };
     move_path(&td.join("files").join(name), &orig, &mut p)?;
     let _ = fs::remove_file(td.join("info").join(format!("{name}.trashinfo")));
     Ok(orig)
@@ -399,13 +435,13 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut bytes = 0u64;
         {
-            let mut p = Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None };
+            let mut p = Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None, failed: None };
             copy_tree(&d.join("src"), &d.join("copy"), &mut p).unwrap();
         }
         assert_eq!(bytes, 3 * 1024 * 1024 + 2);
         assert_eq!(fs::read(d.join("copy/sub/b.txt")).unwrap(), b"bb");
         assert_eq!(tree_size(&d.join("copy")), (2, 3 * 1024 * 1024 + 2));
-        let mut p = Progress { cancel: &cancel, bytes: &mut |_| {}, file: None };
+        let mut p = Progress { cancel: &cancel, bytes: &mut |_| {}, file: None, failed: None };
         move_path(&d.join("copy"), &d.join("moved"), &mut p).unwrap();
         assert!(!d.join("copy").exists() && d.join("moved/a.txt").exists());
         let name = trash(&d.join("moved")).unwrap();
@@ -438,6 +474,7 @@ mod tests {
                     }
                 },
                 file: None,
+                failed: None,
             };
             copy_file(&d.join("big"), &d.join("out"), &mut p)
         };

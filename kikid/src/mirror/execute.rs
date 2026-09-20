@@ -218,8 +218,12 @@ fn put(s: &Arc<locations::Session>, path: &str, bytes: u64, mtime: u64, ctx: &Ex
             return Err(e);
         }
     }
-    // Best-effort mtime so size+mtime stays idempotent on the next run.
-    let _ = s.plugin.request(s.req("SetMtime").s("path", path).u("mtime", mtime).done());
+    // Best-effort mtime so size+mtime stays idempotent on the next run — asked only of a plugin
+    // that can do it. FTP cannot, and asking anyway was a wasted round trip on every file.
+    let can = s.plugin.describe().get("features").and_then(|f| f.get("setMtime")).and_then(Value::as_bool).unwrap_or(true);
+    if can {
+        let _ = s.plugin.request(s.req("SetMtime").s("path", path).u("mtime", mtime).done());
+    }
     Ok(())
 }
 
@@ -237,7 +241,7 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
         (Side::Local(mroot), Side::Local(rroot)) => {
             let dst = rroot.join(a.to);
             let _ = std::fs::remove_file(&dst);
-            let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n), file: None };
+            let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n), file: None, failed: None };
             crate::ops::copy_file(&mroot.join(a.rel), &dst, &mut p)?;
             Ok(())
         }
