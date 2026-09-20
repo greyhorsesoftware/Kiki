@@ -264,6 +264,24 @@ pub struct WriteArgs {
 
 thread_local! {
     static CANCEL: std::cell::RefCell<Option<Arc<AtomicBool>>> = const { std::cell::RefCell::new(None) };
+    static ROLE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The role of the session the request this thread is serving was made on: `browse`, or a job's
+/// own (`job-<id>`). A location can have several sessions open at once — the one the user is
+/// browsing with, and one per transfer or mirror run — and every request names the one it means,
+/// so a long upload neither queues behind a listing nor takes the browser's connection down with
+/// it when it is cancelled. A plugin with one connection per location can ignore it.
+pub fn current_role() -> String {
+    ROLE.with(|r| {
+        let r = r.borrow();
+        if r.is_empty() { "browse".to_string() } else { r.clone() }
+    })
+}
+
+/// For a plugin's own tests, which call its handler without going through `serve`.
+pub fn set_current_role(role: &str) {
+    ROLE.with(|r| *r.borrow_mut() = role.to_string());
 }
 
 /// True once the daemon has sent `Cancel` for the request this thread is serving. Long loops
@@ -457,6 +475,7 @@ pub fn run_on(handler: &dyn Handler, mut input: Box<dyn Read + Send>, out: &Arc<
                     let (out, inflight, stream_lock, slots) = (Arc::clone(out), &inflight, &stream_lock, &slots);
                     scope.spawn(move || {
                         CANCEL.with(|c| *c.borrow_mut() = Some(Arc::clone(&cancel)));
+                        set_current_role(v.str_field("role").unwrap_or("browse"));
                         let reply = dispatch(handler, &v, id, &t, write_rx, &out, stream_lock, &cancel);
                         let _ = emit(&out, &reply);
                         inflight.lock().unwrap().remove(&id);

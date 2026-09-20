@@ -10,7 +10,7 @@ pub fn scan_side(side: &Side, rules: &[Rule], filtered_count: &mut usize, cancel
         Side::Local(root) => scan_local(root, "", rules, filtered_count, &mut out, cancel)?,
         Side::Remote(session, root) => {
             // Try one recursive Scan; fall back to per-directory.
-            let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", root.clone()).b("recursive", true).done();
+            let req = session.req("Scan").s("path", root.clone()).b("recursive", true).done();
             let mut got_recursive = true;
             let r = session.plugin.request_stream_with(req, Some(cancel), |m| {
                 if let Msg::Json(v) = m {
@@ -78,7 +78,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
         return Err(VfsError::Io("cancelled".into()));
     }
     let path = join_rel(root, prefix);
-    let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", path).done();
+    let req = session.req("Scan").s("path", path).done();
     let mut dirs = Vec::new();
     let mut missing_meta = Vec::new();
     session.plugin.request_stream_with(req, Some(cancel), |m| {
@@ -109,7 +109,7 @@ fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, rules: &[Rule],
         }
     })?;
     for rel in missing_meta {
-        let v = session.plugin.request(Value::obj().s("type", "Stat").s("location", session.location.clone()).s("path", join_rel(root, &rel)).done())?;
+        let v = session.plugin.request(session.req("Stat").s("path", join_rel(root, &rel)).done())?;
         let m = crate::vfs::remote::meta_from(&v);
         if let Some(e) = out.get_mut(rel.as_str()) {
             e.size = m.size;

@@ -8,6 +8,11 @@ asking the daemon what it thinks it did.
 Nine pairs (three ends, each to each, same end included) × copy and move. A pair whose server
 cannot be started here is skipped by name; with neither, the flow is.
 
+Then, for each server: a transfer runs on a connection of its own (plan 31, phase 2). While a
+large upload is running a folder never seen before still lists, the upload can be cancelled
+mid-file without a half file left under its name, the panes' connection survives that, and when
+the jobs are over the browser's connection is the only one the server still has.
+
     make e2e-servers        # once: pyftpdlib + pyOpenSSL into tests/e2e/.venv
 """
 import getpass, os, shutil, socket, subprocess, time
@@ -93,6 +98,62 @@ class Servers:
                 pass
 
 
+def connections(port):
+    """Established TCP connections to a server's (control) port, counted from the server's side."""
+    out = subprocess.run(["ss", "-Htn", "state", "established", f"( sport = :{port} )"], capture_output=True, text=True).stdout
+    return len([l for l in out.splitlines() if l.strip()])
+
+
+def lists(ctx, uri, name, timeout=8):
+    """How long a folder the daemon has never listed takes to show `name`, or None."""
+    d, lid, t0 = ctx.daemon, ctx.lid(), time.time()
+    if "ok" not in d.call("Open", lid=lid, uri=uri):
+        return None
+    got = wait_for(lambda: any(r["name"] == name for r in d.ok("Window", lid=lid, first=0, count=60)["rows"]) or None, timeout=timeout)
+    d.call("Close", lid=lid)
+    return (time.time() - t0) if got else None
+
+
+BIG_MB = 768
+
+
+def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
+    """A long upload beside the browser: see the module docstring."""
+    big = os.path.join(local_root, f"big-{tag}.bin")
+    block = os.urandom(4 * 1024 * 1024)
+    with open(big, "wb") as f:
+        for _ in range(BIG_MB // 4):
+            f.write(block)
+    for probe in ("before", "during", "after"):
+        os.makedirs(os.path.join(root, f"probe-{probe}-{tag}"))
+        open(os.path.join(root, f"probe-{probe}-{tag}", "here.txt"), "w").close()
+    os.makedirs(os.path.join(root, f"inbox-{tag}"))
+    c.check(f"{tag}: with every job over, none of their connections is left", connections(port) == 0, connections(port))
+    lists(ctx, uri(f"probe-before-{tag}"), "here.txt")
+    idle = connections(port)
+    c.check(f"{tag}: browsing opens the one connection the panes use", idle == 1, idle)
+
+    job = d.ok("Submit", op={"op": "copy", "items": [local_uri(f"big-{tag}.bin")], "dest": uri(f"inbox-{tag}")})["job"]
+    moving = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and (e["job"]["bytes"] > 0 or e["job"]["state"] in ("done", "failed", "cancelled")), timeout=30)
+    c.check(f"{tag}: the upload is under way", moving and moving["job"]["state"] == "running", moving and moving["job"])
+    busy = connections(port)
+    c.check(f"{tag}: on a connection of its own", busy == idle + 1, f"{idle} before, {busy} during")
+    took = lists(ctx, uri(f"probe-during-{tag}"), "here.txt")
+    still = _job_state(d, job)
+    c.check(f"{tag}: a folder never seen before lists while it runs", took is not None and took < 5, f"{took and round(took, 2)} s")
+    c.check(f"{tag}: and the upload was still running when it did (else this proved nothing)", isinstance(still, dict) and still["state"] == "running", still)
+
+    d.ok("Cancel", job=job)
+    ended = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("cancelled", "done", "failed"), timeout=30)
+    c.check(f"{tag}: cancelled mid-file, it ends as cancelled", ended and ended["job"]["state"] == "cancelled", ended and ended["job"])
+    c.check(f"{tag}: and leaves nothing behind: no half file under its name, no part file", os.listdir(os.path.join(root, f"inbox-{tag}")) == [], os.listdir(os.path.join(root, f"inbox-{tag}")))
+    took = lists(ctx, uri(f"probe-after-{tag}"), "here.txt")
+    c.check(f"{tag}: the panes' connection survived the cancel", took is not None, took)
+    closed = wait_for(lambda: connections(port) == idle or None, timeout=5)
+    c.check(f"{tag}: and the job's own connection is closed", closed, connections(port))
+    os.remove(big)
+
+
 def add_location(d, location, secrets):
     """Add it the way the dialog does: the first answer is the server's key, the second trusts it."""
     r = d.call("AddLocation", location=location, secrets=secrets)
@@ -130,7 +191,7 @@ def run(ctx):
     os.makedirs(base, exist_ok=True)
     servers = Servers(base)
     # end -> (folder on this disk, function from a path under it to the URI the daemon is given)
-    ends = {}
+    ends, ports = {}, {}
     local_root = os.path.join(base, "local")
     os.makedirs(local_root)
     ends["local"] = (local_root, lambda rel: "file://" + os.path.join(local_root, rel))
@@ -139,6 +200,7 @@ def run(ctx):
             sftp_root = os.path.join(base, "sftp-root")
             os.makedirs(sftp_root)
             port, key = servers.start_sftp()
+            ports["sftp"] = port
             r = add_location(d, {"name": "e2e-sftp", "plugin": "sftp", "remoteUri": "sftp://e2e-sftp" + sftp_root, "localUri": "",
                                  "config": {"host": "127.0.0.1", "port": str(port), "username": getpass.getuser(), "auth": "key", "identityFile": key}}, {})
             if c.check("the SFTP location is added, its host key trusted", "ok" in r and not r["ok"].get("verify"), r):
@@ -150,6 +212,7 @@ def run(ctx):
             ftps_root = os.path.join(base, "ftps-root")
             os.makedirs(ftps_root)
             port = servers.start_ftps(py, ftps_root)
+            ports["ftps"] = port
             r = add_location(d, {"name": "e2e-ftps", "plugin": "ftps", "remoteUri": "ftps://e2e-ftps/", "localUri": "",
                                  "config": {"host": "127.0.0.1", "port": str(port), "username": "kiki", "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": "s3cret"})
             if c.check("the FTPS location is added, its certificate trusted", "ok" in r and not r["ok"].get("verify"), r):
@@ -182,6 +245,10 @@ def run(ctx):
                     else:
                         c.check(f"{tag}: and nothing is left behind", not left, os.listdir(os.path.join(s_root, s_rel)))
         c.check("every pair of ends that could be started was tried", n == 2 * len(ends) ** 2, n)
+
+        for tag, port in ports.items():
+            if tag in ends:
+                own_connection(ctx, c, d, tag, port, ends[tag][0], ends[tag][1], local_root, ends["local"][1])
     finally:
         for name in ("e2e-sftp", "e2e-ftps"):
             d.call("RemoveLocation", name=name)

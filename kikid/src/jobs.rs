@@ -445,6 +445,10 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
     let op = &job.op;
     let unjournaled = op.get("_unjournaled").and_then(Value::as_bool).unwrap_or(false);
     let cancel = Arc::clone(&job.cancel);
+    // Long work on a server runs on connections of the job's own, closed when it ends however it
+    // ends. Nothing is opened until the job resolves a remote URI, so a local job pays nothing;
+    // `mkdir` and `rename` are one round trip and stay on the browser's, which is already up.
+    let _sessions = matches!(job.kind.as_str(), "copy" | "move" | "delete" | "share" | "mirrorScan" | "mirrorRun").then(|| crate::locations::JobSessions::enter(job.id));
     let inverse = match job.kind.as_str() {
         // Anything with an end that is not this machine goes through `transfer`: what follows
         // works on local paths.

@@ -189,7 +189,7 @@ fn mlsx_time_ms(v: &str) -> u64 {
 
 impl Ftps {
     fn session(&self, location: &str) -> Result<Arc<Mutex<Session>>> {
-        self.sessions.lock().unwrap().get(&key(location, "browse")).cloned().ok_or_else(|| PluginError::network("not connected"))
+        self.sessions.lock().unwrap().get(&key(location, &sdk::current_role())).cloned().ok_or_else(|| PluginError::network("not connected"))
     }
 }
 

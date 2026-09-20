@@ -133,6 +133,52 @@ pub struct Session {
     pub role: String,
 }
 
+impl Session {
+    /// The start of every request made on this session: its type, the location, and the role —
+    /// which is how the plugin knows WHICH of the location's connections is meant. Built here and
+    /// nowhere else, so no caller can forget the role and land on the browser's connection.
+    pub fn req(&self, ty: &str) -> crate::json::Obj {
+        Value::obj().s("type", ty).s("location", self.location.clone()).s("role", self.role.clone())
+    }
+}
+
+thread_local! {
+    static JOB_ROLE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// While one of these is alive on a job's thread, `resolve` hands out that job's own sessions
+/// (role `job-<id>`) instead of the browser's; dropping it closes them, however the job ended.
+/// A transfer or a mirror run therefore never shares a connection with the panes: a listing does
+/// not queue behind an upload (an FTP control connection does one thing at a time), and
+/// cancelling a transfer mid-file cannot take the browser's connection with it (plans 06, 08).
+pub struct JobSessions(String);
+
+impl JobSessions {
+    pub fn enter(job: u64) -> JobSessions {
+        let role = format!("job-{job}");
+        JOB_ROLE.with(|r| *r.borrow_mut() = Some(role.clone()));
+        JobSessions(role)
+    }
+}
+
+impl Drop for JobSessions {
+    fn drop(&mut self) {
+        JOB_ROLE.with(|r| *r.borrow_mut() = None);
+        let mine: Vec<Arc<Session>> = {
+            let mut all = sessions().lock().unwrap();
+            let keys: Vec<String> = all.iter().filter(|(_, s)| s.role == self.0).map(|(k, _)| k.clone()).collect();
+            keys.iter().filter_map(|k| all.remove(k)).collect()
+        };
+        for s in mine {
+            let _ = s.plugin.request(s.req("Disconnect").done());
+        }
+    }
+}
+
+fn role_here() -> String {
+    JOB_ROLE.with(|r| r.borrow().clone()).unwrap_or_else(|| "browse".to_string())
+}
+
 fn sessions() -> &'static Mutex<BTreeMap<String, Arc<Session>>> {
     static S: OnceLock<Mutex<BTreeMap<String, Arc<Session>>>> = OnceLock::new();
     S.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -205,7 +251,7 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
 
 /// Location names with a live browse session (devices show these as connected).
 pub fn connected_names() -> Vec<String> {
-    sessions().lock().unwrap().iter().filter(|(_, s)| s.plugin.alive()).map(|(_, s)| s.location.clone()).collect()
+    sessions().lock().unwrap().iter().filter(|(_, s)| s.role == "browse" && s.plugin.alive()).map(|(_, s)| s.location.clone()).collect()
 }
 
 pub fn disconnect(name: &str) {
@@ -213,15 +259,16 @@ pub fn disconnect(name: &str) {
     let keys: Vec<String> = s.keys().filter(|k| k.starts_with(&format!("{name}\u{0}"))).cloned().collect();
     for k in keys {
         if let Some(sess) = s.remove(&k) {
-            let _ = sess.plugin.request(Value::obj().s("type", "Disconnect").s("location", name).s("role", sess.role.clone()).done());
+            let _ = sess.plugin.request(sess.req("Disconnect").done());
         }
     }
 }
 
-/// Resolves a remote URI to a browsing session plus the path inside the location.
+/// Resolves a remote URI to a session plus the path inside the location: the browsing session,
+/// or — on the thread of a job that has entered `JobSessions` — that job's own.
 pub fn resolve(uri: &Uri) -> Result<(Arc<Session>, String), VfsError> {
     let loc = resolve_authority(&uri.scheme, &uri.authority).ok_or_else(|| VfsError::Io(format!("no location for {}://{}", uri.scheme, uri.authority)))?;
-    let s = connect(&loc, "browse", None)?;
+    let s = connect(&loc, &role_here(), None)?;
     Ok((s, uri.path.clone()))
 }
 

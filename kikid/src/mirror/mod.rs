@@ -330,7 +330,7 @@ mod tests;
 
 pub use detect::{auto_offset, is_changed, pick_detector};
 pub use diff::diff;
-pub use execute::{execute, ExecCtx, Outcome};
+pub use execute::{execute, ExecCtx, Outcome, part_name};
 pub use filters::{filtered, load_filters, Rule};
 pub use report::{action_json, report};
 pub use scan::{scan, scan_side};

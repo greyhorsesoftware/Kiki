@@ -140,11 +140,11 @@ fn run_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resul
     match a.kind {
         ActionKind::Mkdir => match replica {
             Side::Local(root) => std::fs::create_dir(root.join(&*a.rel)).map_err(VfsError::from),
-            Side::Remote(s, root) => s.plugin.request(Value::obj().s("type", "Mkdir").s("location", s.location.clone()).s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
+            Side::Remote(s, root) => s.plugin.request(s.req("Mkdir").s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Delete | ActionKind::Rmdir => match replica {
             Side::Local(root) => crate::ops::remove_tree(&root.join(&*a.rel)),
-            Side::Remote(s, root) => s.plugin.request(Value::obj().s("type", "Delete").s("location", s.location.clone()).s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
+            Side::Remote(s, root) => s.plugin.request(s.req("Delete").s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Copy => copy_action(a, master, replica, ctx),
         ActionKind::Skip => Ok(()),
@@ -154,6 +154,73 @@ fn run_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Resul
 fn copy_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Result<(), VfsError> {
     let mtime = a.master.as_ref().map(|m| m.mtime_ms).unwrap_or(0);
     copy_file(master, &a.rel, replica, &a.rel, a.bytes, mtime, ctx)
+}
+
+/// The name a file is uploaded under until all of it has arrived.
+pub fn part_name(path: &str) -> String {
+    format!("{path}.kiki-part")
+}
+
+fn read_chunk(f: &mut std::fs::File) -> Result<Option<Vec<u8>>, VfsError> {
+    use std::io::Read;
+    let mut buf = vec![0u8; 512 * 1024];
+    match f.read(&mut buf)? {
+        0 => Ok(None),
+        n => {
+            buf.truncate(n);
+            Ok(Some(buf))
+        }
+    }
+}
+
+/// Upload one file. A plugin is told a write is over by the bytes stopping, and cannot tell
+/// "that was all of it" from "the job was cancelled" or "the disk we were reading gave an error"
+/// — so, written straight to its name, a cancelled upload was a short file that the job then
+/// reported as done. It goes to `<name>.kiki-part` instead and takes its name only once every
+/// byte has arrived; anything else removes the part and is an error. `next` yields the bytes:
+/// `Ok(None)` is the end of the file, `Err` is a source that failed.
+fn put(s: &Arc<locations::Session>, path: &str, bytes: u64, mtime: u64, ctx: &ExecCtx, mut next: impl FnMut() -> Result<Option<Vec<u8>>, VfsError>) -> Result<(), VfsError> {
+    let part = part_name(path);
+    let mut stopped: Option<VfsError> = None;
+    let req = s.req("Write").s("path", part.clone()).u("size", bytes).u("mtime", mtime).done();
+    let wrote = s.plugin.write_stream(req, || {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            stopped = Some(VfsError::Io("cancelled".into()));
+            return None;
+        }
+        match next() {
+            Ok(Some(b)) => {
+                (ctx.on_bytes)(b.len() as u64);
+                Some(b)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                stopped = Some(e);
+                None
+            }
+        }
+    });
+    let result = match (stopped, wrote) {
+        (Some(e), _) | (None, Err(e)) => Err(e),
+        (None, Ok(_)) => Ok(()),
+    };
+    if result.is_err() {
+        let _ = s.plugin.request(s.req("Delete").s("path", part).done());
+        return result;
+    }
+    // Into place. SFTP's rename refuses an existing target, so one that is in the way goes
+    // first — it was about to be overwritten anyway, and until now the whole new file exists.
+    let rename = || s.plugin.request(s.req("Rename").s("from", part.clone()).s("to", path).done());
+    if rename().is_err() {
+        let _ = s.plugin.request(s.req("Delete").s("path", path).done());
+        if let Err(e) = rename() {
+            let _ = s.plugin.request(s.req("Delete").s("path", part).done());
+            return Err(e);
+        }
+    }
+    // Best-effort mtime so size+mtime stays idempotent on the next run.
+    let _ = s.plugin.request(s.req("SetMtime").s("path", path).u("mtime", mtime).done());
+    Ok(())
 }
 
 /// One file from `master`/`from` to `replica`/`to`, whichever of the two is this machine: the
@@ -176,39 +243,35 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
         }
         (Side::Local(mroot), Side::Remote(s, rroot)) => {
             let mut f = std::fs::File::open(mroot.join(a.rel))?;
-            let req = Value::obj().s("type", "Write").s("location", s.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
-            let mut buf = vec![0u8; 512 * 1024];
-            let cancel = ctx.cancel;
-            s.plugin.write_stream(req, || {
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-                use std::io::Read;
-                match f.read(&mut buf) {
-                    Ok(0) | Err(_) => None,
-                    Ok(n) => {
-                        (ctx.on_bytes)(n as u64);
-                        Some(buf[..n].to_vec())
-                    }
-                }
-            })?;
-            // Best-effort mtime so size+mtime stays idempotent on the next run.
-            let _ = s.plugin.request(Value::obj().s("type", "SetMtime").s("location", s.location.clone()).s("path", join_rel(rroot, a.to)).u("mtime", mtime).done());
-            Ok(())
+            put(s, &join_rel(rroot, a.to), a.bytes, mtime, ctx, || read_chunk(&mut f))
         }
         (Side::Remote(s, mroot), Side::Local(rroot)) => {
             let dst = rroot.join(a.to);
-            let tmp = dst.with_extension("kiki-part");
+            // Appended, not swapped for the extension: `notes.txt` and `notes.md` arriving on two
+            // workers at once must not share a part file.
+            let tmp = {
+                let mut n = dst.clone().into_os_string();
+                n.push(".kiki-part");
+                std::path::PathBuf::from(n)
+            };
             let mut f = std::fs::File::create(&tmp)?;
-            let req = Value::obj().s("type", "Read").s("location", s.location.clone()).s("path", join_rel(mroot, a.rel)).done();
+            let req = s.req("Read").s("path", join_rel(mroot, a.rel)).done();
+            let mut disk: Option<std::io::Error> = None;
             let r = s.plugin.read_stream_with(req, Some(ctx.cancel), |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
-                    let _ = f.write_all(&b);
+                    if disk.is_none() {
+                        disk = f.write_all(&b).err();
+                    }
                     (ctx.on_bytes)(b.len() as u64);
                 }
             });
             drop(f);
+            // A full disk is a failed download, not a short file under the right name.
+            let r = match disk {
+                Some(e) => Err(VfsError::from(e)),
+                None => r,
+            };
             if let Err(e) = r {
                 let _ = std::fs::remove_file(&tmp);
                 return Err(e);
@@ -222,61 +285,59 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
         (Side::Remote(ms, mroot), Side::Remote(rs, rroot)) if !Arc::ptr_eq(&ms.plugin, &rs.plugin) => {
             // Two plugin processes: stream the Read straight into the Write through a bounded
             // channel, so the transfer never touches the local disk and both sides run at once.
-            let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
-            let read_req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, a.rel)).done();
-            let write_req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
-            let reader = std::thread::scope(|scope| {
+            // The reader's verdict travels down the same channel as its bytes: the channel
+            // closing says only that the reader stopped, not that the file was whole.
+            let (tx, rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, VfsError>>(16);
+            let read_req = ms.req("Read").s("path", join_rel(mroot, a.rel)).done();
+            std::thread::scope(|scope| {
                 let ms = Arc::clone(ms);
                 let cancel = ctx.cancel;
-                let producer = scope.spawn(move || {
+                scope.spawn(move || {
                     let r = ms.plugin.read_stream_with(read_req, Some(cancel), |m| {
                         if let Msg::Binary(b) = m {
-                            let _ = tx.send(b);
+                            let _ = tx.send(Ok(b));
                         }
                     });
-                    // Dropping tx ends the consumer's stream.
-                    r.map(|_| ())
-                });
-                let w = rs.plugin.write_stream_with(write_req, Some(ctx.cancel), || match rx.recv() {
-                    Ok(b) => {
-                        (ctx.on_bytes)(b.len() as u64);
-                        Some(b)
+                    if let Err(e) = r {
+                        let _ = tx.send(Err(e));
                     }
-                    Err(_) => None,
+                    // Dropping tx ends the consumer's stream.
                 });
-                let r = producer.join().unwrap_or_else(|_| Err(VfsError::Io("read thread panicked".into())));
-                r.and(w.map(|_| ()))
-            });
-            reader
+                put(rs, &join_rel(rroot, a.to), a.bytes, mtime, ctx, || match rx.recv() {
+                    Ok(Ok(b)) => Ok(Some(b)),
+                    Ok(Err(e)) => Err(e),
+                    Err(_) => Ok(None),
+                })
+            })
         }
         (Side::Remote(ms, mroot), Side::Remote(rs, rroot)) => {
             // Same plugin process on both sides: a plugin serves one binary stream at a time, so
             // spool through a temp file.
             let tmp = std::env::temp_dir().join(format!("kiki-mirror-{}-{}", std::process::id(), crate::md5::hex(a.rel.as_bytes())));
             let mut f = std::fs::File::create(&tmp)?;
-            let req = Value::obj().s("type", "Read").s("location", ms.location.clone()).s("path", join_rel(mroot, a.rel)).done();
-            ms.plugin.read_stream(req, |m| {
+            let req = ms.req("Read").s("path", join_rel(mroot, a.rel)).done();
+            let mut disk: Option<std::io::Error> = None;
+            let spooled = ms.plugin.read_stream_with(req, Some(ctx.cancel), |m| {
                 if let Msg::Binary(b) = m {
                     use std::io::Write;
-                    let _ = f.write_all(&b);
-                }
-            })?;
-            drop(f);
-            let mut f = std::fs::File::open(&tmp)?;
-            let req = Value::obj().s("type", "Write").s("location", rs.location.clone()).s("path", join_rel(rroot, a.to)).u("size", a.bytes).u("mtime", mtime).done();
-            let mut buf = vec![0u8; 512 * 1024];
-            let r = rs.plugin.write_stream(req, || {
-                use std::io::Read;
-                match f.read(&mut buf) {
-                    Ok(0) | Err(_) => None,
-                    Ok(n) => {
-                        (ctx.on_bytes)(n as u64);
-                        Some(buf[..n].to_vec())
+                    if disk.is_none() {
+                        disk = f.write_all(&b).err();
                     }
                 }
             });
+            drop(f);
+            let spooled = match disk {
+                Some(e) => Err(VfsError::from(e)),
+                None => spooled.map(|_| ()),
+            };
+            if let Err(e) = spooled {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+            let mut f = std::fs::File::open(&tmp)?;
+            let r = put(rs, &join_rel(rroot, a.to), a.bytes, mtime, ctx, || read_chunk(&mut f));
             let _ = std::fs::remove_file(&tmp);
-            r.map(|_| ())
+            r
         }
     }
 }

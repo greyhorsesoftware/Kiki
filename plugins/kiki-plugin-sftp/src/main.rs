@@ -319,8 +319,8 @@ fn sftp_err(e: russh_sftp::client::error::Error) -> PluginError {
 
 impl Sftp {
     fn session(&self, location: &str) -> Result<Arc<Session>> {
-        // Browsing calls use the browse session; jobs get their own through Connect with role job.
-        let k = key(location, "browse");
+        // The session the request was made on: the browser's, or a job's own (`sdk::current_role`).
+        let k = key(location, &sdk::current_role());
         self.sessions.lock().unwrap().get(&k).cloned().ok_or_else(|| PluginError::network("not connected"))
     }
 
@@ -707,10 +707,9 @@ impl Handler for Sftp {
         let fingerprint = seen.lock().unwrap().clone();
         let vouched = *known.lock().unwrap();
         let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone(), known: vouched };
-        if role == "browse" {
-            let f = self.probe(&sess);
-            *sess.fast.lock().unwrap() = f;
-        }
+        // A job scans too — a mirror, a folder being copied — so its session is probed as well.
+        let f = self.probe(&sess);
+        *sess.fast.lock().unwrap() = f;
         self.sessions.lock().unwrap().insert(k, Arc::new(sess));
         Ok(Value::obj().opt_s("fingerprint", fingerprint.as_deref()).b("knownHost", vouched).v("banner", Value::Null).done())
     }

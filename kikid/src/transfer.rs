@@ -34,7 +34,7 @@ fn child(s: &Side, name: &str) -> Side {
 fn request(s: &Side, ty: &str, rel: &str) -> Result<(), VfsError> {
     let Side::Remote(sess, root) = s else { unreachable!("request() is for the remote side") };
     let path = if rel.is_empty() { root.clone() } else { format!("{}/{}", root.trim_end_matches('/'), rel) };
-    sess.plugin.request(Value::obj().s("type", ty).s("location", sess.location.clone()).s("path", path).done()).map(|_| ())
+    sess.plugin.request(sess.req(ty).s("path", path).done()).map(|_| ())
 }
 
 fn mkdir(s: &Side, rel: &str) -> Result<(), VfsError> {
@@ -82,7 +82,7 @@ fn names(s: &Side, cancel: &AtomicBool) -> Result<HashMap<String, (bool, Meta)>,
             }
         }
         Side::Remote(sess, root) => {
-            let req = Value::obj().s("type", "Scan").s("location", sess.location.clone()).s("path", root.clone()).done();
+            let req = sess.req("Scan").s("path", root.clone()).done();
             sess.plugin.request_stream_with(req, Some(cancel), |m| {
                 if let crate::plugin::Msg::Json(v) = m {
                     for e in v.get("entries").and_then(Value::as_arr).into_iter().flatten() {
@@ -221,7 +221,7 @@ fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsErr
         (Side::Local(a), Side::Local(b)) => std::fs::rename(a.join(name), b.join(target)).map_err(VfsError::from),
         (Side::Remote(s, a), Side::Remote(_, b)) => s
             .plugin
-            .request(Value::obj().s("type", "Rename").s("location", s.location.clone()).s("from", format!("{}/{}", a.trim_end_matches('/'), name)).s("to", format!("{}/{}", b.trim_end_matches('/'), target)).done())
+            .request(s.req("Rename").s("from", format!("{}/{}", a.trim_end_matches('/'), name)).s("to", format!("{}/{}", b.trim_end_matches('/'), target)).done())
             .map(|_| ()),
         _ => Err(VfsError::Unsupported),
     }

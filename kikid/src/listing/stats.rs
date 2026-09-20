@@ -203,7 +203,7 @@ impl Listing {
     pub fn stat_uri(uri: &Uri) -> Result<Value> {
         if !uri.is_local() {
             let (session, rpath) = crate::locations::resolve(uri)?;
-            let v = session.plugin.request(Value::obj().s("type", "Stat").s("location", session.location.clone()).s("path", rpath).done())?;
+            let v = session.plugin.request(session.req("Stat").s("path", rpath).done())?;
             return Ok(meta_json(&crate::vfs::remote::meta_from(&v)));
         }
         let path = uri.to_path();

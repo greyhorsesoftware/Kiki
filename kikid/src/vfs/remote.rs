@@ -29,7 +29,7 @@ pub fn meta_from(v: &Value) -> Meta {
 impl Source for RemoteDir {
     fn scan(&self, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize> {
         let mut total = 0usize;
-        let req = Value::obj().s("type", "Scan").s("location", self.session.location.clone()).s("path", self.path.clone()).done();
+        let req = self.session.req("Scan").s("path", self.path.clone()).done();
         self.session.plugin.request_stream_with(req, Some(&self.cancel), |m| {
             if let Msg::Json(v) = m {
                 if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
@@ -56,7 +56,7 @@ impl Source for RemoteDir {
 
     fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
         let p = format!("{}/{}", self.path.trim_end_matches('/'), name.to_string_lossy());
-        let v = self.session.plugin.request(Value::obj().s("type", "Stat").s("location", self.session.location.clone()).s("path", p).done())?;
+        let v = self.session.plugin.request(self.session.req("Stat").s("path", p).done())?;
         if v == Value::Null {
             return Err(VfsError::NotFound);
         }

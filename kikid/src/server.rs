@@ -648,7 +648,7 @@ impl Client {
             let (session, path) = crate::locations::resolve(&uri).map_err(vfs_err)?;
             let lower = q.to_ascii_lowercase();
             let mut out = Vec::new();
-            let req = Value::obj().s("type", "Scan").s("location", session.location.clone()).s("path", path.clone()).b("recursive", true).done();
+            let req = session.req("Scan").s("path", path.clone()).b("recursive", true).done();
             let base = uri.clone();
             session
                 .plugin

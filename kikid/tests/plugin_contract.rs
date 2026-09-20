@@ -277,5 +277,37 @@ fn mirror_uploads_to_a_location_and_settles(dir: &std::path::Path) {
     let gone = session.plugin.request(Value::obj().s("type", "Stat").s("location", "lab").s("path", "/upload/stale.txt").done());
     assert!(gone.is_err(), "the extra file is gone from the replica");
 
+    // A file that changed replaces the one on the replica — uploaded under a part name and moved
+    // into place over what was there — and no part file is left beside it.
+    std::fs::write(master.join("notes/a.txt"), b"a longer second draft").unwrap();
+    let plan = mirror::scan(&mut spec, &cancel).unwrap();
+    assert_eq!(plan.actions.iter().filter(|a| a.kind == ActionKind::Copy).count(), 1, "only the changed file");
+    mirror::execute(&Arc::new(Mutex::new(plan)), &spec, &ctx).unwrap();
+    let read = |path: &str| {
+        let mut got = Vec::new();
+        session
+            .plugin
+            .read_stream(Value::obj().s("type", "Read").s("location", "lab").s("path", path).done(), |m| {
+                if let Msg::Binary(b) = m {
+                    got.extend_from_slice(&b)
+                }
+            })
+            .map(|_| got)
+    };
+    assert_eq!(read("/upload/notes/a.txt").unwrap(), b"a longer second draft");
+    let part = mirror::part_name("/upload/notes/a.txt");
+    assert!(session.plugin.request(Value::obj().s("type", "Stat").s("location", "lab").s("path", part.clone()).done()).is_err(), "no part file is left behind");
+
+    // Cancelled before the first byte, an upload is an error and the file already on the replica
+    // is exactly as it was: not truncated, not replaced by half of the new one. (A plugin cannot
+    // tell "that was all" from "we stopped", which is why the bytes go to a part name first.)
+    std::fs::write(master.join("notes/a.txt"), b"a third draft that must not arrive at all").unwrap();
+    let plan = mirror::scan(&mut spec, &cancel).unwrap();
+    let stop = AtomicBool::new(true);
+    let stopped = ExecCtx { cancel: &stop, workers: 1, on_change: &|_| {}, on_bytes: &|_| {} };
+    let _ = mirror::execute(&Arc::new(Mutex::new(plan)), &spec, &stopped);
+    assert_eq!(read("/upload/notes/a.txt").unwrap(), b"a longer second draft", "the replica's file survives a cancelled upload");
+    assert!(session.plugin.request(Value::obj().s("type", "Stat").s("location", "lab").s("path", part).done()).is_err(), "and the part file is removed");
+
     locations::remove("lab").unwrap();
 }
