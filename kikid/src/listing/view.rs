@@ -65,10 +65,11 @@ impl Listing {
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
+        let gen = inner.generation;
         let subs = inner.subscribers.clone();
         drop(inner);
         for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
         }
         if let Some(w) = waiter {
             let _ = w.0.send(proto::ok(w.1, Value::obj().u("n", n).done()));
@@ -82,10 +83,11 @@ impl Listing {
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
+        let gen = inner.generation;
         let subs = inner.subscribers.clone();
         drop(inner);
         for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
         }
         n
     }
@@ -119,10 +121,11 @@ impl Listing {
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
+        let gen = inner.generation;
         let subs = inner.subscribers.clone();
         drop(inner);
         for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
         }
         n
     }

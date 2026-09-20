@@ -1,7 +1,7 @@
 //! Benchmarks (plan 26): synthetic trees, one timed pass over the daemon's hot paths, JSON
 //! results, and a comparison that fails on regressions.
 //!
-//! `kikid bench gen <profile> <dir>`   flat10k | flat200k | deep100k | photos | gallery1k | all
+//! `kikid bench gen <profile> <dir>`   flat10k | flat100k | flat200k | deep100k | photos | gallery1k | all
 //! `kikid bench run <dir> [--json out]` measure every profile found under <dir> (or one directory)
 //! `kikid bench compare <baseline.json> <results.json> [--tolerance 25]`
 
@@ -28,6 +28,8 @@ pub fn gen(profile: &str, dir: &Path) -> std::io::Result<()> {
             Ok(())
         }
         "flat10k" => flat(dir, 10_000),
+        // What scrolling is asked to survive (tests/e2e scroll_perf). Not one of PROFILES.
+        "flat100k" => flat(dir, 100_000),
         "flat200k" => flat(dir, 200_000),
         "deep100k" => deep(dir),
         "photos" => photos(dir, 200),

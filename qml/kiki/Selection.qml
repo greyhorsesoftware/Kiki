@@ -12,5 +12,18 @@ QtObject {
     function toggle(i) { const r = Object.assign({}, rows); if (r[i]) delete r[i]; else r[i] = true; rows = r; current = i; changed() }
     function range(i) { const a = anchor < 0 ? i : anchor; const r = {}; for (let k = Math.min(a, i); k <= Math.max(a, i); k++) r[k] = true; rows = r; current = i; changed() }
     function clear() { rows = ({}); anchor = -1; current = -1; changed() }
+    /// Rows came or went above some of these positions (`WindowCache.spliced`): what was selected
+    /// stays selected, wherever it now is. A selected row that was removed is simply no longer.
+    function splice(ops) {
+        let r = rows, a = anchor, c = current
+        const move = (p, op) => p < 0 ? p : op.op === "remove" ? (p === op.pos ? -1 : p > op.pos ? p - 1 : p) : (p >= op.pos ? p + 1 : p)
+        for (const op of ops) {
+            const next = {}
+            for (const k in r) { const p = move(Number(k), op); if (p >= 0) next[p] = true }
+            r = next; a = move(a, op); c = move(c, op)
+        }
+        rows = r; anchor = a; current = c
+        changed()
+    }
     function positions() { return Object.keys(rows).map(Number).sort((a, b) => a - b) }
 }

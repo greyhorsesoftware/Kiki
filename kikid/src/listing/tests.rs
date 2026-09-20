@@ -296,7 +296,7 @@ fn a_row_skipped_by_its_stat_job_can_still_be_enriched() {
         rows
     };
     // …and what a stat worker does once nobody is looking at them any more (no subscriber).
-    l.run_stats(rows.clone(), false);
+    l.run_stats(rows.clone(), 0, false);
     {
         let inner = l.inner.lock().unwrap();
         assert!(rows.iter().all(|&i| !inner.queued[i as usize]), "skipped means no longer queued");
@@ -305,5 +305,112 @@ fn a_row_skipped_by_its_stat_job_can_still_be_enriched() {
     l.sort(SortRole::Size, false, Some((tx, 9)));
     assert!(rx.recv_timeout(Duration::from_secs(20)).is_ok(), "the sort is answered once everything is enriched");
     assert!(l.inner.lock().unwrap().meta.iter().all(Option::is_some));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A rescan deals the pool's indexes again. What is known about a name has to cross it by name:
+/// the thumbnail files were always still on disk, and every picture in view lost its thumbnail
+/// anyway, to be asked for again one by one.
+#[test]
+fn a_rescan_keeps_the_thumbnails_it_had() {
+    let dir = temp_tree(40);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    {
+        let mut inner = l.inner.lock().unwrap();
+        let a = inner.pool.find(b"file3.txt").unwrap();
+        let b = inner.pool.find(b"file4.txt").unwrap();
+        inner.thumb.insert(a, "/cache/three.png".into());
+        inner.thumb.insert(b, String::new()); // one that failed
+    }
+    // New names that sort before the old ones, and one gone: every index moves.
+    std::fs::write(dir.join("aaa.txt"), b"1").unwrap();
+    std::fs::remove_file(dir.join("file0.txt")).unwrap();
+    l.rescan();
+    let w = l.window(1, 1, 0, 100);
+    let rows = w.get("rows").unwrap().as_arr().unwrap();
+    let thumb = |name: &str| rows.iter().find(|r| r.str_field("name") == Some(name)).unwrap().get("thumb").unwrap().clone();
+    assert_eq!(thumb("file3.txt"), Value::Str("/cache/three.png".into()), "carried by name");
+    assert_eq!(thumb("file4.txt"), Value::Null, "a failure is asked about again");
+    assert_eq!(thumb("file5.txt"), Value::Null, "and nobody else was given one");
+    assert_eq!(thumb("aaa.txt"), Value::Null);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A thumbnail asked for before a rescan and finished after it belongs to the name it was asked
+/// for, wherever that name now is — not to whatever file has taken its old index.
+#[test]
+fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
+    let dir = temp_tree(41);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let old_idx = l.inner.lock().unwrap().pool.find(b"file7.txt").unwrap();
+    for i in 0..5 {
+        std::fs::remove_file(dir.join(format!("file{i}.txt"))).unwrap();
+    }
+    l.rescan();
+    // Not a picture, so the job fails and records "" — which is all this needs: where it lands.
+    l.inner.lock().unwrap().thumb_queued[old_idx as usize] = true;
+    l.submit_thumb(old_idx, crate::kinds::Kind::Image, 1, "file7.txt");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let inner = l.inner.lock().unwrap();
+        if !inner.thumb.is_empty() {
+            let at = inner.pool.find(b"file7.txt").unwrap();
+            assert_eq!(inner.thumb.keys().copied().collect::<Vec<_>>(), vec![at]);
+            break;
+        }
+        drop(inner);
+        assert!(Instant::now() < deadline, "the thumbnail job never answered");
+        thread::sleep(Duration::from_millis(5));
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// One file arriving or leaving is told as what happened (`Splice`), not as "forget everything
+/// and ask again" (`Reset`); and every answer says which state of the view it describes.
+#[test]
+fn a_small_change_is_spliced_not_reset() {
+    let dir = temp_tree(6);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50 });
+    let before = l.window(3, 9, 0, 50).u64_field("gen").unwrap();
+    let _ = drain(&rx);
+
+    std::fs::write(dir.join("file1b.txt"), b"1").unwrap();
+    std::fs::remove_file(dir.join("file0.txt")).unwrap();
+    l.patch(&[b"file1b.txt".to_vec()], &[b"file0.txt".to_vec()], &[]);
+    let events = drain(&rx);
+    assert!(!events.iter().any(|e| e.str_field("event") == Some("Reset")), "{events:?}");
+    let s = events.iter().find(|e| e.str_field("event") == Some("Splice")).expect("a Splice");
+    assert_eq!(s.u64_field("lid"), Some(9));
+    assert_eq!(s.u64_field("n"), Some(7)); // sub + six files, one gone, one new
+    assert_eq!(s.u64_field("gen"), Some(before + 1));
+    let ops = s.get("ops").unwrap().as_arr().unwrap();
+    // [sub, file0, file1, …]: file0 leaves position 1; file1b then lands after file1, at 2.
+    assert_eq!((ops[0].str_field("op"), ops[0].u64_field("pos")), (Some("remove"), Some(1)));
+    assert_eq!((ops[1].str_field("op"), ops[1].u64_field("pos")), (Some("insert"), Some(2)));
+    assert_eq!(ops[1].get("row").unwrap().str_field("name"), Some("file1b.txt"));
+    let w = l.window(3, 9, 0, 50);
+    assert_eq!(w.u64_field("gen"), Some(before + 1));
+    let names: Vec<&str> = w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap()).collect();
+    assert_eq!(&names[..4], ["sub", "file1.txt", "file1b.txt", "file2.txt"]);
+
+    // A dot-file arriving where they are hidden changes nothing anyone can see.
+    std::fs::write(dir.join(".hidden"), b"1").unwrap();
+    l.patch(&[b".hidden".to_vec()], &[], &[]);
+    let events = drain(&rx);
+    assert!(!events.iter().any(|e| matches!(e.str_field("event"), Some("Reset" | "Splice"))), "{events:?}");
+    assert_eq!(l.window(3, 9, 0, 50).u64_field("n"), Some(7));
+
+    // A filtered view cannot be spliced (the daemon rebuilds it): that is still a Reset.
+    l.filter("file");
+    let _ = drain(&rx);
+    std::fs::write(dir.join("file9.txt"), b"1").unwrap();
+    l.patch(&[b"file9.txt".to_vec()], &[], &[]);
+    let events = drain(&rx);
+    assert!(events.iter().any(|e| e.str_field("event") == Some("Reset") && e.u64_field("gen").is_some()), "{events:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }

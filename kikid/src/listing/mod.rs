@@ -84,7 +84,11 @@ struct Inner {
     show_hidden: bool,
     /// The listing URI, for the access-log lookup per row.
     uri_string: String,
+    /// Counts every change to `view`. It goes out on `Window` replies and on `Reset` and `Splice`,
+    /// which is how a client tells a reply computed before a change from one computed after.
     generation: u64,
+    /// Counts rescans: pool indexes mean something only within one.
+    epoch: u64,
     enrich: Option<Enrich>,
     subscribers: Vec<Subscriber>,
     pub stale: bool,

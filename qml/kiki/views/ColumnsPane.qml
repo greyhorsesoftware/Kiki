@@ -174,6 +174,19 @@ Item {
         }
     }
     Component { id: cacheComp; Kiki.WindowCache {} }
+    /// What scrolls — the focused column — and the rows behind it, for the scroll probe.
+    property var _lists: ({})
+    function scroller() { const c = columns[focusCol]; return { view: _lists[focusCol] || null, cache: c ? c.cache : null } }
+    /// A file arriving or leaving in a column's folder moves its rows, not its selection.
+    function spliceColumn(col, ops) {
+        let sel = columns[col] ? columns[col].selected : -1
+        if (sel < 0) return
+        for (const op of ops) { if (sel < 0) break; sel = op.op === "remove" ? (sel === op.pos ? -1 : sel > op.pos ? sel - 1 : sel) : (sel >= op.pos ? sel + 1 : sel) }
+        if (sel === columns[col].selected) return
+        const cols = columns.slice()
+        cols[col] = Object.assign({}, cols[col], { selected: sel })
+        columns = cols
+    }
 
     // To the right of the last column there is nothing but room: a drop there goes into the
     // deepest folder open, which is what the eye takes that room to belong to.
@@ -254,9 +267,10 @@ Item {
                         anchors.fill: parent; anchors.rightMargin: 1; anchors.topMargin: 6
                         clip: true; reuseItems: true
                         model: modelData.cache ? modelData.cache.count : 0
-                        Component.onCompleted: if (modelData.selected >= 0) positionViewAtIndex(modelData.selected, ListView.Contain)
+                        Component.onCompleted: { root._lists[colIndex] = list; if (modelData.selected >= 0) positionViewAtIndex(modelData.selected, ListView.Contain) }
+                        Component.onDestruction: if (root._lists[colIndex] === list) delete root._lists[colIndex]
                         onContentYChanged: if (modelData.cache) modelData.cache.setViewport(Math.max(0, Math.floor(contentY / Kiki.Theme.rowHeight)), Math.ceil(height / Kiki.Theme.rowHeight) + 1)
-                        Connections { target: modelData.cache; function onReset() { list.forceLayout() } }
+                        Connections { target: modelData.cache; function onReset() { list.forceLayout() } function onSpliced(ops) { root.spliceColumn(list.colIndex, ops) } }
                         // A living column handed another folder starts at its top.
                         readonly property var shown: modelData.cache
                         onShownChanged: positionViewAtBeginning()

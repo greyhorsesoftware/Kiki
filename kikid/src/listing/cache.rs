@@ -83,6 +83,7 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             show_hidden: crate::config::settings().get("view").and_then(|v| v.get("showHidden")).and_then(Value::as_bool).unwrap_or(false),
             uri_string: uri.to_string(),
             generation: 0,
+            epoch: 0,
             enrich: None,
             subscribers: Vec::new(),
             stale: false,

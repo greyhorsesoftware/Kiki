@@ -20,6 +20,8 @@ Item {
     function setZoom(z) { if (root.pane) root.pane.iconZoom = Math.max(0.4, Math.min(2.5, z)) }
 
     function ensureVisible(i) { grid.positionViewAtIndex(i, GridView.Contain) }
+    /// What scrolls, and the rows behind it — for the scroll probe.
+    function scroller() { return { view: grid, cache: root.pane.listing } }
     readonly property int perRow: grid.perRow
     readonly property int pageSize: Math.max(1, Math.floor(grid.height / cellH)) * grid.perRow
 

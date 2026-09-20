@@ -143,6 +143,13 @@ QtObject {
         // there the selection rules of `open` apply instead.
         function onReset() { pane._restorePending = pane.listing.uri === pane._keepUri && pane._keepNames.length > 0 }
         function onRowsUpdated(first, n) { pane._restoreSelection() }
+        // A file arriving or leaving moves the rows under the selection, not the selection.
+        function onSpliced(ops) {
+            pane.selection.splice(ops)
+            let r = pane.renamingIndex
+            for (const op of ops) { if (r < 0) break; r = op.op === "remove" ? (r === op.pos ? -1 : r > op.pos ? r - 1 : r) : (r >= op.pos ? r + 1 : r) }
+            pane.renamingIndex = r
+        }
     }
     function _remember() { if (!_applying && rememberViews && uri) Kiki.Settings.setViewPref(uri.replace(/\/+$/, "") || uri, view, sortRole, sortOrder, showHidden) }
     onViewChanged: _remember()

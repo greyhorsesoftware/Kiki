@@ -24,6 +24,8 @@ Item {
     readonly property int nameWidth: Math.max(48, root.width - 24 - valueWidth)
 
     function ensureVisible(i) { view.positionViewAtIndex(i, ListView.Contain) }
+    /// What scrolls, and the rows behind it — for the scroll probe.
+    function scroller() { return { view: view, cache: root.pane.listing } }
     /// The delegate showing row `i`, asked of the view rather than found by name: delegates are
     /// pooled and a recycled one can still answer to the name it had in the last folder.
     function rowItem(i) { return view.itemAtIndex(i) }

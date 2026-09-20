@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct StatJob {
     pub(super) listing: Arc<Listing>,
     pub(super) rows: Vec<u32>,
+    /// `Inner::epoch` when the rows were chosen: they are pool indexes, and a rescan deals those again.
+    pub(super) epoch: u64,
     pub(super) low_priority: bool,
 }
 
@@ -26,7 +28,7 @@ pub(super) fn stat_pool() -> &'static StatPool {
                 .spawn(move || loop {
                     let job = { rx.lock().unwrap().recv() };
                     match job {
-                        Ok(job) => job.listing.run_stats(job.rows, job.low_priority),
+                        Ok(job) => job.listing.run_stats(job.rows, job.epoch, job.low_priority),
                         Err(_) => return,
                     }
                 })
@@ -39,12 +41,26 @@ pub(super) fn stat_pool() -> &'static StatPool {
 impl Listing {
 
     /// Run on a stat worker: fetch metadata for rows, then push changed rows into live windows.
-    pub(super) fn run_stats(self: &Arc<Self>, rows: Vec<u32>, low_priority: bool) {
+    pub(super) fn run_stats(self: &Arc<Self>, rows: Vec<u32>, epoch: u64, low_priority: bool) {
         let mut done: Vec<u32> = Vec::with_capacity(rows.len());
+        // The folder was read again while this job waited or worked: its indexes are another
+        // listing's now — past the end of a folder that shrank (a panic, with the lock held), or
+        // some other file's. The rescan cleared every `queued` mark, so what still lacks metadata
+        // is simply asked for again.
+        let overtaken = |me: &Arc<Self>| {
+            let enriching = me.inner.lock().unwrap().enrich.is_some();
+            if enriching {
+                me.enrich_all(true);
+            }
+        };
         for idx in rows {
             // Skip rows that scrolled out of every live window (unless enriching everything).
             let name = {
                 let mut inner = self.inner.lock().unwrap();
+                if inner.epoch != epoch {
+                    drop(inner);
+                    return overtaken(self);
+                }
                 if !low_priority {
                     let p = inner.pos[idx as usize];
                     if p == u32::MAX || !inner.subscribers.iter().any(|s| s.covers(p)) {
@@ -60,6 +76,10 @@ impl Listing {
             };
             let res = self.dir.stat_child(OsStr::from_bytes(&name));
             let mut inner = self.inner.lock().unwrap();
+            if inner.epoch != epoch {
+                drop(inner);
+                return overtaken(self);
+            }
             inner.queued[idx as usize] = false;
             match res {
                 Ok((m, t)) => {
@@ -101,19 +121,23 @@ impl Listing {
     pub(super) fn submit_thumb(self: &Arc<Self>, idx: u32, kind: crate::kinds::Kind, mtime_ms: u64, name: &str) {
         let uri = self.uri.join(name);
         let me = Arc::clone(self);
+        let name = name.as_bytes().to_vec();
         crate::thumbs::submit(crate::thumbs::ThumbJob {
             uri,
             kind,
             mtime_ms,
             size: crate::thumbs::Size::Normal,
             done: Box::new(move |path| {
-                {
+                // The answer belongs to a name, not an index: a rescan while the job waited has
+                // dealt the indexes again, and `idx` may now be another file.
+                let idx = {
                     let mut inner = me.inner.lock().unwrap();
-                    if (idx as usize) < inner.pool.len() {
-                        inner.thumb.insert(idx, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-                        inner.thumb_queued[idx as usize] = false;
-                    }
-                }
+                    let at = if (idx as usize) < inner.pool.len() && !inner.pool.is_removed(idx) && String::from_utf8_lossy(inner.pool.name(idx)).as_bytes() == name.as_slice() { Some(idx) } else { inner.pool.find(&name) };
+                    let Some(at) = at else { return };
+                    inner.thumb.insert(at, path.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+                    inner.thumb_queued[at as usize] = false;
+                    at
+                };
                 me.push_rows(&[idx]);
             }),
         });
@@ -146,7 +170,7 @@ impl Listing {
     }
 
     pub(super) fn enrich_all(self: &Arc<Self>, low_priority: bool) {
-        let rows: Vec<u32> = {
+        let (epoch, rows): (u64, Vec<u32>) = {
             let mut inner = self.inner.lock().unwrap();
             // Every row without metadata, not just the ones the view is showing. `total` below
             // counts them all and `enrich_progress` only finishes when they all have metadata, so
@@ -163,14 +187,14 @@ impl Listing {
                 }
                 None => inner.enrich = Some(Enrich { total, done: 0, waiters: Vec::new() }),
             }
-            rows
+            (inner.epoch, rows)
         };
         if rows.is_empty() {
             self.enrich_progress();
             return;
         }
         for batch in rows.chunks(256) {
-            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows: batch.to_vec(), low_priority });
+            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows: batch.to_vec(), epoch, low_priority });
         }
     }
 
@@ -194,10 +218,11 @@ impl Listing {
             inner.generation += 1;
         }
         let n = inner.view.len() as u64;
+        let gen = inner.generation;
         drop(inner);
         for s in &subs {
             if needs_resort {
-                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
             }
         }
         for (tx, id) in e.waiters {

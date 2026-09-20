@@ -760,6 +760,7 @@ FloatingWindow {
         }
     }
 
+    UI.ScrollProbe { id: scrollProbe }
     IpcHandler {
         target: "shell"
         function open(uri: string): void { win.pane.open(uri) }
@@ -780,6 +781,13 @@ FloatingWindow {
             const g = win.galleryPane()
             return JSON.stringify(g ? g.stats() : {})
         }
+        /// Scroll the focused pane's view from top to bottom in `ms`, measuring; `scrollStats`
+        /// says `running` until it is over. The scroll_perf flow; nothing here depends on it.
+        function scrollRun(ms: string): void {
+            const v = win.currentView(), s = v && v.scroller ? v.scroller() : null
+            scrollProbe.start(s ? s.view : null, s ? s.cache : null, parseInt(ms) || 4000)
+        }
+        function scrollStats(): string { return JSON.stringify(scrollProbe.result) }
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }

@@ -54,7 +54,7 @@ A listing is opened with a client-chosen `lid` so that `Open` and the first `Win
 | Request | Fields | Reply |
 |---|---|---|
 | `Open` | `lid: u32`, `uri: Uri` | `{ cached: bool }` |
-| `Window` | `lid`, `first: u32`, `count: u32` (max 512) | `{ first, rows: [Row], n: u32, done: bool }` in the current sort and filter; becomes the connection's live window for this `lid` |
+| `Window` | `lid`, `first: u32`, `count: u32` (max 512) | `{ first, rows: [Row], n: u32, done: bool, gen: u64 }` in the current sort and filter; becomes the connection's live window for this `lid`. `gen` numbers the state of the view the rows describe (below) |
 | `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime" \| "atime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
 | `Filter` | `lid`, `text: string` (substring, case-insensitive; empty clears) | `{ n }` then `Reset` |
 | `SeekName` | `lid`, `prefix`, `after?` | `{ index }` first view position whose name starts with `prefix` (case-insensitive), after `after` with wrap; `null` when none (type-ahead, plan 23) |
@@ -71,9 +71,14 @@ Events for listings:
 |---|---|---|
 | `Count` | `lid`, `n`, `done` | phase 1 progress; `done: true` once, when the scan completes |
 | `Rows` | `lid`, `first`, `rows: [Row]` | pushed rows inside the live window whose `meta` or `thumb` changed, or that a watch patched |
-| `Reset` | `lid`, `n` | the order or membership changed; the client discards its window cache and re-requests |
+| `Reset` | `lid`, `n`, `gen` | the order or membership changed; the client re-requests its window, and may go on showing the rows it holds until the answer arrives (a rescan brings the same rows back) |
+| `Splice` | `lid`, `n`, `gen`, `ops: [{ op: "remove", pos } \| { op: "insert", pos, row: Row }]` | a few rows came or went in place (a watched folder, name or kind order, no filter; at most 64 changes — anything else is a `Reset`). Applied in order, each `pos` as of that step; every held position after it moves by one. `n` is the count afterwards |
 | `Progress` | `lid`, `done`, `total` | `Enrich` progress |
 | `Gone` | `lid` | the directory was deleted or the location disconnected |
+
+`gen` counts changes to the view (sort, filter, rescan, splice). A `Window` reply and the event that announces a change travel separately and can arrive in either order, so the client compares numbers: a reply with a `gen` lower than the last `Reset` or `Splice` was computed before it — its positions are the old ones — and is asked again; a `Splice` whose `gen` the held rows already have is not applied a second time; a `Splice` more than one ahead means a step was missed, and is treated as a `Reset`. Trees and search results do not number their answers, and a client takes those as they come.
+
+A rescan keeps, by name, what the listing knew: metadata, thumbnail (unless the scan reports another modification time) and git state (shown as it was until status has run again).
 
 Semantics: `Window` is answered immediately with whatever is known; missing `meta` for those rows is fetched nearest-centre-first and pushed as `Rows`. Rows outside the live window are never stated. Thumbnails for rows in the live window are generated at low priority and pushed the same way. The daemon keeps one live window per `lid` per connection.
 

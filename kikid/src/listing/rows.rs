@@ -68,6 +68,8 @@ impl Listing {
             }
         }
         let done = inner.scan_done;
+        let gen = inner.generation;
+        let epoch = inner.epoch;
         drop(inner);
         for (idx, kind, mtime, name) in want_thumbs {
             self.submit_thumb(idx, kind, mtime, &name);
@@ -75,9 +77,9 @@ impl Listing {
         if !missing.is_empty() {
             missing.sort_unstable();
             let rows: Vec<u32> = missing.into_iter().map(|(_, i)| i).collect();
-            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows, low_priority: false });
+            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows, epoch, low_priority: false });
         }
-        Value::obj().u("first", first as u64).u("n", n as u64).b("done", done).v("rows", Value::Arr(rows)).done()
+        Value::obj().u("first", first as u64).u("n", n as u64).b("done", done).u("gen", gen).v("rows", Value::Arr(rows)).done()
     }
 
     /// Send `Rows` events for the given pool rows to every subscriber whose window covers them.
