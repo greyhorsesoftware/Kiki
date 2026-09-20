@@ -660,6 +660,9 @@ FloatingWindow {
         if (extend) pane.selection.range(i); else pane.selection.set(i)
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
     }
+    /// Jobs a person would call running: not the machinery (an undo's inverse ops, a preflight).
+    property int runningShown: 0
+    Connections { target: Kiki.Jobs; function onChanged() { win.runningShown = Kiki.Jobs.running().filter(j => !j.hidden).length } }
     /// What the bottom bar says about the folder. In the gallery one thing is on the stage at a
     /// time, so it is where you are among them — "7 of 31" — rather than how many are selected.
     function countText() {
@@ -705,7 +708,7 @@ FloatingWindow {
         focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
             && !shareSheet.visible && !compressDialog.visible && !win.projectMode
-            && !keysWin.visible && !aboutDlg.visible
+            && !keysWin.visible && !aboutDlg.visible && !jobLog.visible
             && win.pane.renamingIndex < 0
         // No re-grab here on purpose: taking the focus back whenever this item loses it races
         // every legitimate hand-over — the inline editor opens, the focus moves, the grab pulls
@@ -743,7 +746,7 @@ FloatingWindow {
             case Qt.Key_Right: if (alt) pane.forward(); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().focusRight(); else win.enterSelected(); break
             case Qt.Key_E: if (win.vimKeys) win.editSelected(); else return; break
             case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
-            case Qt.Key_Escape: if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
+            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
             case Qt.Key_I: if (win.vimKeys) win.inspectorRequested = !win.inspectorRequested; else return; break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             default:
@@ -853,6 +856,11 @@ FloatingWindow {
         function undo(): void { Kiki.Jobs.undo() }
         function redo(): void { Kiki.Jobs.redo() }
         function activity(): string { return JSON.stringify(Kiki.Jobs.list) }
+        /// The orb and its popup, for the harness: "open" | "close" | "toggle" | "clear", and what is showing.
+        function activityView(action: string): string {
+            if (action === "open") activity.open(); else if (action === "close") activity.close(); else if (action === "toggle") activity.toggle(); else if (action === "clear") Kiki.Jobs.clear()
+            return JSON.stringify({ open: activity.visible, orb: Kiki.Jobs.orbState(), tip: Kiki.Jobs.orbTip(), entries: Kiki.Jobs.shown().map(j => ({ id: j.id, headline: Kiki.Jobs.headline(j), state: j.state, line: Kiki.Jobs.live(j) ? Kiki.Jobs.statusLine(j) : Kiki.Jobs.completion(j) })) })
+        }
         function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
         /// The Add-location form, for scripts and tests: pick a kind by scheme, a page or a
@@ -1089,8 +1097,8 @@ FloatingWindow {
                 { key: "^I", label: "info" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" },
                 { key: "❖C", label: "copy" }, { key: "❖V", label: "paste" }, { key: "/", label: "filter" },
                 { key: "?", label: "keys" }])
-            MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
-            status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + win.countText()
+            statusInset: 38      // the orb stands at the right end
+            status: (win.runningShown ? win.runningShown + " running · " : "") + win.countText()
         }
 
     }
@@ -1135,7 +1143,7 @@ FloatingWindow {
             { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
             { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
         ], Qt.point(40, 200))
-        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
+        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Connection Log…", sep: true, action: () => jobLog.openLocation(loc.name) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
     }
 
     // Mousing into the left edge brings the hidden favorites panel back.
@@ -1203,7 +1211,31 @@ FloatingWindow {
     Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.integration.asked === false) integrationDialog.open() } }
     UI.ShareSheet { id: shareSheet; anchors.fill: parent }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => ops.compress(items, archive, format) }
-    UI.ActivityPopover { id: activity; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.bottomMargin: Kiki.Theme.barHeight + 4; anchors.rightMargin: 8 }
+    // Activity (plan 32). The orb is the window's, not the key-hint row's: it is there in every
+    // mode, project mode's narrow tree and the gallery included. It replaced an unmarked 200 px
+    // click area at the right of the bottom bar, which nothing said could be clicked.
+    UI.ActivityOrb {
+        id: orb
+        objectName: "activity-orb"
+        anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.rightMargin: 6; z: 61
+        open: activity.visible
+        onClicked: activity.toggle()
+    }
+    UI.ActivityPopover {
+        id: activity
+        objectName: "activity"
+        aimX: orb.x + orb.width / 2; aimY: orb.y
+        onLogRequested: job => { activity.close(); jobLog.openJob(job) }
+        onRevealRequested: uri => win.revealUri(uri)
+    }
+    UI.JobLogWindow { id: jobLog; objectName: "joblog"; onCopyText: text => Quickshell.execDetached(["wl-copy", text]) }
+    /// Show a file where it is: its folder, with it selected.
+    function revealUri(uri) {
+        const parent = uri.replace(/\/[^/]*$/, "") || uri
+        win.pane.open(parent)
+        win.pane.selectAfterLoad = decodeURIComponent(uri.split("/").pop())
+        win.selectCameFrom()
+    }
     Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri); onEdit: (u, line) => win.editAt(u, line)
         onContextMenu: (uri, row, pos) => { win.focusPane(pane); menu.open(win.contextItemsForUri(uri, row), pos) }
         onContextMenuFolder: (uri, pos) => { win.focusPane(pane); menu.open(win.folderItems(uri), pos) } } }

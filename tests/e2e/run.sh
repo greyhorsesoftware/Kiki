@@ -58,6 +58,7 @@ qs_conf="${KIKI_SHELL_DIR:-${qs_default:-$root/qml}}"
 [ -f "$qs_conf/shell.qml" ] || { echo "no shell.qml under $qs_conf" >&2; exit 2; }
 # The launcher flow runs the real `kiki` script, which finds the shell through this.
 export KIKI_SHELL_DIR="$qs_conf"
+export KIKI_E2E_OUT="$out"
 
 cleanup() {
   [ -n "${KIKI_E2E_KEEP:-}" ] && { echo "fixture kept at $work"; return; }

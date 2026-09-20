@@ -137,6 +137,10 @@ Event: `OpenInChanged {}`.
 | `Submit` | `op: Op` | `{ job: u64 }` — ops include `restore { names }` (from the trash, undoable) and `emptyTrash {}` (not undoable) |
 | `Cancel` | `job` | `{}` |
 | `Jobs` | | `{ jobs: [Job] }` (running and the last 50 finished) |
+| `ClearJobs` | | `{ cleared }` — forgets every finished job; live ones never (plan 32) |
+| `DismissJob` | `job` | `{ cleared }` |
+| `JobLog` | `job`, `from?` | `{ lines: [{ t, level, source, text }], next, dropped }` — the job's log; ask again from `next` |
+| `LocationLog` | `location`, `from?` | the same, for everything the location's plugin has said |
 | `Undo` | | `{ job }` or error `NotFound` if the journal is empty |
 | `Redo` | | `{ job }` |
 | `PromptReply` | `job`, `choice: string`, `applyToAll: bool` | `{}` |
@@ -162,6 +166,7 @@ Events:
 | Event | Fields | Meaning |
 |---|---|---|
 | `JobEvent` | `job: Job` | state change, or progress at most every 100 ms |
+| `JobsCleared` | `jobs: [id]` | finished jobs were forgotten (`ClearJobs`, `DismissJob`); `Job`'s activity fields are in plan 32 |
 | `Prompt` | `job`, `kind: "collision"`, `uri`, `existing: Meta`, `incoming: Meta`, `choices: ["replace","keepBoth","skip"]` | the job is paused until `PromptReply` |
 | `Toast` | `job`, `text`, `undoable` | a completed destructive job the shell should announce |
 

@@ -296,9 +296,13 @@ fn pump() {
                             crate::joblog::keep_failure(job.id, &job.title, &e.message());
                             job.set_state(State::Failed(e.message()));
                         }
-                        job.partial.lock().unwrap().take()
+                        // What it got done before it stopped — and only what is really there: a copy
+                        // names its target before it starts on it, so one that failed at once has
+                        // an inverse that would delete nothing, which is no inverse at all.
+                        job.partial.lock().unwrap().take().and_then(something_to_undo)
                     }
                 };
+                let finished_well = job.status.lock().unwrap().state == State::Done;
                 if let Some(inv) = inverse {
                     let mut q = queue().lock().unwrap();
                     q.journal.push(Value::obj().u("job", job.id).s("title", job.title.clone()).v("inverse", inv).v("redo", job.op.clone()).done());
@@ -309,7 +313,10 @@ fn pump() {
                     save_journal(&q.journal);
                     drop(q);
                     if matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
-                        broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", true).done());
+                        // A job that stopped half way did not do what its title says: the toast
+                        // offers to take back the part that it did, and says that is what it is.
+                        let text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
+                        broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", true).done());
                     }
                 } else if matches!(job.kind.as_str(), "delete" | "emptyTrash") && job.status.lock().unwrap().state == State::Done {
                     broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", false).done());
@@ -662,6 +669,23 @@ fn uri_list(paths: &[PathBuf]) -> Value {
     Value::Arr(paths.iter().map(|p| Value::Str(Uri::from_path(p).to_string())).collect())
 }
 
+/// A partial inverse, less whatever it names that does not exist; `None` when that leaves nothing.
+fn something_to_undo(inverse: Value) -> Option<Value> {
+    if inverse.str_field("op") != Some("delete") {
+        return Some(inverse);
+    }
+    let there: Vec<Value> = inverse.get("items").and_then(Value::as_arr).map(|a| a.iter().filter(|u| u.as_str().and_then(|s| Uri::parse(s).ok()).is_some_and(|u| !u.is_local() || u.to_path().symlink_metadata().is_ok())).cloned().collect()).unwrap_or_default();
+    (!there.is_empty()).then(|| Value::obj().s("op", "delete").v("items", Value::Arr(there)).b("_silent", true).done())
+}
+
+/// An error that says which item it was about: "Denied" alone, in a copy of forty things, is no help.
+fn about_file(e: VfsError, name: &str) -> VfsError {
+    match e {
+        VfsError::Io(m) if m == "cancelled" => VfsError::Io(m),
+        other => VfsError::Io(format!("{name}: {}", other.message())),
+    }
+}
+
 fn copy_inverse(created: &[PathBuf]) -> Value {
     Value::obj().s("op", "delete").v("items", uri_list(created)).b("_silent", true).done()
 }
@@ -740,9 +764,9 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     // at the destination, and undo has to be able to take that away too.
                     created.push(target.clone());
                     job.undo_so_far(copy_inverse(&created));
-                    ops::copy_tree(src, &target, &mut p)?;
+                    ops::copy_tree(src, &target, &mut p).map_err(|e| about_file(e, &name))?;
                 } else {
-                    ops::move_path(src, &target, &mut p)?;
+                    ops::move_path(src, &target, &mut p).map_err(|e| about_file(e, &name))?;
                     moved.push((src.clone(), target.clone()));
                     job.undo_so_far(move_inverse(&moved));
                 }

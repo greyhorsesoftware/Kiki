@@ -36,7 +36,7 @@ Copies of large trees use `copy_file_range` in a loop until all bytes are writte
 
 **Toast**: one line per completed destructive job ("Moved wallpapers.zip to Trash") with an Undo button, dismissed after 8 s or on the next job.
 
-**Activity**: clicking the status bar's progress area (or `activity()` over IPC) opens a popover listing running and recent jobs with progress and a cancel button each. Mirror runs (plan 08) appear here with "N copied, M deleted" when done.
+**Activity**: the orb at the bottom right of the window, the popup it opens, and each job's log — `32-activity.md`. (This plan's "click the status bar's progress area" was an unmarked 200 px hit area; it is gone.)
 
 **Protocol**: `Submit { op } -> JobId`, `Cancel { id }`, `Jobs -> [Job]`, `Undo`, `Redo`, `JobEvents` subscription (one small message per state change or 100 ms of progress), `Collision` prompt round-trip. The shell keeps a `Jobs` `ListModel` patched from `JobEvents`; job messages are a few hundred bytes, so parsing them in QML is free.
 

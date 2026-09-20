@@ -6,6 +6,8 @@ Rectangle {
     id: bar
     property var keys: []        // [{key, label}]
     property string status: ""
+    /// Room kept clear at the right for what the window puts there: the activity orb.
+    property int statusInset: 14
     height: Kiki.Theme.barHeight
     color: Kiki.Theme.bg
     Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Kiki.Theme.line }
@@ -18,5 +20,5 @@ Rectangle {
             Repeater { model: bar.keys; delegate: KeyChip { required property var modelData; key: modelData.key; label: modelData.label } }
         }
     }
-    Text { id: status; anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter; text: bar.status; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+    Text { id: status; anchors.right: parent.right; anchors.rightMargin: bar.statusInset; anchors.verticalCenter: parent.verticalCenter; text: bar.status; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
 }

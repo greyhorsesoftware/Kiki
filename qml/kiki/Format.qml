@@ -70,6 +70,30 @@ QtObject {
     function gitDimmed(row) {
         return !!row && !!row.git && row.git.state === "ignored" && Kiki.Settings.git.showIgnored !== "normal"
     }
+    /// A size as a transfer shows it (plan 32): bytes under 1 KB, whole KB, MB to one decimal,
+    /// GB to two — coarse while small, finer as a rate or a remainder starts to matter.
+    function transferSize(n) {
+        n = Math.max(0, n || 0)
+        if (n < 1024) return n + " B"
+        if (n < 1024 * 1024) return Math.round(n / 1024) + " KB"
+        if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + " MB"
+        return (n / (1024 * 1024 * 1024)).toFixed(2) + " GB"
+    }
+    /// An error as a person wants it: a plugin's or a library's message often arrives wrapped in
+    /// the names of the things that passed it along — "Io: russh::Error: Network is unreachable" —
+    /// and they nest. Every leading `Name:` that looks like a type or a path of types goes.
+    function cleanError(msg) {
+        let m = (msg || "").trim()
+        for (;;) {
+            const hit = m.match(/^(?:[A-Za-z_][\w]*(?:(?:::|\.)[A-Za-z_][\w]*)+|[A-Z][A-Za-z]*(?:Error|Exception)|Io|Invalid)\s*:\s+([\s\S]+)$/)
+            if (!hit) break
+            m = hit[1].trim()
+        }
+        // The daemon's bare codes, as words: "report.pdf: NotFound" reads like a stack trace.
+        const words = { NotFound: "not found", Denied: "permission denied", Exists: "already exists", NotEmpty: "the folder is not empty", Unsupported: "not supported here" }
+        m = m.replace(/(^|: )(NotFound|Denied|Exists|NotEmpty|Unsupported)$/, (all, lead, code) => lead + words[code])
+        return m || "Failed"
+    }
     /// A length of time as a player shows it: 0:07, 3:40, 1:02:05.
     function clock(ms) {
         const t = Math.max(0, Math.floor((ms || 0) / 1000))
