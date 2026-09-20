@@ -63,6 +63,8 @@ Item {
     /// One thumbnail plus the gap after it: the layout and the viewport maths share it, or the
     /// daemon is told about the wrong rows and the thumbnails at the edges never arrive.
     readonly property int shotWidth: 72
+    /// A non-picture on the stage: about two fifths of the stage's shorter side, within reason.
+    readonly property int stageIconSize: Math.max(128, Math.min(320, Math.round(Math.min(width, height) * 0.4)))
     readonly property int shotGap: 8
     readonly property int shotPitch: shotWidth + shotGap
     readonly property int current: pane ? pane.selection.current : -1
@@ -81,9 +83,22 @@ Item {
     }
     /// Opening a folder clears the selection, which would leave the stage on a placeholder.
     /// Land on the first picture instead, or the first row when none has arrived yet.
+    /// Where the stage was when what is on it was sent to the trash. The row goes, the selection
+    /// goes with it, and without this the stage jumped back to the first picture in the folder:
+    /// deleting your way through a shoot started again from the top after every one.
+    property int _place: -1
+    function keepPlace() { _place = current }
     function selectFirst() {
         if (!pane || pane.listing.uri !== pane.uri) return
-        if (current >= 0 || pane.listing.count === 0) return
+        if (current >= 0) { return }
+        if (pane.listing.count === 0) { _place = -1; return }
+        if (_place >= 0) {
+            // The row that followed has moved up into the gap; at the end, the one before.
+            const i = Math.min(_place, pane.listing.count - 1)
+            _place = -1
+            pane.selection.set(i); ensureVisible(i); zoom = 0
+            return
+        }
         for (let i = 0; i < pane.listing.count; i++) {
             const r = pane.listing.row(i)
             if (!r) return
@@ -255,14 +270,20 @@ Item {
         Column {
             visible: !frameA.visible && !frameB.visible
             anchors.centerIn: parent; spacing: 12
-            UI.Icon {
+            // The artwork Icon view draws for it — a folder, a document — scaled to the stage, so
+            // a folder with no pictures in it is a folder to look through, not an empty state.
+            UI.KindIcon {
+                objectName: "gallery-stage-icon"
                 anchors.horizontalCenter: parent.horizontalCenter
-                name: root.row ? root.row.kind : "image"; size: 96; strokeWidth: 1
-                color: Kiki.Theme.kindColor(root.row ? root.row.kind : "image")
+                visible: !!root.row
+                kind: root.row ? root.row.kind : ""
+                size: root.stageIconSize
+                color: Kiki.Theme.kindColor(root.row ? root.row.kind : "file")
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: !root.pane || root.pane.listing.count === 0 ? "No pictures here"
+                objectName: "gallery-stage-label"
+                text: !root.pane || root.pane.listing.count === 0 ? (root.pane && root.pane.listing.done ? "Empty folder" : "")
                     : (root.row ? (root.back.status === Image.Loading ? "loading…" : root.row.name) : "")
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
@@ -444,10 +465,10 @@ Item {
                     sourceSize: Qt.size(144, 144); fillMode: Image.PreserveAspectFit
                     asynchronous: true; smooth: true
                 }
-                UI.Icon {
+                UI.KindIcon {
                     visible: !(shot.r && shot.r.thumb)
-                    anchors.centerIn: parent; size: 28
-                    name: shot.r ? shot.r.kind : "file"; color: Kiki.Theme.kindColor(shot.r ? shot.r.kind : "file")
+                    anchors.centerIn: parent; size: 32
+                    kind: shot.r ? shot.r.kind : "file"; color: Kiki.Theme.kindColor(shot.r ? shot.r.kind : "file")
                 }
                 MouseArea {
                     anchors.fill: parent

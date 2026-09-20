@@ -207,15 +207,23 @@ FloatingWindow {
         projectRoot = uri; projectMode = true; savedWidth = win.width
         win.width = Kiki.Settings.project.width || 320
         const spawned = []
+        // Each tool's window is known by the class the daemon gave its terminal and by its pid;
+        // one class for both used to make Arrange take the editor's window for the agent too. A
+        // tool that will not start says so — the error was dropped, and `e` on a folder did nothing.
+        const started = (role, ok, err) => {
+            if (ok) spawned.push({ role: role, class: ok["class"] || "", pid: ok.pid })
+            else Kiki.Jobs.showToast({ text: "Project mode: the " + role + " did not start — " + ((err && err.message) || "unknown error"), undoable: false })
+        }
         Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri] }, (ok, err) => {
-            if (ok) spawned.push({ role: "editor", class: "kiki-tool", pid: ok.pid })
-            if (Kiki.Settings.project.agent) Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] }, (ok2, err2) => { if (ok2) spawned.push({ role: "agent", class: "kiki-tool", pid: ok2.pid }); arrangeProject(spawned) })
+            started("editor", ok, err)
+            if (Kiki.Settings.project.agent) Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] }, (ok2, err2) => { started("agent", ok2, err2); arrangeProject(spawned) })
             else arrangeProject(spawned)
         })
     }
     function arrangeProject(spawned) {
         if (!Kiki.Settings.project.arrange) return
-        const windows = [{ role: "kiki", class: "kiki", pid: 0 }].concat(spawned)
+        // kiki's own window is found by this process's pid: its class is Quickshell's, not "kiki".
+        const windows = [{ role: "kiki", class: "", pid: Quickshell.processId }].concat(spawned)
         Kiki.Daemon.request("Arrange", { layout: "project", root: projectRoot, windows: windows, leftWidth: Kiki.Settings.project.width || 320 }, (ok, err) => { if (ok && ok.missing.length) Kiki.Jobs.showToast({ text: "Could not place: " + ok.missing.join(", "), undoable: false }) })
     }
     function leaveProject() { projectMode = false; win.width = savedWidth; pane.open(projectRoot) }
@@ -351,7 +359,7 @@ FloatingWindow {
     property alias clipboard: ops.clipboard
     function copySelection(cut) { ops.copySelection(cut) }
     function paste() { ops.paste() }
-    function trashSelection() { ops.trashSelection() }
+    function trashSelection() { if (win.galleryPane()) win.galleryPane().keepPlace(); ops.trashSelection() }
     function newFolder() { ops.newFolder() }
     function renameSelected() { ops.renameSelected() }
     function copyPath() { ops.copyPath() }
@@ -652,6 +660,14 @@ FloatingWindow {
         if (extend) pane.selection.range(i); else pane.selection.set(i)
         viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
     }
+    /// What the bottom bar says about the folder. In the gallery one thing is on the stage at a
+    /// time, so it is where you are among them — "7 of 31" — rather than how many are selected.
+    function countText() {
+        const n = pane.listing.count, more = pane.listing.done ? "" : " …"
+        if (pane.filterText) return n + " match"
+        if (pane.view === "gallery" && !win.split && pane.selection.current >= 0 && n > 0) return (pane.selection.current + 1) + " of " + n + more
+        return n + " items" + more + (pane.selection.count() ? " · " + pane.selection.count() + " selected" : "")
+    }
     /// The focused pane's view item when it is the gallery, else null.
     /// The view item the focused pane is showing, whichever side it is on.
     function currentView() { return (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item }
@@ -732,7 +748,9 @@ FloatingWindow {
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             default:
                 // type-ahead: printable characters without Ctrl/Alt (Vim keys off)
-                if (!ctrl && !alt && !win.vimKeys && !win.sidebarFocus && event.text && event.text.length === 1 && event.text.charCodeAt(0) > 32) { win.typeAhead(event.text); break }
+                // Not in the gallery: its bare keys are commands (0, 1, +, -, F, Space), and a letter
+                // that jumped the stage to another picture would be a surprise beside them.
+                if (!ctrl && !alt && !win.vimKeys && !win.sidebarFocus && !win.galleryPane() && event.text && event.text.length === 1 && event.text.charCodeAt(0) > 32) { win.typeAhead(event.text); break }
                 return
             }
             event.accepted = true
@@ -889,6 +907,11 @@ FloatingWindow {
         visible: win.projectMode
         anchors.fill: parent
         rootUri: win.projectMode ? win.projectRoot : ""
+        // The keys are the tree's while it is up. `keys` lets go of the focus in project mode
+        // and nothing took it, so no key did anything — Esc and Ctrl+Shift+P included, which
+        // left the mouse as the only way out.
+        focus: win.projectMode
+        onVisibleChanged: if (visible) forceActiveFocus()
         home: win.home; repo: win.repo
         onOpenFile: uri => win.editAt(uri, 1)
         onSendToAgent: uri => Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] })
@@ -1067,7 +1090,7 @@ FloatingWindow {
                 { key: "❖C", label: "copy" }, { key: "❖V", label: "paste" }, { key: "/", label: "filter" },
                 { key: "?", label: "keys" }])
             MouseArea { anchors.right: parent.right; width: 200; height: parent.height; onClicked: activity.toggle() }
-            status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + (win.pane.filterText ? (win.pane.listing.count + " match") : (win.pane.listing.count + " items" + (win.pane.listing.done ? "" : " …"))) + (win.pane.selection.count() ? " · " + win.pane.selection.count() + " selected" : "")
+            status: (Kiki.Jobs.running().length ? Kiki.Jobs.running().length + " running · " : "") + win.countText()
         }
 
     }
@@ -1124,7 +1147,7 @@ FloatingWindow {
     }
 
     Component { id: listView; Views.ListPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
-    Component { id: galleryView; Views.GalleryPane { pane: win.left; home: win.home; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openExternal(pane.childUri(pane.listing.row(i).name)) }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
+    Component { id: galleryView; Views.GalleryPane { pane: win.left; home: win.home; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
     Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
 
     Views.SearchOverlay {

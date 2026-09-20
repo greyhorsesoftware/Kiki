@@ -94,6 +94,8 @@ Item {
         case Qt.Key_Return: case Qt.Key_Enter: if (event.modifiers & Qt.AltModifier) { if (r) root.sendToAgent(r.uri) } else root.activate(root.current); break
         case Qt.Key_Slash: filterInput.forceActiveFocus(); break
         case Qt.Key_Escape: root.leave(); break
+        // The chord that came in is the chord that goes out.
+        case Qt.Key_P: if ((event.modifiers & Qt.ControlModifier) && (event.modifiers & Qt.ShiftModifier)) root.leave(); else return; break
         default: return
         }
         event.accepted = true

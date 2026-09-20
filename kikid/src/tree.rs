@@ -197,18 +197,20 @@ fn hyprctl(args: &[&str]) -> Option<String> {
     }
 }
 
-/// Finds a window address by class or pid from `hyprctl clients -j`.
-fn find_window(class: &str, pid: Option<u64>) -> Option<String> {
+/// Finds a window's address from `hyprctl clients -j`: by pid when one is known — that is THE
+/// window — and by class otherwise. Never one in `taken`: two roles must not resolve to the same
+/// window, which is what happened when the editor and the agent shared a class.
+fn find_window(class: &str, pid: Option<u64>, taken: &[String]) -> Option<String> {
     let text = hyprctl(&["clients", "-j"])?;
     let v = crate::json::parse(text.as_bytes()).ok()?;
-    for c in v.as_arr()? {
-        let cls = c.str_field("class").unwrap_or("");
-        let p = c.u64_field("pid");
-        if (!class.is_empty() && cls == class) || (pid.is_some() && p == pid) {
-            return c.str_field("address").map(str::to_string);
-        }
-    }
-    None
+    pick_window(v.as_arr()?, class, pid, taken)
+}
+
+fn pick_window(clients: &[Value], class: &str, pid: Option<u64>, taken: &[String]) -> Option<String> {
+    let free = |c: &&Value| c.str_field("address").is_some_and(|a| !taken.iter().any(|t| t == a));
+    let by_pid = clients.iter().filter(free).find(|c| pid.is_some_and(|p| p > 0) && c.u64_field("pid") == pid);
+    let by_class = || clients.iter().filter(free).find(|c| !class.is_empty() && c.str_field("class") == Some(class));
+    by_pid.or_else(by_class).and_then(|c| c.str_field("address").map(str::to_string))
 }
 
 /// `windows`: [{ role, class, pid }] in left-to-right order; the first gets `left_width` px.
@@ -227,7 +229,8 @@ pub fn arrange(windows: &[Value], left_width: u32) -> Value {
         let role = w.str_field("role").unwrap_or("").to_string();
         let mut found = None;
         for _ in 0..25 {
-            found = find_window(w.str_field("class").unwrap_or(""), w.u64_field("pid"));
+            let taken: Vec<String> = addrs.iter().map(|(_, a)| a.clone()).collect();
+            found = find_window(w.str_field("class").unwrap_or(""), w.u64_field("pid"), &taken);
             if found.is_some() {
                 break;
             }
@@ -289,5 +292,22 @@ mod tests {
         t.expand(1, false).unwrap();
         assert_eq!(t.visible.len(), 3);
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Project mode puts three windows side by side, and has to know which is which.
+    #[test]
+    fn a_window_is_found_by_pid_first_and_never_twice() {
+        let client = |addr: &str, class: &str, pid: u64| Value::obj().s("address", addr).s("class", class).u("pid", pid).done();
+        let clients = vec![client("0xa", "org.quickshell", 100), client("0xb", "kiki-tool-neovim", 200), client("0xc", "kiki-tool-claude", 300), client("0xd", "kiki-tool-claude", 301)];
+        // kiki's own window has Quickshell's class: only the pid finds it.
+        assert_eq!(pick_window(&clients, "", Some(100), &[]), Some("0xa".into()));
+        assert_eq!(pick_window(&clients, "kiki", Some(0), &[]), None, "no pid and a class nobody has: not found, rather than the first window");
+        // The pid is THE window, even when another shares its class.
+        assert_eq!(pick_window(&clients, "kiki-tool-claude", Some(301), &[]), Some("0xd".into()));
+        // A terminal that forks (its pid is not the window's) is found by its class instead…
+        assert_eq!(pick_window(&clients, "kiki-tool-neovim", Some(999), &[]), Some("0xb".into()));
+        // …and a window already given to one role is not given to another.
+        assert_eq!(pick_window(&clients, "kiki-tool-claude", Some(999), &["0xc".to_string()]), Some("0xd".into()));
+        assert_eq!(pick_window(&clients, "kiki-tool-claude", None, &["0xc".to_string(), "0xd".to_string()]), None);
     }
 }

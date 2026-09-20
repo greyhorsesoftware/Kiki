@@ -122,6 +122,14 @@ impl Client {
         let b = &req.body;
         let result: Result<Option<Value>, (&str, String)> = match req.kind.as_str() {
             "Hello" => {
+                // A client built for another protocol is told so, in words it can show, instead of
+                // being answered as if all were well and failing later on a request that has
+                // changed shape. One that names no version is taken at its word (scripts, tests).
+                if let Some(theirs) = b.u64_field("version") {
+                    if theirs != proto::PROTOCOL_VERSION {
+                        return self.reply(id, Err(("Version", format!("this kikid speaks protocol {}, the client {theirs}: restart kiki after an upgrade (systemctl --user restart kikid.service)", proto::PROTOCOL_VERSION))));
+                    }
+                }
                 if b.str_field("client") == Some("kiki") {
                     crate::dbus::register_shell(self.tx.clone());
                 }
@@ -264,7 +272,8 @@ impl Client {
                 }
                 let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
-                crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).done())).map_err(|e| ("Invalid", e))
+                let class = crate::openin::find(&key).and_then(|t| t.str_field("id").map(crate::openin::window_class)).unwrap_or_default();
+                crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).s("class", class).done())).map_err(|e| ("Invalid", e))
             }
             "OpenInTest" => {
                 let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
@@ -358,7 +367,14 @@ impl Client {
             },
             "Favorites" => Ok(Some(Value::obj().v("items", crate::config::favorites()).done())),
             "SetFavorites" => match b.get("items").and_then(Value::as_arr) {
-                Some(items) => crate::config::set_favorites(items).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
+                // Every window, not just the one that asked: a second window's sidebar listens
+                // for this, and until now nobody ever said it.
+                Some(items) => crate::config::set_favorites(items)
+                    .map(|_| {
+                        crate::jobs::broadcast(proto::event("FavoritesChanged").done());
+                        Some(Value::obj().done())
+                    })
+                    .map_err(|e| ("Io", e.to_string())),
                 None => Err(("Protocol", "missing items".into())),
             },
             "Volumes" => Ok(Some(Value::obj().v("items", crate::config::volumes()).done())),
@@ -408,7 +424,7 @@ impl Client {
                     .map(|verify| match verify {
                         Some(fp) => Some(Value::obj().s("verify", fp).s("host", loc.get("config").and_then(|c| c.str_field("host")).unwrap_or("")).done()),
                         None => {
-                            let _ = self.tx.send(proto::event("LocationsChanged").done());
+                            crate::jobs::broadcast(proto::event("LocationsChanged").done());
                             Some(Value::obj().done())
                         }
                     })
@@ -418,7 +434,7 @@ impl Client {
             "SetLocationImage" => match b.str_field("name") {
                 Some(n) => crate::locations::set_image(n, b.str_field("image"))
                     .map(|_| {
-                        let _ = self.tx.send(proto::event("LocationsChanged").done());
+                        crate::jobs::broadcast(proto::event("LocationsChanged").done());
                         Some(Value::obj().done())
                     })
                     .map_err(|e| ("Io", e.to_string())),
@@ -433,7 +449,7 @@ impl Client {
                     }
                     crate::locations::remove(n)
                         .map(|_| {
-                            let _ = self.tx.send(proto::event("LocationsChanged").done());
+                            crate::jobs::broadcast(proto::event("LocationsChanged").done());
                             Some(Value::obj().done())
                         })
                         .map_err(|e| ("Io", e.to_string()))

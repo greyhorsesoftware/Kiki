@@ -151,7 +151,24 @@ pub fn mark_stale(path: &std::path::Path) {
 /// are still on it, and take it out of the cache so the next open builds a fresh handle.
 pub fn gone(path: &std::path::Path) {
     mark_stale(path);
+    // The windows still showing it are told, so they can say the folder is gone rather than go
+    // on showing rows for files that are not there (`WindowCache` has always listened for this).
+    if let Some(l) = find(path) {
+        let subs = l.inner.lock().unwrap().subscribers.clone();
+        for s in subs {
+            let _ = s.tx.send(crate::proto::event("Gone").u("lid", s.lid).done());
+        }
+    }
     forget(&Uri::from_path(path));
+}
+
+/// Does `path` still lead to the folder this listing was opened on? False once it has been
+/// deleted, or moved away and another put in its place.
+pub fn still_there(path: &std::path::Path) -> bool {
+    match find(path) {
+        Some(l) => l.dir.still_at(&l.path),
+        None => true,
+    }
 }
 
 /// Every local listing in memory at or under `root`: what a change to a repository's state

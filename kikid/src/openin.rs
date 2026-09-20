@@ -33,7 +33,7 @@ pub fn presets() -> Vec<Value> {
             "nvim",
             "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !kiki --ipc saved %:p' --cmd 'nnoremap <leader>k :silent! !kiki --ipc reveal %:p<CR>' +{line} {file}",
             true,
-            "file",
+            "both",
             Some("editor"),
             Some("nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'"),
             true,
@@ -198,16 +198,24 @@ pub fn prepare(tool: &Value, uris: &[Uri], line: Option<u64>, template: &str) ->
     Ok(Prepared { command, cwd: dir, terminal: tool.get("terminal").and_then(Value::as_bool).unwrap_or(true), env })
 }
 
-pub fn terminal_command() -> Vec<String> {
+/// The window class a tool's terminal is given, so the compositor can tell kiki's editor from
+/// kiki's agent. One class for every tool left `Arrange` to match the first window it found for
+/// both roles.
+pub fn window_class(id: &str) -> String {
+    let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    format!("kiki-tool-{safe}")
+}
+
+pub fn terminal_command(class: &str) -> Vec<String> {
     let pref = crate::config::settings().get("editor").and_then(|e| e.str_field("terminal").map(str::to_string)).unwrap_or_else(|| "auto".into());
     let candidates: Vec<&str> = if pref == "auto" { vec!["ghostty", "alacritty", "kitty", "foot", "wezterm"] } else { vec![pref.as_str()] };
     for c in candidates {
         if on_path(c) {
             return match c {
-                "ghostty" => vec!["ghostty".into(), "--class=kiki-tool".into(), "-e".into()],
-                "alacritty" => vec!["alacritty".into(), "--class".into(), "kiki-tool".into(), "-e".into()],
-                "kitty" => vec!["kitty".into(), "--class".into(), "kiki-tool".into()],
-                "foot" => vec!["foot".into(), "--app-id=kiki-tool".into()],
+                "ghostty" => vec!["ghostty".into(), format!("--class={class}"), "-e".into()],
+                "alacritty" => vec!["alacritty".into(), "--class".into(), class.into(), "-e".into()],
+                "kitty" => vec!["kitty".into(), "--class".into(), class.into()],
+                "foot" => vec!["foot".into(), format!("--app-id={class}")],
                 _ => vec![c.to_string(), "-e".into()],
             };
         }
@@ -221,6 +229,9 @@ pub fn terminal_command() -> Vec<String> {
 struct Session {
     child: Child,
     files: Vec<String>,
+    /// Where it was started: asking for the same tool in the same place again is asking for the
+    /// one that is running, not for a second.
+    cwd: PathBuf,
 }
 
 fn sessions() -> &'static Mutex<HashMap<String, Session>> {
@@ -255,12 +266,23 @@ pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, b
             return Ok((s.child.id(), true));
         }
     }
+    // A tool with no way to be handed more files (an agent in a terminal) that is already
+    // running in this very folder is simply the one that was asked for: leaving project mode and
+    // coming back used to start a second agent beside the first.
+    if running && tool.str_field("reuse").is_none() {
+        let here = prepare(&tool, uris, line, tool.str_field("command").unwrap_or(""))?.cwd;
+        if let Some(s) = sessions.get(&id) {
+            if s.cwd == here {
+                return Ok((s.child.id(), true));
+            }
+        }
+    }
     // Nothing of ours is listening (or this would have been a reuse): a socket file still there
     // is the last session's, and would stop this one from listening.
     clear_socket(&id);
     let p = prepare(&tool, uris, line, tool.str_field("command").unwrap_or(""))?;
     let mut cmd = if p.terminal {
-        let t = terminal_command();
+        let t = terminal_command(&window_class(&id));
         let mut c = Command::new(&t[0]);
         c.args(&t[1..]).arg("sh").arg("-c").arg(&p.command);
         c
@@ -271,7 +293,7 @@ pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, b
     };
     let child = cmd.current_dir(&p.cwd).envs(p.env.clone()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| format!("launch failed: {e}"))?;
     let pid = child.id();
-    sessions.insert(id.clone(), Session { child, files: uris.iter().map(|u| u.to_string()).collect() });
+    sessions.insert(id.clone(), Session { child, files: uris.iter().map(|u| u.to_string()).collect(), cwd: p.cwd.clone() });
     drop(sessions);
     place(tool.str_field("placement").unwrap_or("right"));
     Ok((pid, false))

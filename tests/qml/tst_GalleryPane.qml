@@ -100,4 +100,63 @@ TestCase {
     function test_the_picture_gets_the_room_the_bar_used_to_take() {
         compare(gallery.stageHeight, gallery.height - gallery.stripHeight)
     }
+
+    // ---------------------------------------------------------------- a folder with no pictures
+
+    function openTree(entries) {
+        fake.tree = { "file:///home/t/docs": entries }
+        pane.open("file:///home/t/docs")
+        wait(60)
+    }
+
+    // Not an empty state: its folders and files, with the artwork Icon view draws, scaled up.
+    function test_a_folder_with_no_pictures_shows_its_entries_large() {
+        openTree([fake.dir("Projects"), fake.file("notes.txt"), fake.file("report.pdf", { kind: "pdf" })])
+        tryCompare(gallery, "current", 0)
+        const icon = findChild(gallery, "gallery-stage-icon")
+        verify(icon.visible)
+        compare(icon.kind, "folder")
+        verify(icon.size >= 128 && icon.size <= 320, "scaled to the stage: " + icon.size)
+        compare(icon.size, gallery.stageIconSize)
+        compare(findChild(gallery, "gallery-stage-label").text, "Projects")
+
+        verify(gallery.step(1))
+        compare(icon.kind, "text")
+        compare(findChild(gallery, "gallery-stage-label").text, "notes.txt")
+        verify(gallery.step(1))
+        compare(icon.kind, "pdf")
+        verify(!gallery.step(1) || gallery.current === 2, "the last entry is the end")
+    }
+
+    function test_a_folder_with_nothing_in_it_says_so() {
+        openTree([])
+        tryCompare(findChild(gallery, "gallery-stage-label"), "text", "Empty folder")
+        verify(!findChild(gallery, "gallery-stage-icon").visible)
+    }
+
+    // ---------------------------------------------------------------- deleting your way through
+
+    // The row goes and the selection with it; the stage used to jump back to the first picture.
+    function test_after_a_delete_the_stage_moves_to_what_followed() {
+        const pics = ["a.jpg", "b.jpg", "c.jpg", "d.jpg"].map(n => fake.file(n, { kind: "image" }))
+        openTree(pics)
+        pane.selection.set(1)                       // b.jpg
+        gallery.keepPlace()
+        fake.tree = { "file:///home/t/docs": pics.filter(p => p.name !== "b.jpg") }
+        pane.selection.clear()
+        fake._resetListing(pane.listing.lid)
+        tryCompare(gallery, "current", 1)
+        tryVerify(() => gallery.row && gallery.row.name === "c.jpg", 2000, "what followed b.jpg, not a.jpg")
+    }
+
+    function test_deleting_the_last_one_steps_back() {
+        const pics = ["a.jpg", "b.jpg", "c.jpg"].map(n => fake.file(n, { kind: "image" }))
+        openTree(pics)
+        pane.selection.set(2)
+        gallery.keepPlace()
+        fake.tree = { "file:///home/t/docs": pics.slice(0, 2) }
+        pane.selection.clear()
+        fake._resetListing(pane.listing.lid)
+        tryCompare(gallery, "current", 1)
+    }
 }

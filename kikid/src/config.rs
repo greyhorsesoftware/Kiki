@@ -336,14 +336,40 @@ pub fn eject(device: &str) -> Result<(), String> {
 /// How many folders keep their own view and sort; the least recently set fall off the end.
 pub const VIEW_PREFS_CAP: usize = 1000;
 
+/// `view = "mirror"` in views.toml is an artefact, not a choice: the two-pane layout once lived in
+/// a pane's view, and merely entering it wrote itself down as the folder's preference (plan 29 J).
+/// Such an entry loses its `view` and keeps its sort and hidden-files choice. Returns whether
+/// anything was changed.
+fn drop_mirror_views(folders: &mut [Value]) -> bool {
+    let mut changed = false;
+    for f in folders.iter_mut() {
+        if f.str_field("view") == Some("mirror") {
+            if let Value::Obj(m) = f {
+                m.remove("view");
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// `views.toml`: `[[folder]] uri, view, sort, order, at`.
 pub fn view_prefs() -> Value {
-    let v = read_named("views.toml");
+    let mut v = read_named("views.toml");
+    if let Value::Obj(m) = &mut v {
+        if let Some(Value::Arr(folders)) = m.get_mut("folder") {
+            // Cleaned where it is kept, once: a file with nothing to clean is never rewritten.
+            if drop_mirror_views(folders) {
+                let _ = write_named("views.toml", &v);
+            }
+        }
+    }
     let mut out = std::collections::BTreeMap::new();
     if let Some(Value::Arr(a)) = v.get("folder") {
         for f in a {
             if let Some(uri) = f.str_field("uri") {
-                let mut o = Value::obj().s("view", f.str_field("view").unwrap_or("list")).s("sort", f.str_field("sort").unwrap_or("name")).s("order", f.str_field("order").unwrap_or("asc"));
+                // No `view` means "no opinion on the view": the pane keeps its default.
+                let mut o = Value::obj().opt_s("view", f.str_field("view")).s("sort", f.str_field("sort").unwrap_or("name")).s("order", f.str_field("order").unwrap_or("asc"));
                 if let Some(h) = f.get("hidden").and_then(Value::as_bool) {
                     o = o.b("hidden", h);
                 }
@@ -483,6 +509,60 @@ mod view_pref_tests {
         assert!(matches!(&p, crate::json::Value::Obj(m) if m.len() == 2));
         super::clear_view_prefs().unwrap();
         assert!(matches!(super::view_prefs(), crate::json::Value::Obj(m) if m.is_empty()));
+        std::env::remove_var("KIKI_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// `view = "mirror"` was written by merely entering the two-pane layout, back when that was a
+    /// view. It is taken out of the file on load; the folder's sort and hidden-files choice stay.
+    #[test]
+    fn a_stored_mirror_view_is_cleaned_out_and_the_rest_is_kept() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-views-mirror-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::env::set_var("KIKI_CONFIG_DIR", &d);
+        super::set_view_pref("file:///site", "mirror", "mtime", "desc", Some(true)).unwrap();
+        super::set_view_pref("file:///photos", "gallery", "name", "asc", None).unwrap();
+        let file = d.join("views.toml");
+        assert!(std::fs::read_to_string(&file).unwrap().contains("mirror"));
+
+        let p = super::view_prefs();
+        let site = p.get("file:///site").unwrap();
+        assert_eq!(site.str_field("view"), None, "no opinion on the view any more");
+        assert_eq!(site.str_field("sort"), Some("mtime"));
+        assert_eq!(site.str_field("order"), Some("desc"));
+        assert_eq!(site.get("hidden"), Some(&crate::json::Value::Bool(true)));
+        assert_eq!(p.get("file:///photos").unwrap().str_field("view"), Some("gallery"), "a real choice is untouched");
+        let cleaned = std::fs::read_to_string(&file).unwrap();
+        assert!(!cleaned.contains("mirror"), "and it is gone from the file, not just from the answer");
+
+        // Nothing left to clean: reading again must not rewrite the file.
+        super::view_prefs();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), cleaned);
+        std::env::remove_var("KIKI_CONFIG_DIR");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Plan 21: at most VIEW_PREFS_CAP folders; the least recently set fall off.
+    #[test]
+    fn the_cap_drops_the_oldest() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-views-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::env::set_var("KIKI_CONFIG_DIR", &d);
+        // Written straight to the file, oldest first: a thousand and five calls to
+        // `set_view_pref` would stamp them all with the same second.
+        use crate::json::Value;
+        let folders: Vec<Value> = (0..super::VIEW_PREFS_CAP as u64 + 4).map(|i| Value::obj().s("uri", format!("file:///f{i}")).s("view", "list").s("sort", "name").s("order", "asc").u("at", 1_000 + i).done()).collect();
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("folder".to_string(), Value::Arr(folders));
+        super::write_named("views.toml", &Value::Obj(m)).unwrap();
+        super::set_view_pref("file:///newest", "icon", "name", "asc", None).unwrap();
+        let p = super::view_prefs();
+        assert!(matches!(&p, Value::Obj(m) if m.len() == super::VIEW_PREFS_CAP));
+        assert!(p.get("file:///newest").is_some(), "the one just set is kept");
+        assert!(p.get("file:///f0").is_none() && p.get("file:///f4").is_none(), "the five oldest went");
+        assert!(p.get("file:///f5").is_some(), "and no more than that");
         std::env::remove_var("KIKI_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(&d);
     }

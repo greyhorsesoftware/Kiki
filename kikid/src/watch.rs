@@ -123,6 +123,7 @@ mod imp {
         let mut pending: HashMap<PathBuf, Batch> = HashMap::new();
         // Repository root -> when its first unreported change was seen.
         let mut repos_pending: HashMap<PathBuf, Instant> = HashMap::new();
+        let mut last_sweep = Instant::now();
         loop {
             // Poll with a short timeout so coalesced events flush even when quiet.
             let mut pfd = libc::pollfd { fd: raw, events: libc::POLLIN, revents: 0 };
@@ -169,6 +170,21 @@ mod imp {
                 }
             }
             let now = Instant::now();
+            // Deleted from under us? The kernel does not say: a cached listing holds its folder
+            // open, IN_DELETE_SELF waits for the last holder to let go, and removing a folder
+            // touches nothing inside it — an empty one vanishes without a single event. So once a
+            // second each watched path is asked whether it still leads to the folder that was
+            // opened there (one `stat`; there are at most MAX_WATCHES of them).
+            if now.duration_since(last_sweep) >= Duration::from_secs(1) {
+                last_sweep = now;
+                let watched: Vec<PathBuf> = state().lock().unwrap().by_path.keys().cloned().collect();
+                for p in watched {
+                    if !crate::listing::still_there(&p) {
+                        pending.remove(&p);
+                        gone(&p);
+                    }
+                }
+            }
             let settled: Vec<PathBuf> = repos_pending.iter().filter(|(_, at)| now.duration_since(**at) >= REPO_DEBOUNCE).map(|(r, _)| r.clone()).collect();
             for root in settled {
                 repos_pending.remove(&root);
@@ -202,6 +218,8 @@ mod imp {
     fn gone(path: &PathBuf) {
         let mut s = state().lock().unwrap();
         if let Some(wd) = s.by_path.remove(path) {
+            // Still registered when we worked it out ourselves rather than being told.
+            let _ = inotify::inotify_remove_watch(&s.fd, wd);
             s.by_wd.remove(&wd);
         }
         drop(s);
