@@ -343,7 +343,7 @@ fn the_guards_refuse_before_anything_is_deleted() {
     // Confirmed, the same plan runs.
     s.confirmed_large_delete = true;
     let plan = diff(&m, &r, &s, Detector::SizeOnly, 0).unwrap();
-    let out = execute(&Arc::new(Mutex::new(plan)), &s, &ctx).ok().expect("confirmed, the same plan runs");
+    let out = execute(&Arc::new(Mutex::new(plan)), &s, &ctx).expect("confirmed, the same plan runs");
     assert_eq!(out.deletes, 3);
     assert!(!d.join("r/two").exists() && d.join("r/one").exists());
 

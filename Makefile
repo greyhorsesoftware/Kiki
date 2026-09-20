@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test test-rust test-qml test-e2e e2e-servers coverage run daemon shell fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e e2e-servers coverage run daemon shell fmt lint clean
 
 all: build
 
@@ -20,12 +20,18 @@ all: build
 build:
 	$(CARGO) build --release
 
-test: test-rust test-qml test-e2e
+## Clippy is part of the suite, not a separate chore: a warning fails `make test` (plan 30 W5).
+test: clippy test-rust test-qml test-e2e
+
+clippy:
+	$(CARGO) clippy --all-targets -- -D warnings
 
 test-rust:
 	$(CARGO) test
 
-## Leaf and interaction tests: no compositor, about five seconds.
+## Leaf and interaction tests: no compositor, about five seconds. Offscreen, so the developer's
+## own pointer and windows cannot make a test flaky; QT_QPA_PLATFORM in the environment wins.
+test-qml: export QT_QPA_PLATFORM ?= offscreen
 test-qml:
 	$(QMLTESTRUNNER) -import tests/qml/stubs -input tests/qml
 
@@ -53,9 +59,8 @@ shell:
 fmt:
 	$(CARGO) fmt --all
 
-lint:
+lint: clippy
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --all-targets -- -D warnings
 
 clean:
 	$(CARGO) clean

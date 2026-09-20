@@ -154,6 +154,7 @@ fn local_ipv4() -> Option<std::net::Ipv4Addr> {
 /// - a device answers an announce by POSTing to the announcer's port 53317, and only falls back
 ///   to a multicast reply when that fails. On a machine where the LocalSend app is running — it
 ///   ships with Omarchy — the app takes that POST, it succeeds, and kiki hears nothing.
+///
 /// Outbound connections need nothing from the firewall. The same /24 the app assumes.
 fn scan_subnet(me: &str) -> std::sync::mpsc::Receiver<Target> {
     let (tx, rx) = std::sync::mpsc::channel();

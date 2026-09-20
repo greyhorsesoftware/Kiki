@@ -105,14 +105,6 @@ pub struct Listing {
     inner: Mutex<Inner>,
 }
 
-impl Listing {
-
-}
-
-impl Inner {
-
-}
-
 mod names {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};

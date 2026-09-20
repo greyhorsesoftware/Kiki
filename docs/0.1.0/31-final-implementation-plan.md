@@ -55,11 +55,13 @@ These were "build it or strike it from the plan" choices the audit turned up. Th
 
 Eleven phases. Each ends with `make test` green and a commit (or several, by topic). Sizes are working days for one person and are the audit's estimates, not promises.
 
-### Phase 0 — a clean tree (½ day)
+### Phase 0 — a clean tree (½ day) — **done 2026-09-19**
 
-- Commit what is there, split by topic (plan 29 G). The tree is 60+ files ahead, with untracked work that phases 3–6 build on (`transfer.rs`, `remote_transfers.py`, `ftps_server.py`, the LocalSend identity and pinned-TLS tests, `viewmenu.js`, four new QML tests).
-- `Makefile` (30 W5, none of it done): `QT_QPA_PLATFORM=offscreen` for `test-qml`; clippy (`-D warnings`) inside `test`; a real **`e2e-servers`** target (venv with pyftpdlib + pyOpenSSL) — `remote_transfers.py`'s docstring names it and it does not exist, so the FTPS pairs skip on this machine.
-- Delete the empty `impl Inner {}`; `cargo clippy --fix` and read the diff.
+- The tree was committed whole (`7541e5d`), not split by topic; one local commit, left as it is.
+- `Makefile` (30 W5): `test-qml` runs offscreen (`QT_QPA_PLATFORM ?= offscreen`, the environment wins); `clippy` is a target of its own and the first thing `make test` runs; `lint` is `clippy` plus the format check. `jobs::wait`'s poll stays in phase 2.
+- Clippy at zero: the seven warnings fixed (two by hand — a `Chunk` type alias in the SFTP plugin, a doc list in LocalSend), and the empty `impl Inner {}` and `impl Listing {}` deleted.
+- **The audit was wrong about FTPS**: `make e2e-servers` exists, `tests/e2e/.venv` is there, and the FTPS pairs of `remote_transfers` run on this machine. Nothing to do.
+- **Baseline, 2026-09-19, clippy clean**: `cargo test` 145 passed, 0 failed; `make test-qml` (offscreen) 300 passed, 0 failed; `make test-e2e` under `cage` 183 passed, 0 failed, 1 skipped (`pointer_ops`, the virtual pointer). These replace plan 29's 112 / 155 / 85.
 
 ### Phase 1 — make the build match the decisions (1½ days)
 

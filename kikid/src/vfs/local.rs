@@ -24,7 +24,7 @@ impl DirHandle {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            return self.file.metadata().ok().map(|m| (m.dev(), m.ino()));
+            self.file.metadata().ok().map(|m| (m.dev(), m.ino()))
         }
         #[cfg(not(unix))]
         None
@@ -66,7 +66,7 @@ impl super::Source for DirHandle {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::MetadataExt;
-                    return mine == (now.dev(), now.ino());
+                    mine == (now.dev(), now.ino())
                 }
                 #[cfg(not(unix))]
                 true

@@ -24,6 +24,8 @@ const READ_IN_FLIGHT: usize = 32;
 /// followed up (see `read_pipelined`). 64 KiB is under every cap met so far, so the follow-up is
 /// the exception and the pipeline stays full.
 const READ_CHUNK: u32 = 64 * 1024;
+/// One chunk request in flight: the task that will hand back its bytes.
+type Chunk = tokio::task::JoinHandle<std::result::Result<Vec<u8>, russh_sftp::client::error::Error>>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FastScan {
@@ -425,7 +427,7 @@ impl Sftp {
         self.rt.block_on(async {
             let handle = raw.open(path, OpenFlags::READ, Default::default()).await.map_err(sftp_err)?.handle;
             let size = raw.fstat(handle.clone()).await.ok().and_then(|a| a.attrs.size);
-            let mut inflight: VecDeque<(u64, tokio::task::JoinHandle<std::result::Result<Vec<u8>, russh_sftp::client::error::Error>>)> = VecDeque::new();
+            let mut inflight: VecDeque<(u64, Chunk)> = VecDeque::new();
             let mut next = offset;
             let mut eof = false;
             let issue = |raw: &Arc<RawSftpSession>, handle: &str, off: u64| {

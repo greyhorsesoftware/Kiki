@@ -637,7 +637,7 @@ impl Plugin {
     fn connect_cfg(&mut self, port: u16, password: &str, extra: &[(&str, &str)]) -> Value {
         let mut cfg = Value::obj().s("host", "127.0.0.1").s("port", port.to_string()).s("username", "kiki");
         for (k, v) in extra {
-            cfg = cfg.s(*k, *v);
+            cfg = cfg.s(k, *v);
         }
         let (_, r) = self.req(Value::obj().s("type", "Connect").s("location", "lab").s("role", "browse").v("config", cfg.done()).v("secrets", Value::obj().s("password", password).done()).done());
         r
