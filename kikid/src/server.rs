@@ -506,6 +506,16 @@ impl Client {
             "Jobs" => Ok(Some(Value::obj().v("jobs", crate::jobs::list()).done())),
             // Forgetting finished jobs is the daemon's to do: the list is fetched again on every
             // reconnect, which would bring back whatever a window had only hidden. Live jobs stay.
+            // What the Log button opens; asked again from `next` while the window is up.
+            "JobLog" => match b.u64_field("job") {
+                Some(job) => crate::joblog::read_job(job, b.u64_field("from").unwrap_or(0)).map(Some).ok_or(("NotFound", "no log for that job".to_string())),
+                None => Err(("Protocol", "missing job".into())),
+            },
+            // Everything a location's plugin has said, for a location that will not connect.
+            "LocationLog" => match b.str_field("location").and_then(crate::locations::find) {
+                Some(loc) => Ok(Some(crate::joblog::read_plugin(loc.str_field("plugin").unwrap_or(""), b.u64_field("from").unwrap_or(0)))),
+                None => Err(("NotFound", "no such location".into())),
+            },
             "ClearJobs" => Ok(Some(Value::obj().u("cleared", crate::jobs::dismiss(None)).done())),
             "DismissJob" => match b.u64_field("job") {
                 Some(job) => Ok(Some(Value::obj().u("cleared", crate::jobs::dismiss(Some(job))).done())),

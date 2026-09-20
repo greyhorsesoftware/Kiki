@@ -114,7 +114,8 @@ def lists(ctx, uri, name, timeout=8):
     return (time.time() - t0) if got else None
 
 
-BIG_MB = 768
+# Big enough that it is still going after everything asked of it below (loopback is fast).
+BIG_MB = 1536
 
 
 def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
@@ -150,7 +151,7 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     c.check(f"{tag}: a folder never seen before lists while it runs", took is not None and took < 5, f"{took and round(took, 2)} s")
     c.check(f"{tag}: and the upload was still running when it did (else this proved nothing)", isinstance(still, dict) and still["state"] == "running", still)
 
-    fast = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("rate", 0) > 0, timeout=10)
+    fast = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("rate", 0) > 0, timeout=3)
     c.check(f"{tag}: and how fast it is going", fast is not None, _job_state(d, job))
     d.events.clear()
     d.ok("Cancel", job=job)
@@ -257,6 +258,32 @@ def run(ctx):
                     else:
                         c.check(f"{tag}: and nothing is left behind", not left, os.listdir(os.path.join(s_root, s_rel)))
         c.check("every pair of ends that could be started was tried", n == 2 * len(ends) ** 2, n)
+
+        # The job's log (plan 32): kiki's own account, and beneath it what the plugin and its
+        # library did on the server — for that job, with no secret in it.
+        for tag in ports:
+            if tag not in ends:
+                continue
+            build(os.path.join(local_root, f"log-{tag}", "site"))
+            os.makedirs(os.path.join(ends[tag][0], f"log-in-{tag}"))
+            job = d.ok("Submit", op={"op": "copy", "items": [ends["local"][1](f"log-{tag}/site")], "dest": ends[tag][1](f"log-in-{tag}")})["job"]
+            d.wait_job(job, timeout=JOB_TIMEOUT)
+            log = d.ok("JobLog", job=job)
+            lines = log["lines"]
+            mine = [l["text"] for l in lines if l["source"] == "kiki"]
+            theirs = [l for l in lines if l["source"].startswith(tag)]
+            c.check(f"{tag}: the log opens with what was asked and closes with how it went", mine and "started" in mine[0] and mine[-1].startswith("finished: 6 of 6 items"), mine[:1] + mine[-1:])
+            c.check(f"{tag}: it names each file as it is begun", any(t.startswith("site/images/logo.bin (3145728 bytes)") for t in mine), mine)
+            c.check(f"{tag}: and holds what was done on the server for it: the part file written, then renamed into place",
+                    any("logo.bin.kiki-part" in l["text"] and l["text"].startswith("write ") for l in theirs) and any(l["text"].startswith("rename ") and "logo.bin" in l["text"] for l in theirs), [l["text"][:60] for l in theirs][:6])
+            c.check(f"{tag}: on a session of that job's own", any(f"(job-{job})" in l["text"] for l in theirs), [l["text"] for l in theirs if "connect" in l["text"]])
+            c.check(f"{tag}: a story, not a packet dump", len(lines) < 150, len(lines))
+            text = " ".join(l["text"] for l in lines) + " ".join(l["text"] for l in d.ok("LocationLog", location=f"e2e-{tag}")["lines"])
+            c.check(f"{tag}: and the password is nowhere in it, nor in the location's own log", "s3cret" not in text)
+            more = d.ok("JobLog", job=job, **{"from": log["next"]})
+            c.check(f"{tag}: reading on from where the last read ended gets nothing twice", more["lines"] == [] and more["next"] == log["next"], more)
+            d.ok("DismissJob", job=job)
+            c.check(f"{tag}: a dismissed job's log goes with it", "err" in d.call("JobLog", job=job))
 
         for tag, port in ports.items():
             if tag in ends:

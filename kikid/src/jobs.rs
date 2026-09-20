@@ -158,7 +158,7 @@ fn queue() -> &'static Mutex<Queue> {
     })
 }
 
-fn state_dir() -> PathBuf {
+pub(crate) fn state_dir() -> PathBuf {
     if let Ok(d) = std::env::var("KIKI_STATE_DIR") {
         return PathBuf::from(d);
     }
@@ -226,6 +226,9 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
             // Keep every live job and the most recent hundred finished ones.
             let finished: Vec<u64> = q.jobs.iter().filter(|j| !matches!(j.status.lock().unwrap().state, State::Running | State::Queued)).map(|j| j.id).collect();
             let drop_below = finished.get(finished.len().saturating_sub(100)).copied().unwrap_or(0);
+            for old in q.jobs.iter().filter(|j| j.id < drop_below && !matches!(j.status.lock().unwrap().state, State::Running | State::Queued)) {
+                crate::joblog::forget(old.id);
+            }
             q.jobs.retain(|j| j.id >= drop_below || matches!(j.status.lock().unwrap().state, State::Running | State::Queued));
         }
         q.pending.push_back(Arc::clone(&job));
@@ -255,6 +258,11 @@ fn pump() {
             .name(format!("job-{}", job.id))
             .spawn(move || {
                 job.set_state(State::Running);
+                crate::joblog::say(job.id, "info", format!("{} — started{}", job.title, match (&job.about.src, &job.about.dest) {
+                    (Some(s), Some(d)) => format!(": {s} → {d}"),
+                    (Some(s), None) => format!(": {s}"),
+                    _ => String::new(),
+                }));
                 let result = run(&job);
                 let inverse = match result {
                     Ok(inv) => {
@@ -272,13 +280,20 @@ fn pump() {
                             st.done = st.done.max(st.total);
                             st.bytes = st.bytes.max(st.bytes_total);
                         }
+                        {
+                            let st = job.status.lock().unwrap();
+                            crate::joblog::say(job.id, "info", format!("{}: {} of {} items, {} bytes", if ended == State::Done { "finished" } else { "cancelled" }, st.done, st.total, st.bytes));
+                        }
                         job.set_state(ended);
                         inv
                     }
                     Err(e) => {
                         if job.cancel.load(Ordering::Relaxed) {
+                            crate::joblog::say(job.id, "warn", "cancelled");
                             job.set_state(State::Cancelled);
                         } else {
+                            crate::joblog::say(job.id, "error", format!("failed: {}", e.message()));
+                            crate::joblog::keep_failure(job.id, &job.title, &e.message());
                             job.set_state(State::Failed(e.message()));
                         }
                         job.partial.lock().unwrap().take()
@@ -321,6 +336,7 @@ impl Job {
     /// A file has been started: what the activity view's detail row names. `size` 0 when the
     /// file's own progress is not tracked (a mirror copies several at once).
     pub(crate) fn file_started(&self, name: &str, size: u64) {
+        crate::joblog::say(self.id, "debug", if size > 0 { format!("{name} ({size} bytes)") } else { name.to_string() });
         self.live.lock().unwrap().current = Some((name.to_string(), 0, size));
     }
 
@@ -528,6 +544,7 @@ pub fn cancel(id: u64) -> bool {
     match q.jobs.iter().find(|j| j.id == id) {
         Some(j) => {
             j.cancel.store(true, Ordering::Relaxed);
+            crate::joblog::say(j.id, "warn", "cancel requested");
             let _ = prompt_reply_inner(j, "skip");
             // "Cancelling…" at once, not when the worker next looks up from a large file.
             let event = j.event();
@@ -570,6 +587,9 @@ pub fn dismiss(only: Option<u64>) -> u64 {
         q.jobs.retain(|j| !gone.contains(&j.id));
         gone
     };
+    for id in &gone {
+        crate::joblog::forget(*id);
+    }
     if !gone.is_empty() {
         broadcast(proto::event("JobsCleared").v("jobs", Value::Arr(gone.iter().map(|id| Value::Uint(*id)).collect())).done());
     }

@@ -402,6 +402,130 @@ fn emit(out: &Shared, v: &Value) -> io::Result<()> {
     write_json(&mut **o, v)
 }
 
+// ---------------------------------------------------------------- the library log
+
+/// What the libraries under a plugin say as they work — russh, suppaftp, rustls, all through the
+/// `log` facade — sent to the daemon as `Log` events, so that a job's log can show what the SSH or
+/// FTP library was doing when a transfer went wrong. Nobody was listening before: every line was
+/// dropped.
+///
+/// - **Level**: `Debug` while a job's session is open on this plugin, `Info` otherwise, and never
+///   `Trace` — russh's trace level is packet dumps, enough to slow a transfer and drown the rest.
+/// - **Whose line**: the role of the session the calling thread is serving (`current_role`). A
+///   library's own background threads serve nobody; their lines carry no role and the daemon
+///   files them by which jobs were using the plugin at the time.
+/// - **Secrets** are taken out HERE, before the line leaves the process (`redact`): a log is
+///   something people paste into bug reports.
+pub mod liblog {
+    use super::{emit, Shared, Value};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    static SINK: OnceLock<Arc<Shared>> = OnceLock::new();
+    static JOB_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+    struct Forward;
+    static FORWARD: Forward = Forward;
+
+    /// Installed once per process, by `run_on`; a second call (tests run several loops) is a no-op.
+    /// Only for a host that asked (`KIKI_PLUGIN_LOG`): `Log` events arrive between other frames,
+    /// a binary stream's included, and a host that did not ask has no reason to expect them.
+    pub(super) fn install(out: &Arc<Shared>) {
+        if std::env::var_os("KIKI_PLUGIN_LOG").is_none() {
+            return;
+        }
+        if SINK.set(Arc::clone(out)).is_ok() && log::set_logger(&FORWARD).is_ok() {
+            log::set_max_level(log::LevelFilter::Debug);
+        }
+    }
+
+    pub(super) fn job_session(opened: bool) {
+        if opened {
+            JOB_SESSIONS.fetch_add(1, Ordering::Relaxed);
+        } else {
+            let _ = JOB_SESSIONS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(1)));
+        }
+    }
+
+    /// Libraries whose `Debug` is the wire, not the story. Measured on a real transfer: russh
+    /// wrote 380 lines for six small files ("> msg type 94, len 128", "packet type 101") — a line
+    /// or three per 32 KiB of a large file — and rustls six per FTP data connection. They are
+    /// heard from `Info` up, which is where their warnings and errors are. suppaftp's `Debug` is
+    /// the opposite: "Put file …", "Renaming … to …", a few lines a file, and stays.
+    const WIRE_LEVEL: [&str; 5] = ["russh", "russh_sftp", "rustls", "tokio", "mio"];
+
+    fn wanted(level: log::Level, target: &str) -> bool {
+        let crate_name = target.split("::").next().unwrap_or(target);
+        if WIRE_LEVEL.contains(&crate_name) {
+            return level <= log::Level::Info;
+        }
+        level <= if JOB_SESSIONS.load(Ordering::Relaxed) > 0 { log::Level::Debug } else { log::Level::Info }
+    }
+
+    /// A secret is what follows `PASS ` (the FTP command, as the protocol spells it) or what
+    /// follows a word that names one and then a `:` or `=` — `password=hunter2`,
+    /// `passphrase: "x"`, `Authorization: Basic abc`. From there to the end of the line goes.
+    /// A sentence that merely mentions a password ("password authentication failed") is left
+    /// alone: that is exactly the line somebody needs to read.
+    pub fn redact(line: &str) -> String {
+        if let Some(at) = line.find("PASS ") {
+            return format!("{}[redacted]", &line[..at + 5]);
+        }
+        const KEYS: [&str; 5] = ["password", "passphrase", "authorization", "secret", "token"];
+        let lower = line.to_ascii_lowercase();
+        for key in KEYS {
+            let mut from = 0;
+            while let Some(i) = lower[from..].find(key) {
+                let after = from + i + key.len();
+                let rest = &line[after..];
+                let lead = rest.len() - rest.trim_start_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace()).len();
+                if rest[lead..].starts_with([':', '=']) {
+                    let sep = after + lead + 1;
+                    let gap = line[sep..].len() - line[sep..].trim_start_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace()).len();
+                    return format!("{}[redacted]", &line[..sep + gap]);
+                }
+                from = after;
+            }
+        }
+        line.to_string()
+    }
+
+    impl log::Log for Forward {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            wanted(m.level(), m.target())
+        }
+        fn log(&self, r: &log::Record) {
+            if !wanted(r.level(), r.target()) {
+                return;
+            }
+            let Some(out) = SINK.get() else { return };
+            let role = super::ROLE.with(|x| x.borrow().clone());
+            let line = Value::obj().s("event", "Log").s("level", r.level().as_str().to_ascii_lowercase()).s("target", r.target()).s("message", redact(&r.args().to_string())).s("role", role).done();
+            let _ = emit(out, &line);
+        }
+        fn flush(&self) {}
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::redact;
+        #[test]
+        fn secrets_do_not_leave_the_plugin() {
+            assert_eq!(redact("CMD PASS hunter2"), "CMD PASS [redacted]");
+            assert_eq!(redact("sending password=hunter2 to host"), "sending password=[redacted]");
+            assert_eq!(redact("key needs passphrase: \"open sesame\""), "key needs passphrase: \"[redacted]");
+            assert_eq!(redact("Authorization: Basic dXNlcjpwYXNz"), "Authorization: [redacted]");
+            assert_eq!(redact("USER kiki"), "USER kiki");
+            // Mentioning a password is not holding one: this is the line someone needs to read.
+            assert_eq!(redact("password authentication failed for gideon"), "password authentication failed for gideon");
+            assert_eq!(redact("offering methods: publickey,password"), "offering methods: publickey,password");
+            assert_eq!(redact(r#"{"user":"x","token" : "abc"}"#), r#"{"user":"x","token" : "[redacted]"#);
+            assert_eq!(redact("226 Transfer complete"), "226 Transfer complete");
+            // "PASSIVE" is not PASS-space, and must survive: it is most of an FTP conversation.
+            assert_eq!(redact("227 Entering Passive Mode (127,0,0,1,4,1)"), "227 Entering Passive Mode (127,0,0,1,4,1)");
+        }
+    }
+}
+
 /// The dispatch loop over stdin/stdout. Runs until stdin closes or `Shutdown` arrives.
 pub fn run(handler: &dyn Handler) -> io::Result<()> {
     let out: Arc<Shared> = Arc::new(Mutex::new(Box::new(io::stdout())));
@@ -414,6 +538,7 @@ pub fn run(handler: &dyn Handler) -> io::Result<()> {
 /// `MAX_CONCURRENT`), `Cancel { target }` flips that request's flag, and the binary frames of the
 /// one `Write` in progress are routed to its `Incoming`.
 pub fn run_on(handler: &dyn Handler, mut input: Box<dyn Read + Send>, out: &Arc<Shared>) -> io::Result<()> {
+    liblog::install(out);
     let inflight: Mutex<HashMap<u64, Arc<AtomicBool>>> = Mutex::new(HashMap::new());
     let stream_lock: Mutex<()> = Mutex::new(());
     let slots = (Mutex::new(0usize), std::sync::Condvar::new());
@@ -494,6 +619,19 @@ pub fn run_on(handler: &dyn Handler, mut input: Box<dyn Read + Send>, out: &Arc<
 fn dispatch(handler: &dyn Handler, v: &Value, id: u64, t: &str, write_rx: Option<std::sync::mpsc::Receiver<Vec<u8>>>, out: &Shared, stream_lock: &Mutex<()>, cancel: &Arc<AtomicBool>) -> Value {
     let loc = v.str_field("location").unwrap_or("").to_string();
     let path = v.str_field("path").unwrap_or("/").to_string();
+    // What is being asked of the server, in words, for the job's log — the same for every plugin,
+    // whatever its library does or does not say for itself. (Listing and stat are left out: a
+    // browser does thousands, and they are not what anyone opens a transfer's log to find.)
+    match t {
+        "Connect" => log::info!(target: "kiki", "connect {loc} ({})", v.str_field("role").unwrap_or("browse")),
+        "Disconnect" => log::info!(target: "kiki", "disconnect {loc} ({})", v.str_field("role").unwrap_or("browse")),
+        "Write" => log::debug!(target: "kiki", "write {path} ({} bytes)", v.u64_field("size").unwrap_or(0)),
+        "Read" => log::debug!(target: "kiki", "read {path}"),
+        "Mkdir" => log::debug!(target: "kiki", "mkdir {path}"),
+        "Delete" => log::debug!(target: "kiki", "delete {path}"),
+        "Rename" => log::debug!(target: "kiki", "rename {} -> {}", v.str_field("from").unwrap_or(""), v.str_field("to").unwrap_or("")),
+        _ => {}
+    }
     let reply = match t {
         "Validate" => result(id, handler.validate(v.get("config").unwrap_or(&Value::Null))),
         "Browse" => match handler.browse(v.str_field("field").unwrap_or(""), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
@@ -501,10 +639,18 @@ fn dispatch(handler: &dyn Handler, v: &Value, id: u64, t: &str, write_rx: Option
             Err(e) => err(id, &e),
         },
         "Connect" => match handler.connect(&loc, v.str_field("role").unwrap_or("browse"), v.get("config").unwrap_or(&Value::Null), v.get("secrets").unwrap_or(&Value::Null)) {
-            Ok(r) => ok(id, r),
+            Ok(r) => {
+                if v.str_field("role").is_some_and(|r| r.starts_with("job-")) {
+                    liblog::job_session(true);
+                }
+                ok(id, r)
+            }
             Err(e) => err(id, &e),
         },
         "Disconnect" => {
+            if v.str_field("role").is_some_and(|r| r.starts_with("job-")) {
+                liblog::job_session(false);
+            }
             handler.disconnect(&loc, v.str_field("role").unwrap_or("browse"));
             ok(id, Value::obj().done())
         }
@@ -566,6 +712,12 @@ fn dispatch(handler: &dyn Handler, v: &Value, id: u64, t: &str, write_rx: Option
     }
     if cancel.load(Ordering::Relaxed) && reply.get("err").is_some() {
         return err(id, &cancel_error());
+    }
+    // A refusal is the line somebody is looking for.
+    if let Some(e) = reply.get("err") {
+        if e.str_field("code") != Some("Cancelled") {
+            log::warn!(target: "kiki", "{t} {path}: {} {}", e.str_field("code").unwrap_or(""), e.str_field("message").unwrap_or(""));
+        }
     }
     reply
 }

@@ -7,3 +7,6 @@ description = "Write a kiki location plugin: framing, dispatch loop and typed ha
 
 [dependencies]
 kiki-json = { path = "../kiki-json" }
+# The facade the SSH, FTP and TLS libraries log through. The SDK listens, so that what they say
+# about a transfer can be kept with the job it was said about (plan 32).
+log = { version = "0.4", features = ["std"] }

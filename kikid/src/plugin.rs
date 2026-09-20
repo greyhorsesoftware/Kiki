@@ -169,6 +169,10 @@ impl Plugin {
         let mut child = Command::new(bin)
             .env("KIKI_PLUGIN_PROTOCOL", "1")
             .env("KIKI_PLUGIN_SCHEME", scheme)
+            // Ask for the library log as `Log` events between the other frames (plan 32). Asked
+            // for, not assumed: a host that reads frames strictly — the plugins' own tests — must
+            // not find an event in the middle of a stream it thought it knew.
+            .env("KIKI_PLUGIN_LOG", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -194,6 +198,11 @@ impl Plugin {
                 let mut reader = Reader::new(stdout);
                 loop {
                     match reader.next() {
+                        // What the library underneath is saying (the SDK forwards its `log` records):
+                        // filed under the job it was said for, and under the plugin.
+                        Ok(Some(Frame::Json(v))) if v.str_field("event") == Some("Log") => {
+                            crate::joblog::from_plugin(&p2.scheme, &v, &crate::locations::jobs_using(&p2));
+                        }
                         Ok(Some(Frame::Json(v))) => {
                             let id = v.u64_field("id").unwrap_or(0);
                             let is_reply = v.get("ok").is_some() || v.get("err").is_some();

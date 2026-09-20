@@ -8,6 +8,7 @@ pub mod config;
 pub mod dbus;
 pub mod desktop;
 pub mod devices;
+pub mod joblog;
 pub mod jobs;
 pub use kiki_json as json;
 pub mod git;

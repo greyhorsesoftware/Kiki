@@ -175,6 +175,12 @@ impl Drop for JobSessions {
     }
 }
 
+/// The jobs with a session open on this plugin process right now: who a library line that
+/// names nobody is filed under (`joblog`).
+pub fn jobs_using(plugin: &Arc<Plugin>) -> Vec<u64> {
+    sessions().lock().unwrap().values().filter(|s| Arc::ptr_eq(&s.plugin, plugin)).filter_map(|s| s.role.strip_prefix("job-").and_then(|n| n.parse().ok())).collect()
+}
+
 fn role_here() -> String {
     JOB_ROLE.with(|r| r.borrow().clone()).unwrap_or_else(|| "browse".to_string())
 }
