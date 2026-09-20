@@ -157,5 +157,5 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub use cache::{changed, find, forget, gone, invalidate_authority, mark_stale, open};
+pub use cache::{changed, find, forget, gone, invalidate_authority, mark_stale, open, under};
 pub use rows::{iso, meta_json};

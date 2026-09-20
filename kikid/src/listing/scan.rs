@@ -61,7 +61,7 @@ impl Listing {
     }
 
     /// Git badges for a local directory inside a repository (plan 15), on a worker, pushed as rows.
-    pub(super) fn git_status(self: &Arc<Self>) {
+    pub(crate) fn git_status(self: &Arc<Self>) {
         if !self.uri.is_local() || !crate::git::enabled() || crate::git::repo_root(&self.path).is_none() {
             return;
         }
@@ -99,6 +99,19 @@ impl Listing {
                         }
                     }
                     inner.git_done = true;
+                    // Hiding ignored files changes which rows there are, not how they look.
+                    if crate::git::hide_ignored() {
+                        let before = inner.view.len();
+                        inner.rebuild_view();
+                        if inner.view.len() != before {
+                            inner.generation += 1;
+                            let n = inner.view.len() as u64;
+                            for s in inner.subscribers.clone() {
+                                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).done());
+                            }
+                            changed.clear();
+                        }
+                    }
                 }
                 me.push_rows(&changed);
                 let subs = me.inner.lock().unwrap().subscribers.clone();

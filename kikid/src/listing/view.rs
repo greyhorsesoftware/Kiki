@@ -173,7 +173,12 @@ impl Inner {
         let hidden_ok = self.show_hidden;
         let pool = &self.pool;
         let metas = &self.meta;
-        let visible = |i: u32| !pool.is_removed(i) && (hidden_ok || (pool.name(i).first() != Some(&b'.') && !metas.get(i as usize).and_then(|m| m.as_ref()).map(|m| m.hidden).unwrap_or(false)));
+        // Ignored by git and asked to be hidden: known only once status has run, so such a row is
+        // there for a moment and then goes (`git_status` rebuilds the view when it lands).
+        let git = &self.git;
+        let hide_ignored = !git.is_empty() && crate::git::hide_ignored();
+        let ignored = |i: u32| hide_ignored && git.get(&i).is_some_and(|e| e.state == crate::git::State::Ignored);
+        let visible = |i: u32| !pool.is_removed(i) && !ignored(i) && (hidden_ok || (pool.name(i).first() != Some(&b'.') && !metas.get(i as usize).and_then(|m| m.as_ref()).map(|m| m.hidden).unwrap_or(false)));
         let mut view: Vec<u32> = match &self.filter {
             None => (0..n).filter(|&i| visible(i)).collect(),
             Some(f) => (0..n).filter(|&i| visible(i) && pool.name_contains(i, f)).collect(),

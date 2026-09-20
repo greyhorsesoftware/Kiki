@@ -56,6 +56,20 @@ QtObject {
         if (!ms) return ""
         return new Date(ms).toLocaleString(Qt.locale(), "d MMM yyyy HH:mm")
     }
+    /// What a row shows of git, after the settings have had their say: nothing for a folder when
+    /// `[git] folders = "off"`, nothing for a clean or an ignored row (an ignored one is dimmed,
+    /// not marked). Every view asks this, so they cannot disagree.
+    function gitMark(row) {
+        const g = row ? row.git : null
+        if (!g || g.state === "clean" || g.state === "ignored") return null
+        if (row.isDir && Kiki.Settings.git.folders === "off") return null
+        return g
+    }
+    /// Ignored rows are dimmed unless `[git] showIgnored = "normal"`. ("hide" never gets here: the
+    /// daemon leaves those rows out of the listing.)
+    function gitDimmed(row) {
+        return !!row && !!row.git && row.git.state === "ignored" && Kiki.Settings.git.showIgnored !== "normal"
+    }
     function gitBadge(g) { if (!g) return ""; return { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!", untracked: "?", ignored: "", clean: "" }[g.state] || "" }
     function gitColor(g) {
         const t = Qt.resolvedUrl("") // no-op to keep this a plain function

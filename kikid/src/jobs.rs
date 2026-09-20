@@ -49,6 +49,10 @@ pub struct Job {
     prompt: Mutex<Option<Receiver<(String, bool)>>>,
     prompt_tx: Mutex<Option<Sender<(String, bool)>>>,
     policy: Mutex<Option<String>>,
+    /// How to take back what the job has done SO FAR. A job that is cancelled or fails half way
+    /// has still changed things — forty files in the trash, twelve folders copied — and those
+    /// must be as undoable as if it had finished.
+    partial: Mutex<Option<Value>>,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +142,7 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
             prompt: Mutex::new(Some(prx)),
             prompt_tx: Mutex::new(Some(ptx)),
             policy: Mutex::new(None),
+            partial: Mutex::new(None),
         });
         q.jobs.push(Arc::clone(&job));
         if q.jobs.len() > 200 {
@@ -176,7 +181,13 @@ fn pump() {
                 let result = run(&job);
                 let inverse = match result {
                     Ok(inv) => {
-                        job.set_state(State::Done);
+                        // Stopped early is cancelled, whatever it returned: a trash or a delete
+                        // leaves its loop quietly so that its inverse still reaches the journal.
+                        let short = {
+                            let st = job.status.lock().unwrap();
+                            st.done < st.total
+                        };
+                        job.set_state(if short && job.cancel.load(Ordering::Relaxed) { State::Cancelled } else { State::Done });
                         inv
                     }
                     Err(e) => {
@@ -185,7 +196,7 @@ fn pump() {
                         } else {
                             job.set_state(State::Failed(e.message()));
                         }
-                        None
+                        job.partial.lock().unwrap().take()
                     }
                 };
                 if let Some(inv) = inverse {
@@ -214,6 +225,12 @@ impl Job {
     fn set_state(&self, s: State) {
         self.status.lock().unwrap().state = s;
         broadcast(self.event());
+    }
+
+    /// Record how to undo what has been done so far; journalled if the job then fails or is
+    /// cancelled. A job that finishes returns its inverse instead, and this is dropped.
+    fn undo_so_far(&self, inverse: Value) {
+        *self.partial.lock().unwrap() = Some(inverse);
     }
 
     pub(crate) fn progress(&self, done_delta: u64, bytes_delta: u64) {
@@ -440,6 +457,15 @@ fn uri_list(paths: &[PathBuf]) -> Value {
     Value::Arr(paths.iter().map(|p| Value::Str(Uri::from_path(p).to_string())).collect())
 }
 
+fn copy_inverse(created: &[PathBuf]) -> Value {
+    Value::obj().s("op", "delete").v("items", uri_list(created)).b("_silent", true).done()
+}
+
+fn move_inverse(moved: &[(PathBuf, PathBuf)]) -> Value {
+    let back = |(from, to): &(PathBuf, PathBuf)| Value::Arr(vec![Value::Str(Uri::from_path(to).to_string()), Value::Str(Uri::from_path(from).to_string())]);
+    Value::obj().s("op", "movePairs").v("pairs", Value::Arr(moved.iter().map(back).collect())).done()
+}
+
 /// Executes the op; returns the inverse op for the journal when undoable.
 fn run(job: &Job) -> Result<Option<Value>, VfsError> {
     let op = &job.op;
@@ -497,23 +523,22 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 }
                 let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n) };
                 if job.kind == "copy" {
+                    // Recorded before it is whole: a folder cancelled half way is half a folder
+                    // at the destination, and undo has to be able to take that away too.
+                    created.push(target.clone());
+                    job.undo_so_far(copy_inverse(&created));
                     ops::copy_tree(src, &target, &mut p)?;
-                    created.push(target);
                 } else {
                     ops::move_path(src, &target, &mut p)?;
                     moved.push((src.clone(), target));
+                    job.undo_so_far(move_inverse(&moved));
                 }
                 job.progress(1, 0);
             }
             if job.kind == "copy" {
-                Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
+                Some(copy_inverse(&created))
             } else {
-                Some(
-                    Value::obj()
-                        .s("op", "movePairs")
-                        .v("pairs", Value::Arr(moved.iter().map(|(a, b)| Value::Arr(vec![Value::Str(Uri::from_path(b).to_string()), Value::Str(Uri::from_path(a).to_string())])).collect()))
-                        .done(),
-                )
+                Some(move_inverse(&moved))
             }
         }
         "movePairs" => {
@@ -555,6 +580,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     break;
                 }
                 names.push(Value::Str(ops::trash(p)?));
+                job.undo_so_far(Value::obj().s("op", "restore").v("names", Value::Arr(names.clone())).done());
                 job.progress(1, 0);
             }
             Some(Value::obj().s("op", "restore").v("names", Value::Arr(names)).done())
@@ -583,7 +609,12 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                ops::remove_tree(p)?;
+                // An undo's delete names what a job set out to create; one that failed before it
+                // made anything left nothing to remove, and that is not an error.
+                let undoing = op.get("_silent").and_then(Value::as_bool).unwrap_or(false);
+                if !(undoing && p.symlink_metadata().is_err()) {
+                    ops::remove_tree(p)?;
+                }
                 job.progress(1, 0);
             }
             None
@@ -644,9 +675,9 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let dest = uri(op, "dest")?;
             let n = crate::archive::list(&archive)?.len() as u64;
             job.set_totals(n.max(1), 0);
-            let top = crate::archive::extract(&archive, &dest, &cancel, &mut |_| job.progress(1, 0))?;
-            let created: Vec<PathBuf> = top.iter().map(|t| dest.join(t)).collect();
-            Some(Value::obj().s("op", "delete").v("items", uri_list(&created)).b("_silent", true).done())
+            // One new thing under a free name, never a merge: so undo is exact (see `extract`).
+            let made = crate::archive::extract(&archive, &dest, &cancel, &mut |_| job.progress(1, 0))?;
+            made.map(|m| Value::obj().s("op", "delete").v("items", uri_list(&[m])).b("_silent", true).done())
         }
         "share" => {
             let plugin = op.str_field("plugin").ok_or(VfsError::Io("missing plugin".into()))?.to_string();
@@ -816,6 +847,43 @@ mod tests {
         let uid = undo(Some(tx)).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("dst/a (2).txt").exists());
+        std::env::remove_var("KIKI_TRASH_DIR");
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// A job that stops half way has still changed things, and those are as undoable as if it
+    /// had finished: before this, a trash or a copy that failed on its second item journalled
+    /// nothing, and the first item could not be taken back.
+    #[test]
+    fn a_job_that_fails_half_way_can_still_be_undone() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-partial-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("dst")).unwrap();
+        std::env::set_var("KIKI_TRASH_DIR", d.join("trash"));
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        let (tx, _rx) = mpsc::channel();
+        let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
+
+        std::fs::write(d.join("real.txt"), b"real").unwrap();
+        let id = submit(Value::obj().s("op", "trash").v("items", list(&["real.txt", "never-was.txt"])).done(), Some(tx.clone())).unwrap();
+        assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(_))), "the second item is not there");
+        assert!(!d.join("real.txt").exists(), "but the first went to the trash");
+        let uid = undo(Some(tx.clone())).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(std::fs::read(d.join("real.txt")).unwrap(), b"real", "and undo brings it back");
+
+        let id = submit(Value::obj().s("op", "copy").v("items", list(&["real.txt", "never-was.txt"])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone())).unwrap();
+        assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(_))));
+        assert!(d.join("dst/real.txt").exists(), "the first item was copied");
+        // The inverse names the second item too — it was about to be made — and its not being
+        // there is not an error.
+        let uid = undo(Some(tx)).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert!(!d.join("dst/real.txt").exists(), "undo removes what the failed copy left");
+        assert!(d.join("real.txt").exists(), "and not the original");
+
         std::env::remove_var("KIKI_TRASH_DIR");
         std::env::remove_var("KIKI_STATE_DIR");
         std::fs::remove_dir_all(&d).unwrap();

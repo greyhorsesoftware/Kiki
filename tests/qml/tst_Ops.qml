@@ -195,14 +195,32 @@ TestCase {
         compare(submitted().dest, "file:///home/t")
     }
 
-    // Extract to… makes the folder first and only extracts once the daemon confirms it.
-    function test_extract_to_makes_the_folder_first() {
+    // Extract to… asks where first, starting from this folder, and extracts into the answer. It
+    // makes no folder of its own: what lands, and under which name, is the daemon's rule.
+    function test_extract_to_asks_where_and_extracts_there() {
+        let asked = null, answer = null
+        const onAsk = (spec, reply) => { asked = spec; answer = reply }
+        ops.folderNeeded.connect(onAsk)
         ops.extractTo("box.zip")
-        compare(submitted().op, "mkdir")
-        compare(submitted().uri, "file:///home/t/box")
-        Wire.reply(Wire.last("Submit").id, { job: 2 })
+        ops.folderNeeded.disconnect(onAsk)
+        verify(asked !== null, "a folder is asked for")
+        compare(asked.start, "file:///home/t")
+        compare(Wire.count("Submit"), 0, "nothing is submitted until there is an answer")
+        answer("file:///home/t/Documents")
         compare(submitted().op, "extract")
-        compare(submitted().dest, "file:///home/t/box")
+        compare(submitted().archive, "file:///home/t/box.zip")
+        compare(submitted().dest, "file:///home/t/Documents")
+        compare(Wire.count("Submit"), 1, "and no mkdir beside it")
+    }
+
+    function test_extract_to_cancelled_does_nothing() {
+        let answer = null
+        const onAsk = (spec, reply) => { answer = reply }
+        ops.folderNeeded.connect(onAsk)
+        ops.extractTo("box.zip")
+        ops.folderNeeded.disconnect(onAsk)
+        answer("")
+        compare(Wire.count("Submit"), 0)
     }
 
     function test_compress_carries_the_format() {

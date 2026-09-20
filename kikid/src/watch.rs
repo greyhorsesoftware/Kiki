@@ -21,7 +21,19 @@ mod imp {
         fd: OwnedFd,
         by_wd: HashMap<i32, (PathBuf, Instant)>,
         by_path: HashMap<PathBuf, i32>,
+        /// Watches on a repository's `.git` and `.git/refs/heads`: wd -> the repository's root.
+        /// A listing's own watch sees files change; it cannot see `git add`, a commit or a
+        /// checkout made in a terminal, which change every badge without touching a listed file.
+        repo_by_wd: HashMap<i32, PathBuf>,
+        repos: HashMap<PathBuf, Vec<i32>>,
     }
+
+    /// Repositories watched at once. Two watches each, and a root nobody is listing any more is
+    /// dropped the first time it reports.
+    const MAX_REPOS: usize = 16;
+    /// Plan 15: a burst of git's own writes (`index.lock`, `index`, `HEAD`, `ORIG_HEAD`, the ref)
+    /// is one change.
+    const REPO_DEBOUNCE: Duration = Duration::from_millis(300);
 
     fn state() -> &'static Mutex<State> {
         static S: OnceLock<Mutex<State>> = OnceLock::new();
@@ -29,12 +41,44 @@ mod imp {
             let fd = inotify::inotify_init(CreateFlags::CLOEXEC).expect("inotify_init");
             let raw = fd.as_raw_fd();
             std::thread::Builder::new().name("watch".into()).spawn(move || reader(raw)).expect("spawn watcher");
-            Mutex::new(State { fd, by_wd: HashMap::new(), by_path: HashMap::new() })
+            Mutex::new(State { fd, by_wd: HashMap::new(), by_path: HashMap::new(), repo_by_wd: HashMap::new(), repos: HashMap::new() })
         })
     }
 
+    fn watch_repo(s: &mut State, root: PathBuf) {
+        if s.repos.contains_key(&root) {
+            return;
+        }
+        if s.repos.len() >= MAX_REPOS {
+            if let Some(old) = s.repos.keys().next().cloned() {
+                drop_repo(s, &old);
+            }
+        }
+        let flags = WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::MOVED_TO | WatchFlags::MOVED_FROM | WatchFlags::MODIFY;
+        let git = root.join(".git");
+        let wds: Vec<i32> = [git.clone(), git.join("refs/heads")].iter().filter_map(|d| inotify::inotify_add_watch(&s.fd, d, flags).ok()).collect();
+        for wd in &wds {
+            s.repo_by_wd.insert(*wd, root.clone());
+        }
+        if !wds.is_empty() {
+            s.repos.insert(root, wds);
+        }
+    }
+
+    fn drop_repo(s: &mut State, root: &PathBuf) {
+        for wd in s.repos.remove(root).unwrap_or_default() {
+            let _ = inotify::inotify_remove_watch(&s.fd, wd);
+            s.repo_by_wd.remove(&wd);
+        }
+    }
+
     pub fn watch(l: &Arc<Listing>) {
+        // Found before the lock is taken: it is a walk up the tree, and nothing of ours.
+        let repo = if l.uri.is_local() && crate::git::enabled() { crate::git::repo_root(&l.path) } else { None };
         let mut s = state().lock().unwrap();
+        if let Some(root) = repo {
+            watch_repo(&mut s, root);
+        }
         if s.by_path.contains_key(&l.path) {
             return;
         }
@@ -77,6 +121,8 @@ mod imp {
             rescan: bool,
         }
         let mut pending: HashMap<PathBuf, Batch> = HashMap::new();
+        // Repository root -> when its first unreported change was seen.
+        let mut repos_pending: HashMap<PathBuf, Instant> = HashMap::new();
         loop {
             // Poll with a short timeout so coalesced events flush even when quiet.
             let mut pfd = libc::pollfd { fd: raw, events: libc::POLLIN, revents: 0 };
@@ -94,6 +140,13 @@ mod imp {
                         let name: Vec<u8> = name_bytes.iter().take_while(|&&b| b != 0).copied().collect();
                         off += 16 + len;
                         let s = state().lock().unwrap();
+                        if let Some(root) = s.repo_by_wd.get(&wd) {
+                            // git writes `x.lock` and renames it over `x`: the rename is the news.
+                            if !name.ends_with(b".lock") {
+                                repos_pending.entry(root.clone()).or_insert_with(Instant::now);
+                            }
+                            continue;
+                        }
                         if let Some((path, _)) = s.by_wd.get(&wd) {
                             if mask & (libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_IGNORED) != 0 {
                                 let p = path.clone();
@@ -116,6 +169,22 @@ mod imp {
                 }
             }
             let now = Instant::now();
+            let settled: Vec<PathBuf> = repos_pending.iter().filter(|(_, at)| now.duration_since(**at) >= REPO_DEBOUNCE).map(|(r, _)| r.clone()).collect();
+            for root in settled {
+                repos_pending.remove(&root);
+                let showing = crate::listing::under(&root);
+                if showing.is_empty() {
+                    drop_repo(&mut state().lock().unwrap(), &root);
+                    continue;
+                }
+                // Status again for every listing under it, each on its own worker; each tells its
+                // windows `RepoChanged`, which is what the branch chip listens for.
+                for l in showing {
+                    if !crate::git::is_slow(&l.path) {
+                        l.git_status();
+                    }
+                }
+            }
             let due: Vec<PathBuf> = pending.iter().filter(|(_, b)| now.duration_since(b.at) >= Duration::from_millis(50)).map(|(p, _)| p.clone()).collect();
             for p in due {
                 let b = pending.remove(&p).unwrap();

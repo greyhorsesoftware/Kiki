@@ -249,6 +249,18 @@ def run(ctx):
         for tag, port in ports.items():
             if tag in ends:
                 own_connection(ctx, c, d, tag, port, ends[tag][0], ends[tag][1], local_root, ends["local"][1])
+
+        # Searching a location finds what is deep inside it — on FTPS too, whose plugin has no
+        # recursive scan and answers Unsupported, which used to be the end of the search.
+        for tag in ports:
+            if tag not in ends:
+                continue
+            lid = ctx.lid()
+            r = d.call("Search", lid=lid, scope="location", uri=ends[tag][1](""), query="may.txt")
+            rows = d.ok("Window", lid=lid, first=0, count=60)["rows"] if "ok" in r else []
+            deep = [x["uri"] for x in rows if x["uri"].endswith("/site/images/2026/may.txt")]
+            c.check(f"{tag}: a search of the location finds a file three folders down", "ok" in r and len(deep) >= 1, r if "ok" not in r else f"{len(rows)} rows")
+            d.call("Close", lid=lid)
     finally:
         for name in ("e2e-sftp", "e2e-ftps"):
             d.call("RemoveLocation", name=name)

@@ -48,11 +48,24 @@ Rectangle {
     /// the preview box stays empty: "no preview" is an answer, and drawing the kind icon before
     /// it arrives meant every file showed its icon for a moment and then its preview.
     property bool previewPending: false
-    onUriChanged: { preview = null; previewPending = uri !== ""; if (uri) reload() }
+    /// Git's detail for the file (plan 15): its branch and last commit. Asked for only when the
+    /// row says it is in a repository, since it costs a `git log`; the state itself is the row's.
+    property var gitInfo: null
+    function gitLine() {
+        const g = row && row.git ? row.git : null
+        if (!g) return ""
+        return g.state + (g.staged ? " · staged" : "")
+    }
+    function lastCommitLine() {
+        const l = gitInfo ? gitInfo.last : null
+        return l ? l.short + " · " + l.author + " · " + Kiki.Format.relative(l.time * 1000) : ""
+    }
+    onUriChanged: { preview = null; gitInfo = null; previewPending = uri !== ""; if (uri) reload() }
     function reload() {
         const u = uri
         Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) { preview = ok || null; previewPending = false } })
         if (!meta) Kiki.Daemon.request("Stat", { uri: u }, (ok, err) => { if (u === insp.uri && ok) insp.meta = ok })
+        if (row && row.git) Kiki.Daemon.request("GitStatus", { uri: u }, (ok, err) => { if (u === insp.uri) insp.gitInfo = ok || null })
     }
     function kind() { return row ? row.kind : "file" }
     function name() { return row ? row.name : decodeURIComponent(uri.split("/").pop()) }
@@ -268,7 +281,10 @@ Rectangle {
                 Field { label: "Modified"; value: insp.meta ? Kiki.Format.date(insp.meta.mtime) : "…" }
                 Field { label: "Owner"; value: insp.meta && insp.meta.owner ? insp.meta.owner : "—" }
                 Field { label: "Group"; value: insp.meta && insp.meta.group ? insp.meta.group : "—" }
-                Field { label: "Git"; value: insp.row && insp.row.git ? insp.row.git.state : "—"; valueColor: Kiki.Theme.yellow; visible: insp.row && insp.row.git }
+                Field { objectName: "insp-git"; label: "Git"; value: insp.gitLine() || "—"; valueColor: insp.row && insp.row.git ? Kiki.Format.gitColor(insp.row.git) : Kiki.Theme.fg; visible: !!(insp.row && insp.row.git) }
+                Field { objectName: "insp-git-branch"; label: "Branch"; value: insp.gitInfo && insp.gitInfo.branch ? insp.gitInfo.branch : ""; visible: value !== "" }
+                Field { objectName: "insp-git-last"; label: "Last commit"; value: insp.lastCommitLine(); visible: value !== "" }
+                Field { objectName: "insp-git-subject"; label: ""; value: insp.gitInfo && insp.gitInfo.last ? insp.gitInfo.last.subject : ""; valueColor: Kiki.Theme.fgDim; visible: value !== "" }
             }
         }
     }

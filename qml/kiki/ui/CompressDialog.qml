@@ -10,7 +10,7 @@ Rectangle {
     signal submit(string archiveUri, string format)
     visible: false
     anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.5); z: 90
-    property var formats: ["zip", "tar.gz", "tar.zst", "tar.xz", "tar", "7z"]
+    property var formats: ["zip", "tar.gz", "tar.zst", "tar.xz", "tar.bz2", "tar", "7z"]
     property int formatIndex: 0
     function open(uris, folder) {
         items = uris; dest = folder; visible = true

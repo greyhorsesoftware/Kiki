@@ -18,6 +18,8 @@ QtObject {
 
     /// The shell answers with reply(true) or reply(false).
     signal confirmNeeded(var spec, var reply)
+    /// A folder has to be chosen: `spec` is { title, start }, `reply` takes its URI, or nothing.
+    signal folderNeeded(var spec, var reply)
     /// The shell puts this on the system clipboard.
     signal copyText(string text)
 
@@ -93,11 +95,13 @@ QtObject {
     // ---------------------------------------------------------------- archives, modes, panes
 
     function extractHere(name) { Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(name), dest: pane.uri }) }
-    /// Extract into a new folder named after the archive, once that folder exists.
+    /// Ask where, then extract there. What lands is the daemon's to decide, the same as for
+    /// "Extract here": the archive's one item, or a folder named after it holding them all, under
+    /// a name that is free — never a merge into something already there (plan 05).
     function extractTo(name) {
-        const folder = name.replace(/\.(tar\.(gz|xz|zst|bz2)|tgz|txz|tzst|zip|7z|tar)$/i, "")
-        Kiki.Jobs.submit({ op: "mkdir", uri: pane.childUri(folder) }, ok => {
-            if (ok) Kiki.Jobs.submit({ op: "extract", archive: pane.childUri(name), dest: pane.childUri(folder) })
+        const archive = pane.childUri(name)
+        folderNeeded({ title: "Extract " + name + " to…", start: pane.uri }, dest => {
+            if (dest) Kiki.Jobs.submit({ op: "extract", archive: archive, dest: dest })
         })
     }
     function compress(items, archive, format) { Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }

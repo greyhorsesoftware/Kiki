@@ -86,7 +86,8 @@ Item {
         for (let i = fromCol + 1; i < columns.length; i++) columns[i].cache.destroy()
         if (row.isDir) {
             const uri = cols[fromCol].uri.replace(/\/+$/, "") + "/" + encodeURIComponent(row.name)
-            const cache = cacheComp.createObject(root)
+            // The pane's own daemon, which is the real one except under a test.
+            const cache = cacheComp.createObject(root, { daemon: root.pane.listing.daemon })
             cache.open(uri)
             cols.push({ uri: uri, cache: cache, selected: -1, own: true })
             root.inspectedUri = ""; root.inspectedRow = null
@@ -291,6 +292,7 @@ Item {
                             width: list.width; height: Kiki.Theme.rowHeight
                             color: "transparent"
                             property color fg: active ? Kiki.Theme.bg : Kiki.Theme.fgDim
+                            readonly property var mark: Kiki.Format.gitMark(r)
                             Rectangle {
                                 anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 5
                                 radius: 6
@@ -304,7 +306,10 @@ Item {
                                     UI.KindIcon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; kind: cr.r ? cr.r.kind : ""; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
                                     Image { visible: cr.r && cr.r.thumb; anchors.fill: parent; source: cr.r && cr.r.thumb ? "file://" + cr.r.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                                 }
-                                Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                                Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0) - (cr.mark ? 22 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: Kiki.Format.gitDimmed(cr.r) && !cr.sel ? Kiki.Theme.muted : cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                                // The same letter, in the same colours, as a list row (plan 15): every
+                                // column is a listing like any other, and its rows carry `git`.
+                                Text { objectName: "git-badge"; visible: !!cr.mark; anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(cr.mark); color: cr.active ? Kiki.Theme.bg : Kiki.Format.gitColor(cr.mark); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
                                 UI.Icon { visible: cr.r && cr.r.isDir; anchors.verticalCenter: parent.verticalCenter; name: "chev-r"; size: 12; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.gutter }
                             }
                             // A folder row takes a drop; any row can be dragged, as itself.

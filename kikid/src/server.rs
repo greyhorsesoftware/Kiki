@@ -642,55 +642,90 @@ impl Client {
             _ => crate::index::Mode::Substring,
         };
         let scope = b.str_field("scope").unwrap_or("everywhere");
-        let rows: Vec<Value> = if scope == "location" {
-            // Remote walk: recursive scan through the plugin, filtered by substring.
+        let (rows, capped): (Vec<Value>, bool) = if scope == "location" {
+            // Remote walk, filtered by substring: one recursive Scan where the plugin has one,
+            // folder by folder where it answers Unsupported (FTPS; SFTP without a shell) — which
+            // used to be the end of it, so searching those locations found nothing and said so.
             let uri = parse_uri(b, "uri")?;
             let (session, path) = crate::locations::resolve(&uri).map_err(vfs_err)?;
             let lower = q.to_ascii_lowercase();
-            let mut out = Vec::new();
-            let req = session.req("Scan").s("path", path.clone()).b("recursive", true).done();
-            let base = uri.clone();
-            session
-                .plugin
-                .request_stream(req, |m| {
-                    if let crate::plugin::Msg::Json(v) = m {
-                        if let Some(entries) = v.get("entries").and_then(Value::as_arr) {
-                            for e in entries {
-                                let rel = e.str_field("rel").or(e.str_field("name")).unwrap_or("");
-                                let name = rel.rsplit('/').next().unwrap_or("");
-                                if !lower.is_empty() && !name.to_ascii_lowercase().contains(&lower) {
-                                    continue;
-                                }
-                                let kind = e.str_field("kind").unwrap_or("file");
-                                let full = base.join(rel);
-                                out.push(
-                                    Value::obj()
-                                        .s("name", name)
-                                        .s("kind", if kind == "dir" { "folder" } else { "file" })
-                                        .b("isDir", kind == "dir")
-                                        .b("isLink", kind == "link")
-                                        .v("meta", e.get("meta").cloned().unwrap_or(Value::Null))
-                                        .v("thumb", Value::Null)
-                                        .v("git", Value::Null)
-                                        .s("parent", full.parent().map(|p| p.to_string()).unwrap_or_default())
-                                        .s("uri", full.to_string())
-                                        .done(),
-                                );
-                            }
-                        }
+            let out = std::cell::RefCell::new(Vec::new());
+            let full = std::cell::Cell::new(false);
+            // `rel` is the entry's path under the folder being searched.
+            let take = |rel: &str, e: &Value| {
+                let name = rel.rsplit('/').next().unwrap_or("");
+                if !lower.is_empty() && !name.to_ascii_lowercase().contains(&lower) {
+                    return;
+                }
+                if out.borrow().len() >= crate::index::MAX_RESULTS {
+                    full.set(true);
+                    return;
+                }
+                let kind = e.str_field("kind").unwrap_or("file");
+                let at = uri.join(rel);
+                out.borrow_mut().push(
+                    Value::obj()
+                        .s("name", name)
+                        .s("kind", if kind == "dir" { "folder" } else { "file" })
+                        .b("isDir", kind == "dir")
+                        .b("isLink", kind == "link")
+                        .v("meta", e.get("meta").cloned().unwrap_or(Value::Null))
+                        .v("thumb", Value::Null)
+                        .v("git", Value::Null)
+                        .s("parent", at.parent().map(|p| p.to_string()).unwrap_or_default())
+                        .s("uri", at.to_string())
+                        .done(),
+                );
+            };
+            let entries_of = |m: crate::plugin::Msg, each: &mut dyn FnMut(&Value)| {
+                if let crate::plugin::Msg::Json(v) = m {
+                    for e in v.get("entries").and_then(Value::as_arr).unwrap_or(&[]) {
+                        each(e);
                     }
-                })
-                .map_err(vfs_err)?;
-            out
+                }
+            };
+            let whole = session.plugin.request_stream(session.req("Scan").s("path", path.clone()).b("recursive", true).done(), |m| {
+                entries_of(m, &mut |e| take(e.str_field("rel").or(e.str_field("name")).unwrap_or(""), e));
+            });
+            match whole {
+                Ok(_) => {}
+                Err(VfsError::Unsupported) => {
+                    out.borrow_mut().clear();
+                    let mut folders = std::collections::VecDeque::from([String::new()]);
+                    while let Some(prefix) = folders.pop_front() {
+                        if full.get() {
+                            break;
+                        }
+                        let at = if prefix.is_empty() { path.clone() } else { format!("{}/{}", path.trim_end_matches('/'), prefix) };
+                        let mut below = Vec::new();
+                        // A folder that cannot be read is skipped, as a recursive scan skips it.
+                        let _ = session.plugin.request_stream(session.req("Scan").s("path", at).done(), |m| {
+                            entries_of(m, &mut |e| {
+                                let name = e.str_field("name").unwrap_or("");
+                                if name.is_empty() {
+                                    return;
+                                }
+                                let rel = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
+                                take(&rel, e);
+                                if e.str_field("kind") == Some("dir") {
+                                    below.push(rel);
+                                }
+                            });
+                        });
+                        folders.extend(below);
+                    }
+                }
+                Err(e) => return Err(vfs_err(e)),
+            }
+            (out.into_inner(), full.get())
         } else {
             crate::index::maybe_refresh();
             crate::index::with_index(|ix| {
-                let (hits, _capped) = crate::index::query(ix, &q, mode);
-                hits.iter().map(|h| crate::index::hit_row(ix, h)).collect()
+                let (hits, capped) = crate::index::query(ix, &q, mode);
+                (hits.iter().map(|h| crate::index::hit_row(ix, h)).collect(), capped)
             })
         };
         let n = rows.len() as u64;
-        let capped = n as usize >= crate::index::MAX_RESULTS;
         self.searches.insert(lid, rows);
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
         let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());

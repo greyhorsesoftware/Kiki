@@ -92,4 +92,48 @@ TestCase {
         verify(box !== null)
         verify(!box.visible)
     }
+
+    // ---------------------------------------------------------------- git (plan 15)
+
+    function columnRows(colIndex) {
+        const out = []
+        const walk = it => { for (const c of it.children) { if (c.objectName === "git-badge") out.push(c); walk(c) } }
+        walk(cols)
+        return out
+    }
+    function badges() { return columnRows().filter(b => b.visible).map(b => b.text).sort() }
+
+    // A column is a listing like any other and its rows carry `git`; the view drew none of it, so
+    // a modified file looked clean here and nowhere else.
+    function test_a_column_row_shows_its_git_state_like_a_list_row() {
+        const mod = fake.file("a.txt"); mod.git = { state: "modified", staged: false }
+        const unt = fake.file("b.txt"); unt.git = { state: "untracked", staged: false }
+        const dir = fake.dir("Projects"); dir.git = { state: "modified", staged: false }
+        fake.tree = { "file:///home/t": [dir, mod, unt], "file:///home/t/Projects": [Object.assign(fake.file("main.rs"), { git: { state: "added", staged: true } })] }
+        pane.open("file:///home/t"); cols.rebuild(); wait(50)
+        compare(badges(), ["?", "M", "M"], "the folder's aggregate, the modified file, the untracked one")
+    }
+
+    function test_and_so_does_a_column_opened_from_it() {
+        const dir = fake.dir("Projects"); dir.git = { state: "modified", staged: false }
+        fake.tree = { "file:///home/t": [dir], "file:///home/t/Projects": [Object.assign(fake.file("main.rs"), { git: { state: "added", staged: true } })] }
+        pane.open("file:///home/t"); cols.rebuild(); wait(50)
+        const folder = findChild(cols, "colrow-0-0")
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        tryVerify(() => findChild(cols, "colrow-1-0") !== null)
+        tryVerify(() => badges().join(",") === "A,M", 2000, "the opened column's file shows its letter too: " + badges())
+    }
+
+    function test_clean_and_ignored_rows_carry_no_letter_and_folders_can_be_switched_off() {
+        const ign = fake.file("a.txt"); ign.git = { state: "ignored", staged: false }
+        const clean = fake.file("b.txt"); clean.git = { state: "clean", staged: false }
+        const dir = fake.dir("Projects"); dir.git = { state: "modified", staged: false }
+        fake.tree = { "file:///home/t": [dir, ign, clean] }
+        pane.open("file:///home/t"); cols.rebuild(); wait(50)
+        compare(badges(), ["M"])
+        const was = Kiki.Settings.git
+        Kiki.Settings.git = { enabled: true, showIgnored: "dim", folders: "off" }
+        compare(badges(), [], "[git] folders = off takes the folder's mark away")
+        Kiki.Settings.git = was
+    }
 }

@@ -108,12 +108,14 @@ Item {
                 Column {
                     id: col
                     anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 14; width: parent.width - 12
+                    // Ignored by git: the whole tile steps back, as the row's name does in the list.
+                    opacity: Kiki.Format.gitDimmed(cell.row) && !cell.selected ? 0.45 : 1
                     Item {
                         id: iconBox
                         anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
                         UI.KindIcon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; kind: cell.row ? cell.row.kind : ""; size: root.iconSize; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
                         Image { id: thumb; visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
-                        Rectangle { visible: cell.row && cell.row.git && cell.row.git.state !== "clean" && cell.row.git.state !== "ignored"; anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
+                        Rectangle { objectName: "git-dot"; visible: !!Kiki.Format.gitMark(cell.row); anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
                     }
                     Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 }

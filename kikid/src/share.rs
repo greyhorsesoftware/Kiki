@@ -149,27 +149,32 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
     let p = get(id)?;
     let d = registry().lock().unwrap().described.get(id).cloned().unwrap_or(Value::Null);
     let accepts_folders = d.get("accepts").and_then(|a| a.get("folders")).and_then(Value::as_bool).unwrap_or(false);
-    let tmp = std::env::temp_dir().join(format!("kiki-share-{}", job.id));
-    std::fs::create_dir_all(&tmp)?;
+    // Removed when this function returns, however it returns: a cancel, a fetch that fails and a
+    // folder that will not zip all leave early, and each used to leave the fetched files behind.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let tmp = Scratch(std::env::temp_dir().join(format!("kiki-share-{}", job.id)));
+    std::fs::create_dir_all(&tmp.0)?;
+    let tmp = &tmp.0;
     let mut files: Vec<String> = Vec::new();
-    for u in uris {
+    for (n, u) in uris.iter().enumerate() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(VfsError::Io("cancelled".into()));
         }
         let local = if u.is_local() {
             u.to_path()
         } else {
-            // Fetch through the location's plugin into the temp dir.
-            let (session, rpath) = crate::locations::resolve(u)?;
-            let dst = tmp.join(u.name());
-            let mut f = std::fs::File::create(&dst)?;
-            session.plugin.read_stream(session.req("Read").s("path", rpath).done(), |m| {
-                if let Msg::Binary(b) = m {
-                    use std::io::Write;
-                    let _ = f.write_all(&b);
-                }
-            })?;
-            dst
+            // Fetched the way any download is — a folder as a folder, with the job's progress,
+            // cancel, and a full disk as an error — into a folder of its own, so two items of
+            // the same name from different places do not meet.
+            let into = tmp.join(n.to_string());
+            std::fs::create_dir_all(&into)?;
+            crate::transfer::copy_or_move(job, false, std::slice::from_ref(u), &Uri::from_path(&into), cancel)?;
+            into.join(u.name())
         };
         if local.is_dir() && !accepts_folders {
             let zip = tmp.join(format!("{}.zip", local.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "folder".into())));
@@ -197,7 +202,6 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
             }
         }
     });
-    let _ = std::fs::remove_dir_all(&tmp);
     r
 }
 

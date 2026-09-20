@@ -368,11 +368,16 @@ pub fn query(ix: &Index, q: &str, mode: Mode) -> (Vec<Hit>, bool) {
     let mut key = Vec::new();
     sort_key(q.as_bytes(), &mut key);
     let lower: Vec<u8> = q.bytes().map(|b| b.to_ascii_lowercase()).collect();
-    let mut hits: Vec<Hit> = Vec::new();
     let n = ix.len() as u32;
     if lower.is_empty() {
-        return (hits, false);
+        return (Vec::new(), false);
     }
+    // The best MAX_RESULTS of EVERY match. This used to stop at the first 40,000 matches and rank
+    // those, so in a big index a common word could leave the best hit — the shallowest, the exact
+    // name — unseen because it sat late in the scan. The pass over the names is the cost either
+    // way; what is kept is bounded by a heap whose top is the worst hit so far.
+    let mut best: std::collections::BinaryHeap<(u32, u32)> = std::collections::BinaryHeap::with_capacity(MAX_RESULTS + 1);
+    let mut matches = 0usize;
     for i in 0..n {
         if ix.is_root[i as usize] || ix.removed[i as usize] {
             continue;
@@ -390,16 +395,19 @@ pub fn query(ix: &Index, q: &str, mode: Mode) -> (Vec<Hit>, bool) {
             Mode::Fuzzy => substring_rank(name, &lower).or_else(|| fuzzy_rank(name, &lower)),
         };
         if let Some(r) = rank {
-            hits.push(Hit { entry: i, score: r * 64 + ix.depth(i).min(63) });
-            if hits.len() >= MAX_RESULTS * 4 {
-                break;
+            matches += 1;
+            let hit = (r * 64 + ix.depth(i).min(63), i);
+            if best.len() < MAX_RESULTS {
+                best.push(hit);
+            } else if best.peek().is_some_and(|worst| hit < *worst) {
+                best.pop();
+                best.push(hit);
             }
         }
     }
-    hits.sort_by_key(|h| h.score);
-    let capped = hits.len() > MAX_RESULTS;
-    hits.truncate(MAX_RESULTS);
-    (hits, capped)
+    // Ascending: best score first, index order within a score, as before.
+    let hits = best.into_sorted_vec().into_iter().map(|(score, entry)| Hit { entry, score }).collect();
+    (hits, matches > MAX_RESULTS)
 }
 
 fn substring_rank(name: &[u8], lower: &[u8]) -> Option<u32> {
@@ -604,6 +612,34 @@ pub fn hit_row(ix: &Index, h: &Hit) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two bugs in one place: the scan stopped at the first 40,000 matches and ranked only those,
+    /// so the best hit could be one it never reached; and exactly MAX_RESULTS matches was reported
+    /// as "there are more".
+    #[test]
+    fn every_match_is_ranked_and_capped_means_more_than_fit() {
+        let d = std::env::temp_dir().join(format!("kiki-index-many-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("aaa/bulk")).unwrap();
+        std::fs::create_dir_all(d.join("zzz")).unwrap();
+        for i in 0..(MAX_RESULTS * 4 + 50) {
+            std::fs::write(d.join(format!("aaa/bulk/old-report-{i}.txt")), b"").unwrap();
+        }
+        // The one that should come first — an exact name — in the folder walked last.
+        std::fs::write(d.join("zzz/report"), b"").unwrap();
+        for i in 0..MAX_RESULTS {
+            std::fs::write(d.join(format!("aaa/tenk{i}")), b"").unwrap();
+        }
+        let ix = build(std::slice::from_ref(&d), &default_excludes(), &AtomicBool::new(false));
+        let (hits, capped) = query(&ix, "report", Mode::Substring);
+        assert_eq!(hits.len(), MAX_RESULTS);
+        assert!(capped, "there were more matches than are returned");
+        assert_eq!(String::from_utf8_lossy(ix.name(hits[0].entry)), "report", "the exact name is first however late it was walked");
+        let (hits, capped) = query(&ix, "tenk", Mode::Substring);
+        assert_eq!(hits.len(), MAX_RESULTS);
+        assert!(!capped, "exactly as many as fit is not 'more'");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 
     #[test]
     fn builds_and_queries() {

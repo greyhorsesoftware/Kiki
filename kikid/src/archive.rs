@@ -61,25 +61,80 @@ pub fn compress(items: &[PathBuf], archive: &Path, format: &str, cancel: &Atomic
     })
 }
 
-/// Extracts `archive` into `dest` (created if missing). Refuses entries that would escape `dest`.
-pub fn extract(archive: &Path, dest: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<Vec<String>> {
-    // Inspect the member list first so a hostile archive never writes anything.
-    let members = list(archive)?;
-    for m in &members {
-        let p = Path::new(&m.name);
+/// Every member's name, uncapped (`bsdtar -tf`): what the safety check reads. `list` stops at
+/// 10,000 entries because it is for showing, and a check that stops there is no check.
+fn names(archive: &Path) -> Result<Vec<String>> {
+    let out = Command::new("bsdtar")
+        .arg("-tf")
+        .arg(archive)
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
+    if !out.status.success() {
+        return Err(VfsError::Io(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect())
+}
+
+/// An archive's name without its archive extension: `site.tar.gz` -> `site`.
+pub fn stem(name: &str) -> &str {
+    let lower = name.to_ascii_lowercase();
+    for ext in [".tar.gz", ".tar.xz", ".tar.zst", ".tar.bz2", ".tgz", ".txz", ".tzst", ".tbz2", ".tar", ".zip", ".7z"] {
+        if lower.ends_with(ext) && name.len() > ext.len() {
+            return &name[..name.len() - ext.len()];
+        }
+    }
+    name
+}
+
+/// Extracts `archive` into `dest` (created if missing) and returns the ONE thing it made there,
+/// or `None` for an empty archive.
+///
+/// - An archive holding a single file or folder puts that in `dest`.
+/// - An archive holding several puts them in a new folder named after the archive — thirty
+///   files loose among the ones already there is never what was wanted (plan 05).
+/// - Either way the name is a free one ("site", then "site (2)"): nothing in `dest` is merged
+///   into or overwritten. That is also what makes undo exact — it removes what is returned
+///   here, and nothing that was there before can be inside it.
+///
+/// The members are unpacked in a staging folder inside `dest` (same filesystem, so taking their
+/// place is a rename), and an archive with an entry that would escape it is refused before
+/// anything is written.
+pub fn extract(archive: &Path, dest: &Path, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<Option<PathBuf>> {
+    for name in names(archive)? {
+        let p = Path::new(&name);
         if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            return Err(VfsError::Io(format!("refusing unsafe archive entry {}", m.name)));
+            return Err(VfsError::Unsafe(format!("refusing unsafe archive entry {name}")));
         }
     }
     std::fs::create_dir_all(dest)?;
-    let mut cmd = Command::new("bsdtar");
-    cmd.arg("-xvf").arg(archive).arg("-C").arg(dest).arg("--no-same-owner");
-    run(cmd, cancel, progress)?;
-    // Top-level names created, for the journal's inverse.
-    let mut top: Vec<String> = members.iter().filter_map(|m| m.name.trim_end_matches('/').split('/').next().map(str::to_string)).collect();
-    top.sort();
-    top.dedup();
-    Ok(top)
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let staging = dest.join(format!(".kiki-extract-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&staging)?;
+    let placed = (|| {
+        let mut cmd = Command::new("bsdtar");
+        cmd.arg("-xvf").arg(archive).arg("-C").arg(&staging).arg("--no-same-owner");
+        run(cmd, cancel, progress)?;
+        let mut top: Vec<std::ffi::OsString> = std::fs::read_dir(&staging)?.filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        top.sort();
+        match top.as_slice() {
+            [] => Ok(None),
+            [only] => {
+                let to = dest.join(crate::ops::unique_name(dest, &only.to_string_lossy()));
+                std::fs::rename(staging.join(only), &to)?;
+                Ok(Some(to))
+            }
+            _ => {
+                let folder = archive.file_name().map(|n| stem(&n.to_string_lossy()).to_string()).unwrap_or_else(|| "archive".into());
+                let to = dest.join(crate::ops::unique_name(dest, &folder));
+                std::fs::rename(&staging, &to)?;
+                Ok(Some(to))
+            }
+        }
+    })();
+    // Gone already when it became the folder; otherwise empty, or what a failure left behind.
+    let _ = std::fs::remove_dir_all(&staging);
+    placed
 }
 
 fn run(mut cmd: Command, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<()> {
@@ -175,12 +230,91 @@ mod tests {
         assert!(seen.iter().any(|s| s.contains("b c.txt")));
         let members = list(&d.join("src.tar.gz")).unwrap();
         assert!(members.iter().any(|m| m.name.ends_with("sub/b c.txt") && m.size == 6));
-        let top = extract(&d.join("src.tar.gz"), &d.join("out"), &cancel, &mut |_| {}).unwrap();
-        assert_eq!(top, vec!["src".to_string()]);
+        let made = extract(&d.join("src.tar.gz"), &d.join("out"), &cancel, &mut |_| {}).unwrap();
+        assert_eq!(made, Some(d.join("out/src")), "one top-level folder lands in the destination as itself");
         assert_eq!(std::fs::read(d.join("out/src/sub/b c.txt")).unwrap(), b"world!");
         assert_eq!(format_from_name("x.tar.zst"), Some("tar.zst"));
         assert_eq!(format_from_name("x.ZIP"), Some("zip"));
         assert_eq!(format_from_name("x.txt"), None);
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kiki-archive-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn only_staging_left_is_none(dir: &Path) {
+        let left: Vec<String> = std::fs::read_dir(dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with(".kiki-extract")).collect();
+        assert!(left.is_empty(), "staging folder left behind: {left:?}");
+    }
+
+    #[test]
+    fn several_top_level_entries_go_into_a_folder_named_after_the_archive() {
+        let d = scratch("many");
+        std::fs::create_dir_all(d.join("in/docs")).unwrap();
+        std::fs::write(d.join("in/a.txt"), b"a").unwrap();
+        std::fs::write(d.join("in/b.txt"), b"b").unwrap();
+        std::fs::write(d.join("in/docs/c.txt"), b"c").unwrap();
+        let cancel = AtomicBool::new(false);
+        compress(&[d.join("in/a.txt"), d.join("in/b.txt"), d.join("in/docs")], &d.join("site.v2.tar.gz"), "tar.gz", &cancel, &mut |_| {}).unwrap();
+        let out = d.join("out");
+        let made = extract(&d.join("site.v2.tar.gz"), &out, &cancel, &mut |_| {}).unwrap();
+        assert_eq!(made, Some(out.join("site.v2")));
+        assert_eq!(std::fs::read(out.join("site.v2/docs/c.txt")).unwrap(), b"c");
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1, "nothing loose beside the folder");
+        only_staging_left_is_none(&out);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// The hazard this replaced: extraction merged into a folder that was already there, and undo
+    /// then deleted the folder — the user's own files with it.
+    #[test]
+    fn extracting_never_merges_into_what_is_there_so_undo_cannot_take_it() {
+        let d = scratch("merge");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/new.txt"), b"from the archive").unwrap();
+        let cancel = AtomicBool::new(false);
+        compress(&[d.join("src")], &d.join("src.zip"), "zip", &cancel, &mut |_| {}).unwrap();
+        // The folder of the same name that is already here, with something of the user's in it.
+        std::fs::write(d.join("src/mine.txt"), b"mine").unwrap();
+        let made = extract(&d.join("src.zip"), &d, &cancel, &mut |_| {}).unwrap().unwrap();
+        assert_eq!(made, d.join("src (2)"), "a free name, not a merge");
+        assert!(made.join("new.txt").exists());
+        assert!(!made.join("mine.txt").exists());
+        // Undo is "delete what extract returned".
+        std::fs::remove_dir_all(&made).unwrap();
+        assert_eq!(std::fs::read(d.join("src/mine.txt")).unwrap(), b"mine", "what was there before is untouched");
+        only_staging_left_is_none(&d);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn an_entry_that_escapes_is_refused_before_anything_is_written() {
+        let d = scratch("evil");
+        std::fs::create_dir_all(d.join("deep/er")).unwrap();
+        std::fs::write(d.join("evil.txt"), b"x").unwrap();
+        // bsdtar will happily store a `..` path when asked to (-P); unpacking it is what we refuse.
+        let made = Command::new("bsdtar").current_dir(d.join("deep/er")).args(["-cPf", "../../evil.tar", "../../evil.txt"]).status().unwrap();
+        assert!(made.success());
+        assert!(names(&d.join("evil.tar")).unwrap().iter().any(|n| n.contains("..")), "the fixture really holds a .. entry");
+        let out = d.join("out");
+        let cancel = AtomicBool::new(false);
+        let r = extract(&d.join("evil.tar"), &out, &cancel, &mut |_| {});
+        assert!(matches!(r, Err(VfsError::Unsafe(_))), "a typed refusal");
+        assert_eq!(r.unwrap_err().code(), "Unsafe");
+        assert!(!out.exists(), "and nothing was created, not even the destination");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn stems() {
+        assert_eq!(stem("site.tar.gz"), "site");
+        assert_eq!(stem("Photos.ZIP"), "Photos");
+        assert_eq!(stem("site.v2.tgz"), "site.v2");
+        assert_eq!(stem("notes.txt"), "notes.txt");
+        assert_eq!(stem(".zip"), ".zip");
     }
 }

@@ -154,6 +154,12 @@ pub fn gone(path: &std::path::Path) {
     forget(&Uri::from_path(path));
 }
 
+/// Every local listing in memory at or under `root`: what a change to a repository's state
+/// (a commit, a checkout, a `git add`) can have made wrong.
+pub fn under(root: &std::path::Path) -> Vec<Arc<Listing>> {
+    cache().lock().unwrap().map.values().filter(|l| l.uri.is_local() && l.path.starts_with(root)).cloned().collect()
+}
+
 pub fn find(path: &std::path::Path) -> Option<Arc<Listing>> {
     cache().lock().unwrap().map.get(&key_of(path)).cloned()
 }

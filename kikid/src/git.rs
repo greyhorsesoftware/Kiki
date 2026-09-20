@@ -121,6 +121,19 @@ pub fn enabled() -> bool {
     crate::config::settings().get("git").and_then(|g| g.get("enabled")).and_then(Value::as_bool).unwrap_or(true)
 }
 
+/// `[git] showIgnored = "hide"`: ignored files and folders are left out of a listing, the way
+/// dot-files are. ("dim" and "normal" are the shell's business: they are only how a row is drawn.)
+pub fn hide_ignored() -> bool {
+    crate::config::settings().get("git").and_then(|g| g.str_field("showIgnored").map(|s| s == "hide")).unwrap_or(false)
+}
+
+/// Did the last status of `dir` take over two seconds? Such a directory — a vast repository
+/// without `core.untrackedCache` — is not run again every time git is used in a terminal; it
+/// waits for the directory itself to change, or for an explicit refresh (plan 15).
+pub fn is_slow(dir: &Path) -> bool {
+    status_cache().lock().unwrap().get(dir).is_some_and(|s| s.slow)
+}
+
 fn status_cache() -> &'static Mutex<HashMap<PathBuf, Status>> {
     static C: OnceLock<Mutex<HashMap<PathBuf, Status>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))

@@ -70,6 +70,8 @@ pub enum VfsError {
     Exists,
     NotEmpty,
     Unsupported,
+    /// Refused because doing it would be dangerous: an archive entry that escapes its folder.
+    Unsafe(String),
     Io(String),
 }
 
@@ -81,12 +83,13 @@ impl VfsError {
             VfsError::Exists => "Exists",
             VfsError::NotEmpty => "NotEmpty",
             VfsError::Unsupported => "Unsupported",
+            VfsError::Unsafe(_) => "Unsafe",
             VfsError::Io(_) => "Io",
         }
     }
     pub fn message(&self) -> String {
         match self {
-            VfsError::Io(m) => m.clone(),
+            VfsError::Io(m) | VfsError::Unsafe(m) => m.clone(),
             other => other.code().to_string(),
         }
     }

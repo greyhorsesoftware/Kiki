@@ -52,8 +52,8 @@ Rectangle {
                 UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
-            Text { anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (r.row && r.row.git && r.row.git.state !== "clean" ? 20 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (r.row.git && r.row.git.state === "ignored" && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-            Text { visible: r.row && r.row.git && r.row.git.state !== "clean" && r.row.git.state !== "ignored"; anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(r.row ? r.row.git : null); color: r.selected ? Kiki.Theme.bg : Kiki.Format.gitColor(r.row ? r.row.git : null); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
+            Text { anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (Kiki.Format.gitMark(r.row) ? 20 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (Kiki.Format.gitDimmed(r.row) && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { objectName: "git-badge"; visible: !!Kiki.Format.gitMark(r.row); anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(Kiki.Format.gitMark(r.row)); color: r.selected ? Kiki.Theme.bg : Kiki.Format.gitColor(Kiki.Format.gitMark(r.row)); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
         }
         Repeater {
             model: r.columns.slice(1)

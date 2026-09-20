@@ -328,6 +328,9 @@ FloatingWindow {
         id: ops
         pane: win.pane
         onConfirmNeeded: (spec, reply) => confirm.ask(spec, reply)
+        onFolderNeeded: (spec, reply) => portal.pick(
+            { mode: "open", directory: true, title: spec.title, currentFolder: (spec.start || "").replace(/^file:\/\//, "") || win.home },
+            uris => reply(uris && uris.length ? uris[0].replace(/\/+$/, "") : ""))
         onCopyText: text => Quickshell.execDetached(["wl-copy", text])
     }
     property alias clipboard: ops.clipboard
