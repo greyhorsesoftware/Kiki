@@ -504,6 +504,13 @@ impl Client {
                 None => Err(("Protocol", "missing job".into())),
             },
             "Jobs" => Ok(Some(Value::obj().v("jobs", crate::jobs::list()).done())),
+            // Forgetting finished jobs is the daemon's to do: the list is fetched again on every
+            // reconnect, which would bring back whatever a window had only hidden. Live jobs stay.
+            "ClearJobs" => Ok(Some(Value::obj().u("cleared", crate::jobs::dismiss(None)).done())),
+            "DismissJob" => match b.u64_field("job") {
+                Some(job) => Ok(Some(Value::obj().u("cleared", crate::jobs::dismiss(Some(job))).done())),
+                None => Err(("Protocol", "missing job".into())),
+            },
             "Undo" => crate::jobs::undo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
             "Redo" => crate::jobs::redo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
             "JobEvents" => {

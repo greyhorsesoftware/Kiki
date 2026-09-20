@@ -316,7 +316,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     if wrote {
         let cancel = AtomicBool::new(false);
         let mut bytes = 0u64;
-        let mut p = crate::ops::Progress { cancel: &cancel, bytes: &mut |n| bytes += n };
+        let mut p = crate::ops::Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None };
         let t = Instant::now();
         if crate::ops::copy_file(&src, &dst, &mut p).is_ok() {
             let el = t.elapsed();

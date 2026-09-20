@@ -117,7 +117,11 @@ Singleton {
             Component.onCompleted: if (connected) Qt.callLater(daemon._hello)
             onConnectionStateChanged: {
                 if (connected) {
-                    daemon._hello()
+                    // Deferred like the one above, and for the same reason: during construction
+                    // this fires before `sock.item` exists, the greeting found no socket and
+                    // logged "Hello failed" on every start. `callLater` also folds the two into
+                    // one greeting.
+                    Qt.callLater(daemon._hello)
                 } else {
                     daemon.ready = false
                     daemon._listings = ({})

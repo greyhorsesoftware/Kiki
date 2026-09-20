@@ -237,7 +237,7 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
         (Side::Local(mroot), Side::Local(rroot)) => {
             let dst = rroot.join(a.to);
             let _ = std::fs::remove_file(&dst);
-            let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n) };
+            let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n), file: None };
             crate::ops::copy_file(&mroot.join(a.rel), &dst, &mut p)?;
             Ok(())
         }

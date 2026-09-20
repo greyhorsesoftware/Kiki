@@ -136,6 +136,13 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     job = d.ok("Submit", op={"op": "copy", "items": [local_uri(f"big-{tag}.bin")], "dest": uri(f"inbox-{tag}")})["job"]
     moving = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and (e["job"]["bytes"] > 0 or e["job"]["state"] in ("done", "failed", "cancelled")), timeout=30)
     c.check(f"{tag}: the upload is under way", moving and moving["job"]["state"] == "running", moving and moving["job"])
+    # What the activity view is told about it (plan 32).
+    j = moving["job"] if moving else {}
+    c.check(f"{tag}: it says what it is: an upload of that file, and which file is in hand",
+            j.get("direction") == "upload" and j.get("name") == f"big-{tag}.bin" and (j.get("current") or {}).get("name") == f"big-{tag}.bin" and (j.get("current") or {}).get("size") == BIG_MB * 1024 * 1024,
+            {k: j.get(k) for k in ("direction", "name", "current", "phase")})
+    prepared = [e["job"] for e in d.events if e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] == "running"]
+    c.check(f"{tag}: it was 'preparing' until its totals were known, then 'running'", prepared and prepared[0].get("phase") == "preparing" and j.get("phase") == "running", [p.get("phase") for p in prepared][:4])
     busy = connections(port)
     c.check(f"{tag}: on a connection of its own", busy == idle + 1, f"{idle} before, {busy} during")
     took = lists(ctx, uri(f"probe-during-{tag}"), "here.txt")
@@ -143,8 +150,13 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     c.check(f"{tag}: a folder never seen before lists while it runs", took is not None and took < 5, f"{took and round(took, 2)} s")
     c.check(f"{tag}: and the upload was still running when it did (else this proved nothing)", isinstance(still, dict) and still["state"] == "running", still)
 
+    fast = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("rate", 0) > 0, timeout=10)
+    c.check(f"{tag}: and how fast it is going", fast is not None, _job_state(d, job))
+    d.events.clear()
     d.ok("Cancel", job=job)
     ended = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("cancelled", "done", "failed"), timeout=30)
+    said = [e["job"] for e in d.events if e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"].get("cancelling")]
+    c.check(f"{tag}: 'cancelling' is said at once, while it is still running", any(x["state"] == "running" for x in said), [(x["state"], x.get("cancelling")) for x in said][:3])
     c.check(f"{tag}: cancelled mid-file, it ends as cancelled", ended and ended["job"]["state"] == "cancelled", ended and ended["job"])
     c.check(f"{tag}: and leaves nothing behind: no half file under its name, no part file", os.listdir(os.path.join(root, f"inbox-{tag}")) == [], os.listdir(os.path.join(root, f"inbox-{tag}")))
     took = lists(ctx, uri(f"probe-after-{tag}"), "here.txt")

@@ -13,6 +13,22 @@ pub const COPY_BUF: usize = 1024 * 1024;
 pub struct Progress<'a> {
     pub cancel: &'a AtomicBool,
     pub bytes: &'a mut dyn FnMut(u64),
+    /// Told as each file of a tree is begun and finished: what the activity view names as the
+    /// file being copied, and what lets a folder copy count files rather than end at "1 of 458".
+    pub file: Option<&'a mut dyn FnMut(FileEvent)>,
+}
+
+pub enum FileEvent<'a> {
+    Start(&'a Path, u64),
+    Done,
+}
+
+impl Progress<'_> {
+    fn tell(&mut self, e: FileEvent) {
+        if let Some(f) = self.file.as_mut() {
+            f(e);
+        }
+    }
 }
 
 fn cancelled(c: &AtomicBool) -> bool {
@@ -41,7 +57,10 @@ pub fn copy_file(src: &Path, dst: &Path, p: &mut Progress) -> Result<u64> {
                 let _ = fs::remove_file(dst);
                 return Err(VfsError::Io("cancelled".into()));
             }
-            let want = (total - done).min(1 << 30) as usize;
+            // 64 MiB at a time: the kernel does each call in one go, so this is how often a cancel
+            // is looked for and progress is reported. It was 1 GiB, which on a 4 GB file was four
+            // updates and a cancel that could take a long while to be noticed.
+            let want = (total - done).min(64 << 20) as usize;
             let n = unsafe { libc::copy_file_range(input.as_raw_fd(), std::ptr::null_mut(), output.as_raw_fd(), std::ptr::null_mut(), want, 0) };
             if n < 0 {
                 let err = std::io::Error::last_os_error();
@@ -113,6 +132,7 @@ pub fn copy_tree(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
     if md.file_type().is_symlink() {
         let target = fs::read_link(src)?;
         std::os::unix::fs::symlink(target, dst)?;
+        p.tell(FileEvent::Done);
         return Ok(());
     }
     if md.is_dir() {
@@ -124,7 +144,9 @@ pub fn copy_tree(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
         let _ = fs::set_permissions(dst, md.permissions());
         return Ok(());
     }
+    p.tell(FileEvent::Start(src, md.len()));
     copy_file(src, dst, p)?;
+    p.tell(FileEvent::Done);
     Ok(())
 }
 
@@ -213,7 +235,7 @@ pub fn trash(path: &Path) -> Result<String> {
     let info = format!("[Trash Info]\nPath={}\nDeletionDate={}\n", percent_path(path), iso_local(now));
     fs::write(td.join("info").join(format!("{name}.trashinfo")), info)?;
     let mut dummy = AtomicBool::new(false);
-    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {} };
+    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None };
     if let Err(e) = move_path(path, &td.join("files").join(&name), &mut p) {
         let _ = fs::remove_file(td.join("info").join(format!("{name}.trashinfo")));
         return Err(e);
@@ -231,7 +253,7 @@ pub fn restore(name: &str) -> Result<PathBuf> {
         return Err(VfsError::Exists);
     }
     let mut dummy = AtomicBool::new(false);
-    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {} };
+    let mut p = Progress { cancel: &mut dummy, bytes: &mut |_| {}, file: None };
     move_path(&td.join("files").join(name), &orig, &mut p)?;
     let _ = fs::remove_file(td.join("info").join(format!("{name}.trashinfo")));
     Ok(orig)
@@ -304,8 +326,13 @@ pub fn trash_infos() -> Vec<(String, String, String)> {
     out
 }
 
-/// Delete everything in the trash for good.
-pub fn empty_trash(cancel: &AtomicBool) -> Result<u64> {
+/// How many things are in the trash: the total an "Empty Trash" counts towards.
+pub fn trash_count() -> u64 {
+    fs::read_dir(trash_dir().join("files")).map(|rd| rd.flatten().count() as u64).unwrap_or(0)
+}
+
+/// Delete everything in the trash for good; `each` is told as every item goes.
+pub fn empty_trash(cancel: &AtomicBool, each: &mut dyn FnMut()) -> Result<u64> {
     let td = trash_dir();
     let mut n = 0;
     for sub in ["files", "info"] {
@@ -322,6 +349,7 @@ pub fn empty_trash(cancel: &AtomicBool) -> Result<u64> {
             }
             if sub == "files" {
                 n += 1;
+                each();
             }
         }
     }
@@ -371,13 +399,13 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let mut bytes = 0u64;
         {
-            let mut p = Progress { cancel: &cancel, bytes: &mut |n| bytes += n };
+            let mut p = Progress { cancel: &cancel, bytes: &mut |n| bytes += n, file: None };
             copy_tree(&d.join("src"), &d.join("copy"), &mut p).unwrap();
         }
         assert_eq!(bytes, 3 * 1024 * 1024 + 2);
         assert_eq!(fs::read(d.join("copy/sub/b.txt")).unwrap(), b"bb");
         assert_eq!(tree_size(&d.join("copy")), (2, 3 * 1024 * 1024 + 2));
-        let mut p = Progress { cancel: &cancel, bytes: &mut |_| {} };
+        let mut p = Progress { cancel: &cancel, bytes: &mut |_| {}, file: None };
         move_path(&d.join("copy"), &d.join("moved"), &mut p).unwrap();
         assert!(!d.join("copy").exists() && d.join("moved/a.txt").exists());
         let name = trash(&d.join("moved")).unwrap();
@@ -409,6 +437,7 @@ mod tests {
                         cancel.store(true, Ordering::Relaxed)
                     }
                 },
+                file: None,
             };
             copy_file(&d.join("big"), &d.join("out"), &mut p)
         };

@@ -189,7 +189,21 @@ Things that are wrong today. Each gets a test that fails first.
 - `views.toml`: drop `view = "mirror"` from entries on load, keeping sort and hidden (plan 29 J's last unbuilt item).
 - Emit `FavoritesChanged` and `Gone` (D10); `Hello` checks the version (D11).
 
-### Phase 3 — jobs that can be watched, and the orb (4½–5 days)
+### Phase 3 — jobs that can be watched, and the orb (4½–5 days) — **in progress**
+
+**Done 2026-09-19: the daemon's half — what a job says about itself.** Suites after it: clippy clean; `cargo test` 158; QML 340; e2e 237 passed, 1 skipped. Still to do: the job log, then the orb and the popup.
+
+- **`Job::json` carries the table below**, as planned, with these differences. `phase` and `cancelling` are *derived*, not stored: a running job with no totals and no bytes yet is `preparing`; a job whose cancel flag is up and which has not ended is `cancelling` — and `cancel()` now broadcasts, so the view hears it at once rather than when the worker looks up. `set_totals` broadcasts. `isDir` for something on a server is not knowable when the job is submitted (a URI keeps no trailing slash); the transfer says once it has listed it. `current` and `rate` are only reported while the job runs.
+- **A folder copy counts files.** It counted one per top-level item against a total of *files*, so a folder copy ended at "1 of 458". `ops::Progress` gained an optional per-file callback (`FileEvent::Start` / `Done`); the local copy counts files as they finish and names the one in hand. A job that ends `done` ends at its totals (a rename is one step however many files it moves).
+- **Mirror runs count as they go** — every change used to be reported as "nothing done", so a run sat at 0 of 900 until the end — and name the item most recently begun. With several workers the file's own bar is left out (`size` 0): the bytes moving belong to all of them. The counts go on the job as `result`.
+- **`chmod` and Empty Trash** report item by item instead of one jump at the end.
+- **A transfer's error names the file** (`site/img/c.bin: Denied`, not `Denied`). A download that stops part-way can be undone (`undo_so_far`), and says where to `Reveal`.
+- **`copy_file_range` in 64 MiB steps**, not 1 GiB: that step is how often a cancel is looked for and progress reported (this was phase 4's).
+- **`ClearJobs`, `DismissJob { job }`** and the event **`JobsCleared { jobs }`**; live jobs are never forgotten. `Jobs` returns every live job plus the fifty most recent finished ones — "the last fifty of everything" let a long transfer fall off the list while it ran.
+- **Hidden**: `_silent` ops, `movePairs`, `rmdirIfEmpty`, `chmodList`, `mirrorScan`.
+- **Tests**: `jobs::tests` (three new); and in `remote_transfers`, against real SFTP and FTPS: an upload says it is an upload, of which file, which file is in hand and its size; it is `preparing` and then `running`; a rate appears; `cancelling` is said while it is still `running`.
+- Also, from a loose end after phase 2: the shell greeted the daemon twice at start — the first time before its socket object existed, which logged "Hello failed" on every launch. One deferred greeting now.
+
 
 Plan 29 I placed the orb; decision 3 wants the spec's anatomy. The audit's finding is that **the daemon does not carry the data**: a job is `id, op, state, done, total, bytes, bytesTotal, title, error, undoable`, with a prose title and nothing about what is moving right now. So the daemon goes first.
 

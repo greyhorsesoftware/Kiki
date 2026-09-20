@@ -154,6 +154,9 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
             files += 1;
             bytes += meta.size;
         }
+        if plan.is_empty() {
+            job.set_is_dir(is_dir);
+        }
         plan.push(Item { name, from, is_dir, meta, tree });
     }
     job.set_totals(files.max(plan.len() as u64), bytes);
@@ -192,7 +195,8 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
                 if *is_dir {
                     mkdir(&dst_root, rel)?;
                 } else {
-                    copy_file(&src_root, rel, &dst_root, rel, *size, *mtime, &ctx)?;
+                    job.file_started(&format!("{}/{rel}", it.name), *size);
+                    copy_file(&src_root, rel, &dst_root, rel, *size, *mtime, &ctx).map_err(|e| naming(e, &format!("{}/{rel}", it.name)))?;
                     job.progress(1, 0);
                 }
             }
@@ -200,7 +204,8 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
                 job.progress(1, 0);
             }
         } else {
-            copy_file(&it.from, &it.name, &to, &target, it.meta.size, it.meta.mtime_ms, &ctx)?;
+            job.file_started(&it.name, it.meta.size);
+            copy_file(&it.from, &it.name, &to, &target, it.meta.size, it.meta.mtime_ms, &ctx).map_err(|e| naming(e, &it.name))?;
             job.progress(1, 0);
         }
         // The original goes only once everything of it has arrived.
@@ -209,11 +214,33 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
         }
         there.insert(target.clone(), (it.is_dir, it.meta.clone()));
         created.push(dest.join(&target));
+        if dest.is_local() {
+            // What "Reveal" shows, and — for a copy — what undo can take back even if the job
+            // stops on a later item.
+            job.set_reveal(&dest.join(&target).to_string());
+            if !moving {
+                job.undo_so_far(arrived(&created));
+            }
+        }
     }
     for u in items.iter().filter_map(|u| u.parent()).chain(std::iter::once(dest.clone())) {
         invalidate(&u);
     }
-    Ok((!moving && dest.is_local()).then(|| Value::obj().s("op", "delete").v("items", Value::Arr(created.iter().map(|u| Value::Str(u.to_string())).collect())).b("_silent", true).done()))
+    Ok((!moving && dest.is_local()).then(|| arrived(&created)))
+}
+
+/// The inverse of a download: delete what arrived.
+fn arrived(created: &[Uri]) -> Value {
+    Value::obj().s("op", "delete").v("items", Value::Arr(created.iter().map(|u| Value::Str(u.to_string())).collect())).b("_silent", true).done()
+}
+
+/// An error that says which file it was about. A plugin's "Denied" or "NotFound" is a bare code;
+/// in a transfer of four hundred files that is no help at all.
+fn naming(e: VfsError, file: &str) -> VfsError {
+    match e {
+        VfsError::Io(m) if m == "cancelled" => VfsError::Io(m),
+        other => VfsError::Io(format!("{file}: {}", other.message())),
+    }
 }
 
 fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsError> {

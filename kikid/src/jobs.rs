@@ -7,7 +7,7 @@ use crate::proto;
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -53,6 +53,80 @@ pub struct Job {
     /// has still changed things — forty files in the trash, twelve folders copied — and those
     /// must be as undoable as if it had finished.
     partial: Mutex<Option<Value>>,
+    /// What the job is, in the terms the activity view shows it in; fixed when it is submitted.
+    pub about: About,
+    /// What it is doing at this moment, and what came of it.
+    live: Mutex<Live>,
+}
+
+/// A job described for a person rather than for the runner (plan 32). `title` is a sentence
+/// ("Copy 3 items to dst"); the activity view wants the pieces: what, how many, from where to
+/// where, in which direction.
+#[derive(Clone, Debug, Default)]
+pub struct About {
+    /// The file or folder the job is about — the first of them when there are several.
+    pub name: String,
+    pub count: u64,
+    pub is_dir: bool,
+    pub src: Option<String>,
+    pub dest: Option<String>,
+    /// `upload` | `download` | `remote` (server to server) | `local`.
+    pub direction: &'static str,
+    /// Machinery rather than something the user asked for: the inverse ops an undo runs, a
+    /// mirror's preflight scan. They run like any job and stay out of the activity view.
+    pub hidden: bool,
+}
+
+#[derive(Default)]
+struct Live {
+    /// The file being worked on: name (relative to the item), bytes of it done, its size.
+    current: Option<(String, u64, u64)>,
+    /// Bytes per second, smoothed: what every window shows, so they all show the same number.
+    rate: f64,
+    mark: Option<(Instant, u64)>,
+    result: Option<Value>,
+    reveal: Option<String>,
+    /// Learnt as the job runs: a thing on a server is not known to be a folder until it is listed.
+    is_dir: Option<bool>,
+}
+
+fn about(kind: &str, op: &Value) -> About {
+    let parse = |s: &str| Uri::parse(s).ok();
+    let items: Vec<Uri> = op.get("items").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(parse).collect()).unwrap_or_default();
+    let one = op.str_field("uri").or(op.str_field("archive")).and_then(parse);
+    let first = items.first().cloned().or(one);
+    let dest = op.str_field("dest").and_then(parse);
+    let src = first.as_ref().and_then(|u| u.parent());
+    let spec = op.get("spec");
+    let (src, dest) = match spec {
+        Some(sp) => (sp.str_field("master").and_then(parse), sp.str_field("replica").and_then(parse)),
+        None => (src, dest),
+    };
+    let remote = |u: &Option<Uri>| u.as_ref().is_some_and(|u| !u.is_local() && u.scheme != "trash");
+    let direction = match (remote(&src), remote(&dest)) {
+        (false, true) => "upload",
+        (true, false) if dest.is_some() => "download",
+        (true, true) => "remote",
+        _ => "local",
+    };
+    let name = match (kind, &first) {
+        ("mirrorRun" | "mirrorScan", _) => format!("Mirroring {}", if direction == "download" { "remote → local" } else { "local → remote" }),
+        ("emptyTrash", _) => "Trash".to_string(),
+        (_, Some(u)) => u.name().to_string(),
+        _ => String::new(),
+    };
+    // On a server this is not known yet: the transfer says once it has looked (`set_is_dir`).
+    let is_dir = first.as_ref().is_some_and(|u| u.is_local() && u.to_path().is_dir());
+    let silent = op.get("_silent").and_then(Value::as_bool).unwrap_or(false);
+    About {
+        name,
+        count: (items.len() as u64).max(u64::from(first.is_some())),
+        is_dir,
+        src: src.map(|u| u.to_string()),
+        dest: dest.map(|u| u.to_string()),
+        direction,
+        hidden: silent || matches!(kind, "movePairs" | "rmdirIfEmpty" | "chmodList" | "mirrorScan"),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -131,8 +205,11 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
         let mut q = queue().lock().unwrap();
         let id = q.next_id;
         q.next_id += 1;
+        let about = about(&kind, &op);
         let job = Arc::new(Job {
             id,
+            about,
+            live: Mutex::new(Live::default()),
             op,
             kind,
             title,
@@ -187,7 +264,15 @@ fn pump() {
                             let st = job.status.lock().unwrap();
                             st.done < st.total
                         };
-                        job.set_state(if short && job.cancel.load(Ordering::Relaxed) { State::Cancelled } else { State::Done });
+                        let ended = if short && job.cancel.load(Ordering::Relaxed) { State::Cancelled } else { State::Done };
+                        if ended == State::Done {
+                            // Finished is finished: an op that counts only some of what it does
+                            // (a rename is one step however many files it moves) ends at its total.
+                            let mut st = job.status.lock().unwrap();
+                            st.done = st.done.max(st.total);
+                            st.bytes = st.bytes.max(st.bytes_total);
+                        }
+                        job.set_state(ended);
                         inv
                     }
                     Err(e) => {
@@ -229,14 +314,57 @@ impl Job {
 
     /// Record how to undo what has been done so far; journalled if the job then fails or is
     /// cancelled. A job that finishes returns its inverse instead, and this is dropped.
-    fn undo_so_far(&self, inverse: Value) {
+    pub(crate) fn undo_so_far(&self, inverse: Value) {
         *self.partial.lock().unwrap() = Some(inverse);
+    }
+
+    /// A file has been started: what the activity view's detail row names. `size` 0 when the
+    /// file's own progress is not tracked (a mirror copies several at once).
+    pub(crate) fn file_started(&self, name: &str, size: u64) {
+        self.live.lock().unwrap().current = Some((name.to_string(), 0, size));
+    }
+
+    pub(crate) fn set_is_dir(&self, is_dir: bool) {
+        self.live.lock().unwrap().is_dir = Some(is_dir);
+    }
+
+    /// What came of it, for the completion line: a mirror's counts.
+    pub(crate) fn set_result(&self, result: Value) {
+        self.live.lock().unwrap().result = Some(result);
+    }
+
+    /// Something on this machine the job made, that "Reveal" can show.
+    pub(crate) fn set_reveal(&self, uri: &str) {
+        let mut l = self.live.lock().unwrap();
+        if l.reveal.is_none() {
+            l.reveal = Some(uri.to_string());
+        }
+    }
+
+    fn measure(&self, bytes_delta: u64, bytes_now: u64) {
+        let mut l = self.live.lock().unwrap();
+        if let Some(c) = l.current.as_mut() {
+            c.1 += bytes_delta;
+        }
+        let now = Instant::now();
+        match l.mark {
+            None => l.mark = Some((now, bytes_now)),
+            Some((at, was)) if now.duration_since(at) >= Duration::from_millis(500) => {
+                let inst = bytes_now.saturating_sub(was) as f64 / now.duration_since(at).as_secs_f64();
+                l.rate = if l.rate == 0.0 { inst } else { 0.7 * l.rate + 0.3 * inst };
+                l.mark = Some((now, bytes_now));
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn progress(&self, done_delta: u64, bytes_delta: u64) {
         let mut st = self.status.lock().unwrap();
         st.done += done_delta;
         st.bytes += bytes_delta;
+        if bytes_delta > 0 {
+            self.measure(bytes_delta, st.bytes);
+        }
         let emit = st.last_emit.map(|t| t.elapsed() >= PROGRESS_EVERY).unwrap_or(true);
         if emit {
             st.last_emit = Some(Instant::now());
@@ -257,10 +385,16 @@ impl Job {
         }
     }
 
+    /// Said at once, not with the next progress event: until the totals are known a job is
+    /// "preparing" (a transfer walks the whole tree first), and the view's bar is waiting for this.
     pub fn set_totals(&self, total: u64, bytes_total: u64) {
-        let mut st = self.status.lock().unwrap();
-        st.total = total;
-        st.bytes_total = bytes_total;
+        {
+            let mut st = self.status.lock().unwrap();
+            st.total = total;
+            st.bytes_total = bytes_total;
+            st.last_emit = Some(Instant::now());
+        }
+        broadcast(self.event());
     }
 
     pub fn event(&self) -> Value {
@@ -273,6 +407,15 @@ impl Job {
             State::Failed(m) => Value::Str(m.clone()),
             _ => Value::Null,
         };
+        let running = st.state == State::Running;
+        let unfinished = running || st.state == State::Queued;
+        let live = self.live.lock().unwrap();
+        // Only while it is running: a finished job is not "on" any file, or moving at any speed.
+        let current = match (&live.current, running) {
+            (Some((name, bytes, size)), true) => Value::obj().s("name", name.clone()).u("bytes", *bytes).u("size", *size).done(),
+            _ => Value::Null,
+        };
+        let rate = if running { live.rate.round() as u64 } else { 0 };
         Value::obj()
             .u("id", self.id)
             .s("op", self.kind.clone())
@@ -284,6 +427,20 @@ impl Job {
             .s("title", self.title.clone())
             .v("error", err)
             .b("undoable", st.undoable)
+            // For the activity view (plan 32).
+            .s("name", self.about.name.clone())
+            .u("count", self.about.count)
+            .b("isDir", live.is_dir.unwrap_or(self.about.is_dir))
+            .opt_s("src", self.about.src.as_deref())
+            .opt_s("dest", self.about.dest.as_deref())
+            .s("direction", self.about.direction)
+            .b("hidden", self.about.hidden)
+            .s("phase", if running && st.total == 0 && st.bytes == 0 { "preparing" } else { "running" })
+            .b("cancelling", unfinished && self.cancel.load(Ordering::Relaxed))
+            .v("current", current)
+            .u("rate", rate)
+            .v("result", live.result.clone().unwrap_or(Value::Null))
+            .opt_s("revealUri", live.reveal.as_deref())
             .done()
     }
 
@@ -372,6 +529,10 @@ pub fn cancel(id: u64) -> bool {
         Some(j) => {
             j.cancel.store(true, Ordering::Relaxed);
             let _ = prompt_reply_inner(j, "skip");
+            // "Cancelling…" at once, not when the worker next looks up from a large file.
+            let event = j.event();
+            drop(q);
+            broadcast(event);
             true
         }
         None => false,
@@ -385,10 +546,34 @@ fn prompt_reply_inner(j: &Job, choice: &str) -> bool {
     }
 }
 
+fn finished(j: &Job) -> bool {
+    !matches!(j.status.lock().unwrap().state, State::Running | State::Queued)
+}
+
+/// Every job still queued or running, however long ago it was submitted, and the fifty most recent
+/// finished ones. (It used to be "the last fifty of everything", so a long transfer with fifty
+/// small jobs after it dropped out of the list while it was still running.)
 pub fn list() -> Value {
     let q = queue().lock().unwrap();
-    let n = q.jobs.len();
-    Value::Arr(q.jobs.iter().skip(n.saturating_sub(50)).map(|j| j.json()).collect())
+    let done: Vec<u64> = q.jobs.iter().filter(|j| finished(j)).map(|j| j.id).collect();
+    let keep_from = done.get(done.len().saturating_sub(50)).copied().unwrap_or(0);
+    Value::Arr(q.jobs.iter().filter(|j| !finished(j) || j.id >= keep_from).map(|j| j.json()).collect())
+}
+
+/// Forget finished jobs — one, or all of them. Here and not in the shell: the list is fetched
+/// again on every reconnect, which would bring back whatever a window had merely hidden.
+/// A job that is queued or running is never forgotten. Returns how many went.
+pub fn dismiss(only: Option<u64>) -> u64 {
+    let gone: Vec<u64> = {
+        let mut q = queue().lock().unwrap();
+        let gone: Vec<u64> = q.jobs.iter().filter(|j| finished(j) && only.is_none_or(|id| id == j.id)).map(|j| j.id).collect();
+        q.jobs.retain(|j| !gone.contains(&j.id));
+        gone
+    };
+    if !gone.is_empty() {
+        broadcast(proto::event("JobsCleared").v("jobs", Value::Arr(gone.iter().map(|id| Value::Uint(*id)).collect())).done());
+    }
+    gone.len() as u64
 }
 
 pub fn undo(client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
@@ -521,7 +706,15 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                         }
                     }
                 }
-                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n) };
+                // Files are counted as they finish, inside the tree; the file in hand is named as it
+                // starts. (It used to count one per top-level item against a total of files, so
+                // a folder copy ended at "1 of 458".)
+                let root = src.parent().map(Path::to_path_buf).unwrap_or_default();
+                let mut on_file = |e: ops::FileEvent| match e {
+                    ops::FileEvent::Start(path, size) => job.file_started(&path.strip_prefix(&root).unwrap_or(path).to_string_lossy(), size),
+                    ops::FileEvent::Done => job.progress(1, 0),
+                };
+                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: Some(&mut on_file) };
                 if job.kind == "copy" {
                     // Recorded before it is whole: a folder cancelled half way is half a folder
                     // at the destination, and undo has to be able to take that away too.
@@ -530,10 +723,10 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                     ops::copy_tree(src, &target, &mut p)?;
                 } else {
                     ops::move_path(src, &target, &mut p)?;
-                    moved.push((src.clone(), target));
+                    moved.push((src.clone(), target.clone()));
                     job.undo_so_far(move_inverse(&moved));
                 }
-                job.progress(1, 0);
+                job.set_reveal(&Uri::from_path(&target).to_string());
             }
             if job.kind == "copy" {
                 Some(copy_inverse(&created))
@@ -549,7 +742,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 let a = pair.as_arr().ok_or(VfsError::Io("bad pair".into()))?;
                 let from = ops::local_path(&Uri::parse(a[0].as_str().unwrap_or("")).map_err(|e| VfsError::Io(e.0.into()))?)?;
                 let to = ops::local_path(&Uri::parse(a[1].as_str().unwrap_or("")).map_err(|e| VfsError::Io(e.0.into()))?)?;
-                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n) };
+                let mut p = Progress { cancel: &cancel, bytes: &mut |n| job.progress(0, n), file: None };
                 ops::move_path(&from, &to, &mut p)?;
                 back.push(Value::Arr(vec![Value::Str(Uri::from_path(&to).to_string()), Value::Str(Uri::from_path(&from).to_string())]));
                 job.progress(1, 0);
@@ -597,9 +790,8 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             Some(Value::obj().s("op", "trash").v("items", uri_list(&restored)).done())
         }
         "emptyTrash" => {
-            let n = ops::empty_trash(&cancel)?;
-            job.set_totals(n, 0);
-            job.progress(n, 0);
+            job.set_totals(ops::trash_count(), 0);
+            ops::empty_trash(&cancel, &mut || job.progress(1, 0))?;
             None
         }
         "delete" => {
@@ -636,11 +828,13 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let mode = op.u64_field("mode").ok_or(VfsError::Io("missing mode".into()))? as u32;
             let recursive = op.get("recursive").and_then(Value::as_bool).unwrap_or(false);
             let mut prev = Vec::new();
+            // As it goes, item by item — not one jump to the end once it is all over.
+            job.set_totals(items.len() as u64, 0);
             for p in &items {
+                job.file_started(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), 0);
                 ops::chmod(p, mode, recursive, &mut prev)?;
+                job.progress(1, 0);
             }
-            job.set_totals(prev.len() as u64, 0);
-            job.progress(prev.len() as u64, 0);
             Some(Value::obj().s("op", "chmodList").v("list", Value::Arr(prev.iter().map(|(p, m)| Value::Arr(vec![Value::Str(Uri::from_path(p).to_string()), Value::Uint(*m as u64)])).collect())).done())
         }
         "chmodList" => {
@@ -720,9 +914,27 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             };
             job.set_totals(total, bytes);
             let workers = op.u64_field("workers").unwrap_or(3).clamp(1, 8) as usize;
-            let ctx = crate::mirror::ExecCtx { cancel: &cancel, workers, on_change: &|_| job.progress(0, 0), on_bytes: &|n| job.progress(0, n) };
+            // Items are counted as they finish and the one in hand is named as it starts. (Every
+            // change used to be reported as "nothing done", so a run sat at 0 of 900 until the
+            // end.) With several workers the file named is the one most recently begun, and its
+            // own bar is left out: the bytes moving belong to all of them.
+            let on_change = |i: usize| {
+                use crate::mirror::{ActionKind, State as Act};
+                let seen = stored.plan.lock().unwrap().actions.get(i).map(|a| (a.state, a.kind, a.rel.to_string(), a.bytes));
+                match seen {
+                    Some((Act::Running, kind, rel, bytes)) => {
+                        let name = if kind == ActionKind::Copy { rel } else { format!("{} {rel}", format!("{kind:?}").to_lowercase()) };
+                        job.file_started(&name, if workers == 1 && kind == ActionKind::Copy { bytes } else { 0 });
+                        job.progress(0, 0);
+                    }
+                    Some((Act::Done | Act::Skipped, ..)) => job.progress(1, 0),
+                    _ => job.progress(0, 0),
+                }
+            };
+            let ctx = crate::mirror::ExecCtx { cancel: &cancel, workers, on_change: &on_change, on_bytes: &|n| job.progress(0, n) };
             let out = crate::mirror::execute(&stored.plan, &spec, &ctx)?;
-            job.progress(total.saturating_sub(job.status.lock().unwrap().done), 0);
+            // For the completion line: "412 copied, 9 deleted, 3 skipped".
+            job.set_result(Value::obj().u("copies", out.copies).u("deletes", out.deletes).u("skipped", out.skipped).done());
             audit_summary(job, &out);
             None
         }
@@ -887,6 +1099,87 @@ mod tests {
         assert!(d.join("real.txt").exists(), "and not the original");
 
         std::env::remove_var("KIKI_TRASH_DIR");
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    // ---------------------------------------------------------------- what the activity view is told
+
+    fn op(json: &str) -> Value {
+        crate::json::parse(json.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_job_is_described_by_what_it_moves_and_which_way() {
+        let up = about("copy", &op(r#"{"op":"copy","items":["file:///home/t/site/index.html","file:///home/t/site/app.js"],"dest":"sftp://lab/srv/www"}"#));
+        assert_eq!((up.name.as_str(), up.count, up.direction), ("index.html", 2, "upload"));
+        assert_eq!(up.src.as_deref(), Some("file:///home/t/site"));
+        assert_eq!(up.dest.as_deref(), Some("sftp://lab/srv/www"));
+        assert!(!up.hidden);
+
+        let down = about("move", &op(r#"{"op":"move","items":["sftp://lab/srv/www/logs"],"dest":"file:///home/t/Downloads"}"#));
+        assert_eq!((down.direction, down.is_dir), ("download", false), "whether it is a folder is learnt when the server is asked");
+        assert_eq!(about("copy", &op(r#"{"op":"copy","items":["sftp://a/x"],"dest":"ftps://b/"}"#)).direction, "remote");
+        assert_eq!(about("copy", &op(r#"{"op":"copy","items":["file:///a/x"],"dest":"file:///b"}"#)).direction, "local");
+        // Into the trash is this machine, not a download from anywhere.
+        assert_eq!(about("trash", &op(r#"{"op":"trash","items":["file:///a/x"]}"#)).direction, "local");
+
+        let mirror = about("mirrorRun", &op(r#"{"op":"mirrorRun","spec":{"master":"file:///home/t/site","replica":"sftp://lab/srv/www"}}"#));
+        assert_eq!((mirror.name.as_str(), mirror.direction), ("Mirroring local → remote", "upload"));
+    }
+
+    #[test]
+    fn machinery_is_kept_out_of_the_activity_view() {
+        for (kind, json) in [
+            ("delete", r#"{"op":"delete","items":["file:///a/x"],"_silent":true}"#),
+            ("movePairs", r#"{"op":"movePairs","pairs":[]}"#),
+            ("rmdirIfEmpty", r#"{"op":"rmdirIfEmpty","uri":"file:///a"}"#),
+            ("chmodList", r#"{"op":"chmodList","list":[]}"#),
+            ("mirrorScan", r#"{"op":"mirrorScan","spec":{}}"#),
+        ] {
+            assert!(about(kind, &op(json)).hidden, "{kind}");
+        }
+        assert!(!about("delete", &op(r#"{"op":"delete","items":["file:///a/x"]}"#)).hidden, "a delete the user asked for is theirs to see");
+    }
+
+    /// One job, start to finish, as the activity view sees it: a folder copy counts FILES (it
+    /// ended at "1 of 3" when it counted top-level items against a total of files), names the
+    /// file in hand, ends at its totals, and says where to reveal what it made.
+    #[test]
+    fn a_folder_copy_reports_files_the_current_one_and_where_it_went() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-view-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("site/img")).unwrap();
+        std::fs::create_dir_all(d.join("dst")).unwrap();
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        for (name, size) in [("site/a.txt", 10usize), ("site/b.txt", 20), ("site/img/c.bin", 3000)] {
+            std::fs::write(d.join(name), vec![b'x'; size]).unwrap();
+        }
+        let (tx, rx) = mpsc::channel();
+        subscribe(tx.clone());
+        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx)).unwrap();
+        assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
+        let events: Vec<Value> = rx.try_iter().filter(|e| e.str_field("event") == Some("JobEvent")).filter_map(|e| e.get("job").cloned()).filter(|j| j.u64_field("id") == Some(id)).collect();
+        let last = events.last().unwrap();
+        assert_eq!((last.u64_field("done"), last.u64_field("total")), (Some(3), Some(3)), "three files, all counted");
+        assert_eq!((last.u64_field("bytes"), last.u64_field("bytesTotal")), (Some(3030), Some(3030)));
+        assert_eq!(last.str_field("name"), Some("site"));
+        assert_eq!(last.get("isDir"), Some(&Value::Bool(true)));
+        assert_eq!(last.str_field("revealUri"), Some(Uri::from_path(&d.join("dst/site")).to_string().as_str()));
+        assert_eq!(last.get("current"), Some(&Value::Null), "a finished job is not on any file");
+        assert!(events.iter().any(|j| j.str_field("state") == Some("running") && j.u64_field("total") == Some(3)), "the totals are announced when they are known, not with the first progress");
+        let named: Vec<&str> = events.iter().filter_map(|j| j.get("current").and_then(|c| c.str_field("name"))).collect();
+        assert!(named.iter().all(|n| n.starts_with("site/")), "files are named from the item down: {named:?}");
+
+        // Forgetting: a finished job goes, and everybody is told which.
+        let (tx2, rx2) = mpsc::channel();
+        subscribe(tx2);
+        assert_eq!(dismiss(Some(id)), 1);
+        assert!(list().as_arr().unwrap().iter().all(|j| j.u64_field("id") != Some(id)));
+        let cleared = rx2.try_iter().find(|e| e.str_field("event") == Some("JobsCleared")).expect("JobsCleared");
+        assert_eq!(cleared.get("jobs").and_then(Value::as_arr).map(|a| a.len()), Some(1));
+        assert_eq!(dismiss(Some(id)), 0, "and only once");
         std::env::remove_var("KIKI_STATE_DIR");
         std::fs::remove_dir_all(&d).unwrap();
     }
