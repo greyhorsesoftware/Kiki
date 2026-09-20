@@ -275,3 +275,35 @@ fn cache_invalidation_is_safe_for_paths_nobody_has_open() {
     assert!(find(&unknown).is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A row that leaves every window before its stat job runs is skipped by that job — and used to
+/// stay marked as queued for ever. `enrich_all` passes over queued rows, so the listing could
+/// never finish enriching, and a sort by size or date (which waits for that) never replied:
+/// scroll fast through a big folder, sort it, and the sort hung.
+#[test]
+fn a_row_skipped_by_its_stat_job_can_still_be_enriched() {
+    let dir = temp_tree(SMALL_DIR + 100); // too big to be enriched whole after the scan
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(10)));
+    // What a window request does for the rows it shows…
+    let rows: Vec<u32> = {
+        let mut inner = l.inner.lock().unwrap();
+        let rows: Vec<u32> = (0..inner.meta.len() as u32).filter(|&i| inner.meta[i as usize].is_none()).take(40).collect();
+        assert_eq!(rows.len(), 40, "a folder this size is not enriched up front");
+        for &i in &rows {
+            inner.queued[i as usize] = true;
+        }
+        rows
+    };
+    // …and what a stat worker does once nobody is looking at them any more (no subscriber).
+    l.run_stats(rows.clone(), false);
+    {
+        let inner = l.inner.lock().unwrap();
+        assert!(rows.iter().all(|&i| !inner.queued[i as usize]), "skipped means no longer queued");
+    }
+    let (tx, rx) = mpsc::channel();
+    l.sort(SortRole::Size, false, Some((tx, 9)));
+    assert!(rx.recv_timeout(Duration::from_secs(20)).is_ok(), "the sort is answered once everything is enriched");
+    assert!(l.inner.lock().unwrap().meta.iter().all(Option::is_some));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

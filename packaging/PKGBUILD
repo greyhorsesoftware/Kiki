@@ -60,9 +60,15 @@ package() {
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
   # The mark the desktop entry names, and the one the About panel tints to the current theme.
   install -Dm644 "${_srcdir}/app-images/cat-head-wireframe.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.kiki.App.svg"
-  install -Dm644 "${_srcdir}/packaging/org.kiki.App.service"  "${pkgdir}/usr/share/dbus-1/services/org.kiki.App.service"
+  # No org.kiki.App D-Bus service and no DBusActivatable in the entry: nothing in kiki owns that
+  # name, so a launcher that activated it would wait on a name nobody claims and lose its URIs.
+  # `Exec=kiki %U` is how kiki starts, and the launcher hands a second start to the first.
   install -Dm644 "${_srcdir}/packaging/org.freedesktop.impl.portal.desktop.kiki.service" "${pkgdir}/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.kiki.service"
   install -Dm644 "${_srcdir}/packaging/kiki.portal"           "${pkgdir}/usr/share/xdg-desktop-portal/portals/kiki.portal"
-  install -Dm644 "${_srcdir}/packaging/kiki-portals.conf"     "${pkgdir}/usr/share/xdg-desktop-portal/kiki-portals.conf"
+  # kiki.portal only makes the chooser AVAILABLE. Whether it is used is each user's choice, made
+  # in kiki's first-run dialog, which writes ~/.config/xdg-desktop-portal/portals.conf
+  # (FileChooser=kiki;gtk — beside GTK's, which stays the fallback). A system-wide
+  # kiki-portals.conf was shipped here once; xdg-desktop-portal reads <desktop>-portals.conf, so
+  # on Hyprland a file of that name was never read, and it said something the dialog does not.
   install -Dm644 "${_srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

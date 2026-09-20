@@ -622,7 +622,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("aaa/bulk")).unwrap();
         std::fs::create_dir_all(d.join("zzz")).unwrap();
-        for i in 0..(MAX_RESULTS * 4 + 50) {
+        // Enough to overflow what is returned. (The old cut-off was four times that; a fixture that
+        // size starved the other tests of this binary of I/O, and what is asserted here — the best
+        // hit wins wherever it was walked, and `capped` means what it says — does not need it.)
+        for i in 0..(MAX_RESULTS + 50) {
             std::fs::write(d.join(format!("aaa/bulk/old-report-{i}.txt")), b"").unwrap();
         }
         // The one that should come first — an exact name — in the folder walked last.

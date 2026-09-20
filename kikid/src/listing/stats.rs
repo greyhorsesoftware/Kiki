@@ -44,10 +44,15 @@ impl Listing {
         for idx in rows {
             // Skip rows that scrolled out of every live window (unless enriching everything).
             let name = {
-                let inner = self.inner.lock().unwrap();
+                let mut inner = self.inner.lock().unwrap();
                 if !low_priority {
                     let p = inner.pos[idx as usize];
                     if p == u32::MAX || !inner.subscribers.iter().any(|s| s.covers(p)) {
+                        // Skipped, so no longer queued. Left marked, the row could never be
+                        // queued again: `enrich_all` passes over queued rows, enrichment never
+                        // finished, and a sort by size or date waiting on it never got its reply
+                        // — scroll a folder fast, sort it, and the sort hung.
+                        inner.queued[idx as usize] = false;
                         continue;
                     }
                 }

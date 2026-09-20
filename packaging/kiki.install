@@ -1,15 +1,22 @@
+# What the package does system-wide, and nothing per user: these hooks run as root, where
+# `xdg-mime default` sets ROOT's folder handler and `systemctl --user` reaches nobody's session.
+# Making kiki the folder handler and the file chooser is each user's choice, offered by kiki's own
+# first-run dialog (plan 09) and undone from Settings -> Omarchy.
+
 post_install() {
-  xdg-mime default org.kiki.App.desktop inode/directory 2>/dev/null || true
   update-desktop-database -q 2>/dev/null || true
   gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
   systemctl --global enable kiki.socket 2>/dev/null || true
-  echo ":: kiki is now the handler for folders. Log out and in, or run: systemctl --user start kiki.socket"
+  echo ":: kiki is installed. Start it from the launcher or with 'kiki'; on first start it offers to"
+  echo "   become the folder handler and the file chooser for your user."
+  echo "   (Its daemon starts on demand: the 'kiki' command sees to that until your next login.)"
 }
 
 post_upgrade() {
   update-desktop-database -q 2>/dev/null || true
   gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
-  systemctl --user try-restart kikid.service 2>/dev/null || true
+  echo ":: kiki was upgraded. A running kiki keeps the old daemon until you restart it:"
+  echo "   systemctl --user restart kikid.service"
 }
 
 pre_remove() {
@@ -19,5 +26,6 @@ pre_remove() {
 post_remove() {
   update-desktop-database -q 2>/dev/null || true
   gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
-  echo ":: kiki removed. Set a new folder handler with: xdg-mime default <app>.desktop inode/directory"
+  echo ":: kiki removed. If it was your folder handler, choose another:"
+  echo "   xdg-mime default <app>.desktop inode/directory"
 }

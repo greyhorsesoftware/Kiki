@@ -297,14 +297,29 @@ FloatingWindow {
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
     Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); if (win.filterOpen) win.closeFilter() } }
     Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
+    /// Bring the window to the front of the workspace it is on. Asked for by whatever opened
+    /// something in it from outside — a second `kiki`, "Show in folder" from a browser — which
+    /// is otherwise answered by a window nobody can see.
+    function raise() { Quickshell.execDetached(["hyprctl", "dispatch", "focuswindow", "pid:" + Quickshell.processId]) }
+    /// Open a folder, or a file's folder with the file selected, and come to the front: what a
+    /// second launch of kiki does to the one already running.
+    function present(uri) {
+        if (uri) win.pane.open(uri)
+        raise()
+    }
+    /// org.freedesktop.FileManager1: ShowFolders, ShowItems, ShowItemProperties.
     function showItems(msg) {
         const uris = msg.uris || []; if (!uris.length) return
         const first = uris[0]
+        raise()
         if (msg.folders) { win.pane.open(first); return }
         const parent = first.replace(/\/[^/]*$/, "") || first
         win.pane.open(parent)
-        const name = decodeURIComponent(first.split("/").pop())
-        Qt.callLater(() => { for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && r.name === name) { win.pane.selection.set(i); break } } })
+        // Selected once the folder has listed, and found by the daemon: the file may be far past
+        // the rows the window holds. (Set after `open`, which decides this for itself.)
+        win.pane.selectAfterLoad = decodeURIComponent(first.split("/").pop())
+        win.selectCameFrom()
+        if (msg.properties) win.inspectorRequested = true
     }
     // The inspected item follows the selection's current row.
     /// The info panel's width, dragged by its edge and remembered between sessions.
@@ -727,6 +742,8 @@ FloatingWindow {
     IpcHandler {
         target: "shell"
         function open(uri: string): void { win.pane.open(uri) }
+        /// What the `kiki` launcher calls on a running instance: open it, and come to the front.
+        function present(uri: string): void { win.present(uri) }
         function enter(): void { win.enterSelected() }
         /// Mirrors the gallery's keys, fallback included, so the harness can drive them.
         function gallery(action: string): void {

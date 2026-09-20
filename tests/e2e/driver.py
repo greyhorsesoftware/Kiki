@@ -17,7 +17,7 @@ FLOWS = [
     "listing", "trash", "archive", "collisions", "edge_cases", "cross_fs", "git_status", "remote_transfers",
     # through the window
     "ops_menu", "ops_keyboard", "confirm_ops", "trash_view", "archive_ui", "view_state",
-    "side_by_side",
+    "side_by_side", "launcher",
     "pointer_ops",
 ]
 

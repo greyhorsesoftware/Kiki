@@ -1,8 +1,33 @@
 #!/bin/sh
-# kiki launcher: one window per session; a URI argument opens or focuses it.
+# kiki launcher: one window per session. A second launch hands its folder to the one already
+# running and brings that to the front.
+#
+# The running instance is found the way it was started — by the path of its shell.qml. (It used to
+# be looked for with `qs -c kiki`, a named config this package does not install, so it was never
+# found and every launch was another window.) The folder goes in KIKI_START, which is what the
+# shell reads; as an argument after `--` it was never looked at, and every launch opened home.
 set -e
-SHELL_DIR="${KIKI_SHELL_DIR:-/usr/share/kiki}"
-if qs -c kiki ipc show >/dev/null 2>&1; then
-  exec qs -c kiki ipc call shell open "${1:-file://$HOME}"
+CONF="${KIKI_SHELL_DIR:-/usr/share/kiki}/shell.qml"
+# `kiki --ipc <function> [args…]`: a call into the running window, for tools kiki started — the
+# Neovim preset tells it a file was saved, or asks it to reveal one. Quiet when kiki is not up.
+if [ "${1:-}" = "--ipc" ]; then
+  shift
+  exec qs -p "$CONF" ipc call shell "$@" >/dev/null 2>&1
 fi
-exec qs -p "${SHELL_DIR}/shell.qml" -- "${1:-file://$HOME}"
+case "${1:-}" in
+  "") uri="file://$HOME" ;;
+  *://*) uri="$1" ;;
+  /*) uri="file://$1" ;;
+  *) uri="file://$PWD/$1" ;;
+esac
+if qs -p "$CONF" ipc call shell present "$uri" >/dev/null 2>&1; then
+  exit 0
+fi
+# The daemon comes up on demand through its socket unit. The package enables that for every user
+# from their NEXT login; straight after installing it is not there yet, so ask for it here — as
+# the user, which the package's own hooks (run as root) cannot do. Harmless when already up, and
+# skipped for a checkout, which runs a daemon of its own.
+if [ -z "${KIKI_SHELL_DIR:-}" ]; then
+  systemctl --user start kiki.socket >/dev/null 2>&1 || true
+fi
+KIKI_START="$uri" exec qs -n -p "$CONF"

@@ -70,7 +70,12 @@ Rectangle {
                     Column {
                         anchors.fill: parent; anchors.topMargin: 8; spacing: 12
                         SidebarSection { title: "Favorites"; Repeater { model: dlg.favorites; delegate: SidebarItem { required property var modelData; icon: modelData.name === "Home" ? "home" : "folder"; label: modelData.name; active: dlg.pane.uri === modelData.uri; onClicked: dlg.pane.open(modelData.uri) } } }
-                        SidebarSection { title: "Locations"; Repeater { model: dlg.locations; delegate: SidebarItem { required property var modelData; icon: "server"; iconColor: Kiki.Theme.green; label: modelData.name + " · " + modelData.plugin; onClicked: dlg.pane.open(modelData.remoteUri) } } }
+                        // Not shown (plan 31, D13). Whoever asked for a file — another application
+                        // through the portal, or kiki's own "local folder" and "extract to" — is
+                        // going to open a path on this machine, and a location can only answer
+                        // with an sftp:// URI it cannot read. Back when a pick is fetched to a
+                        // local file first.
+                        SidebarSection { objectName: "chooser-locations"; visible: false; title: "Locations"; Repeater { model: dlg.locations; delegate: SidebarItem { required property var modelData; icon: "server"; iconColor: Kiki.Theme.green; label: modelData.name + " · " + modelData.plugin; onClicked: dlg.pane.open(modelData.remoteUri) } } }
                     }
                 }
                 Views.ListPane { width: parent.width - 180; height: parent.height; pane: dlg.pane; onActivate: i => { const r = dlg.pane.listing.row(i); if (r && r.isDir) dlg.pane.open(dlg.pane.childUri(r.name)); else dlg.accept() } }

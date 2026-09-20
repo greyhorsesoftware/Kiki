@@ -24,11 +24,14 @@ pub fn presets() -> Vec<Value> {
         t("gemini", "Gemini CLI", "gemini", "gemini", true, "both", None, None, false),
         t("aider", "Aider", "aider", "aider {files}", true, "both", None, None, false),
         t("opencode", "OpenCode", "opencode", "opencode", true, "both", None, None, false),
+        // The editor calls back through the launcher (`kiki --ipc`), which knows where the running
+        // shell is. It used to call `qs -c kiki`, a named config nobody installs: the calls went
+        // nowhere, so saving never refreshed the listing and <leader>k revealed nothing.
         t(
             "neovim",
             "Neovim",
             "nvim",
-            "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !qs -c kiki ipc call shell saved %:p' --cmd 'nnoremap <leader>k :silent! !qs -c kiki ipc call shell reveal %:p<CR>' +{line} {file}",
+            "nvim --listen {socket} --cmd 'autocmd BufWritePost * silent! !kiki --ipc saved %:p' --cmd 'nnoremap <leader>k :silent! !kiki --ipc reveal %:p<CR>' +{line} {file}",
             true,
             "file",
             Some("editor"),

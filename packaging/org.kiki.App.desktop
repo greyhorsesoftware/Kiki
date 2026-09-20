@@ -2,11 +2,10 @@
 Type=Application
 Name=kiki
 GenericName=File Manager
-Comment=Browse files locally and on SFTP and FTPS locations
+Comment=Browse files locally and on SFTP, FTPS, SMB and WebDAV locations
 Exec=kiki %U
 Icon=org.kiki.App
 Terminal=false
 Categories=System;FileTools;FileManager;Utility;
 MimeType=inode/directory;x-scheme-handler/sftp;x-scheme-handler/ftps;
-DBusActivatable=true
 StartupNotify=false

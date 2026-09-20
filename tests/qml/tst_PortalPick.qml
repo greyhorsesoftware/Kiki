@@ -56,4 +56,11 @@ TestCase {
         compare(Wire.count("ChooserResult"), 1)
         compare(Wire.last("ChooserResult").token, "tok-1")
     }
+
+    // A location can only be answered with a URI the asking application cannot open.
+    function test_the_chooser_offers_no_remote_locations() {
+        const section = findChild(tc, "chooser-locations")
+        verify(section !== null)
+        verify(!section.visible)
+    }
 }
