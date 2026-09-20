@@ -102,7 +102,7 @@ impl Listing {
             let kind = inner.pool.kind(idx);
             let p = inner.pos[idx as usize];
             let visible = p != u32::MAX && inner.subscribers.iter().any(|s| s.covers(p));
-            if visible && crate::thumbs::thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
+            if visible && self.thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
                 inner.thumb_queued[idx as usize] = true;
                 let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
                 let name = String::from_utf8_lossy(&name).into_owned();
@@ -115,6 +115,16 @@ impl Listing {
         if low_priority {
             self.enrich_progress();
         }
+    }
+
+    /// Whether a row of this kind, in this listing, is one to make a thumbnail for. Thumbnails are
+    /// made by reading the file, so they are `file://` only (owner, 2026-09-20): a remote picture
+    /// shows its kind icon. `Uri::to_path` drops the scheme and the host, so asking anyway meant
+    /// reading THIS machine's copy of that path — nothing, usually, and a failure recorded against
+    /// the remote name for ever; a local file of the same path, occasionally, and then a remote row
+    /// wore a picture that was not its own.
+    pub(super) fn thumbable(&self, kind: crate::kinds::Kind) -> bool {
+        self.uri.is_local() && crate::thumbs::thumbable(kind)
     }
 
     /// Queue one row's thumbnail. The caller sets `thumb_queued` while it holds the lock.

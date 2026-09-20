@@ -11,6 +11,12 @@ for the whole folder — 5,000 rows a second) and as a fling no hand makes (KIKI
 is headless and renders in software, so a frame costs what the machine says it costs — and only
 catch a collapse. What the numbers are for is the shape: the frame a view cannot make, the rows
 that are not there when they are scrolled to, and how long the view takes to fill in at the end.
+
+Every run is recorded: one line of JSON appended to `bench/scroll-history.jsonl` (KIKI_SCROLL_HISTORY
+to put it elsewhere, empty to record nothing) with the commit it was built from, whether the tree
+was dirty, the machine and the renderer, and each view's numbers — and the run prints how it
+differs from the last one recorded on the same machine and renderer. `tests/e2e/scroll_history.py`
+prints the history. The file is kept in the repository, so the record travels with the code.
 """
 import json
 import os
@@ -43,6 +49,65 @@ def build_fixture():
     return r.returncode == 0
 
 
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+HISTORY = os.environ.get("KIKI_SCROLL_HISTORY", os.path.join(ROOT, "bench", "scroll-history.jsonl"))
+KEPT = ("frames", "avgMs", "p95Ms", "worstMs", "over33", "blankFrames", "settleMs", "requests")
+
+
+def git(*args):
+    try:
+        return subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def machine():
+    cpu = ""
+    try:
+        with open("/proc/cpuinfo") as fh:
+            cpu = next((l.split(":", 1)[1].strip() for l in fh if l.startswith("model name")), "")
+    except OSError:
+        pass
+    return {"cpu": cpu, "cores": os.cpu_count() or 0, "kernel": os.uname().release,
+            "renderer": os.environ.get("WLR_RENDERER") or "desktop", "backend": os.environ.get("WLR_BACKENDS") or ""}
+
+
+def record(results):
+    """Append this run to the history and say how it differs from the last comparable one."""
+    if not HISTORY or not results:
+        return
+    m = machine()
+    entry = {"at": int(time.time()), "commit": git("rev-parse", "--short", "HEAD"), "dirty": bool(git("status", "--porcelain")),
+             "subject": git("log", "-1", "--format=%s"), "rows": N, "slowMs": SLOW, "fastMs": FAST, "machine": m, "results": results}
+    last = None
+    try:
+        with open(HISTORY) as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                em = e.get("machine", {})
+                if (em.get("cpu"), em.get("renderer")) == (m["cpu"], m["renderer"]) and (e.get("slowMs"), e.get("fastMs")) == (SLOW, FAST):
+                    last = e
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(HISTORY), exist_ok=True)
+    with open(HISTORY, "a") as fh:
+        fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    print(f"  ... recorded as {entry['commit']}{'+' if entry['dirty'] else ''} in {os.path.relpath(HISTORY, ROOT)}")
+    if last is None:
+        print("  ... nothing earlier from this machine and renderer to compare with")
+        return
+    print(f"  ... against {last.get('commit')}{'+' if last.get('dirty') else ''} ({time.strftime('%Y-%m-%d %H:%M', time.localtime(last.get('at', 0)))}): blank frames, p95 frame")
+    for key, now in results.items():
+        was = last.get("results", {}).get(key)
+        if not was:
+            continue
+        pct = lambda r: 100 * r["blankFrames"] / max(1, r["frames"])
+        print(f"      {key:14} blank {pct(was):5.1f}% -> {pct(now):5.1f}%    p95 {was['p95Ms']:3d}ms -> {now['p95Ms']:3d}ms")
+
+
 def stats(sh):
     try:
         return json.loads(sh.call("scrollStats") or "{}")
@@ -69,6 +134,7 @@ def run(ctx):
     if not c.check(f"the folder lists all {N} files", got is not None and got >= N, got):
         return
 
+    results = {}
     print(f"  {'view':8} {'pace':>6} {'frames':>7} {'avg':>7} {'p95':>6} {'worst':>6} {'>33ms':>6} {'blank frames':>13} {'settle':>7} {'requests':>9}")
     for view in ("list", "icon", "columns"):
         sh.call("setView", view)
@@ -80,6 +146,7 @@ def run(ctx):
             s = scroll(sh, ms)
             if not c.check(f"{view}, {label}: the scroll finishes", s is not None and "error" not in s, s or stats(sh)):
                 continue
+            results[f"{view}/{label}"] = {k: s[k] for k in KEPT}
             blank = 100 * s["blankFrames"] / max(1, s["frames"])
             print(f"  {view:8} {label:>6} {s['frames']:7d} {s['avgMs']:6.1f}ms {s['p95Ms']:4d}ms {s['worstMs']:4d}ms {s['over33']:6d}"
                   f" {s['blankFrames']:6d} ({blank:3.0f}%) {s['settleMs']:5d}ms {s['requests']:9d}")
@@ -90,3 +157,4 @@ def run(ctx):
                 # At a pace a hand can make, the rows should be there before they are scrolled to.
                 c.check(f"{view}, slow: rows are there when they are scrolled to (under 5% of frames blank)", blank < 5, f"{blank:.1f}%")
                 c.check(f"{view}, slow: the median frame is under 50ms", s["avgMs"] < 50, f"{s['avgMs']}ms")
+    record(results)

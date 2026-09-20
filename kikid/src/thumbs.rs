@@ -90,6 +90,12 @@ pub fn generate(uri: &Uri, kind: Kind, size: Size, mtime_ms: u64) -> Option<Path
     if let Some(p) = lookup(uri, size, mtime_ms) {
         return Some(p);
     }
+    // A cached thumbnail of a remote file is served above; making one is not this function's —
+    // `to_path` drops the scheme and the host, so what follows would read this machine's copy of
+    // that path, and a fail marker would then be recorded against the remote name for ever.
+    if !uri.is_local() {
+        return None;
+    }
     if failed(uri, mtime_ms) {
         return None;
     }
@@ -376,6 +382,31 @@ mod tests {
         let buri = Uri::from_path(&bad);
         assert!(generate(&buri, Kind::Image, Size::Normal, 7000).is_none());
         assert!(failed(&buri, 7000));
+        fs::remove_dir_all(&dir).unwrap();
+        std::env::remove_var("KIKI_THUMB_DIR");
+    }
+
+    /// `Uri::to_path` drops the scheme and the host, so a remote picture was thumbnailed by
+    /// opening its path **on this machine**: usually nothing is there and a permanent failure is
+    /// recorded, but where something is, a remote row wore a local file's picture.
+    #[test]
+    fn a_remote_picture_is_not_thumbnailed_from_a_local_path() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kiki-thumbs-remote-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("KIKI_THUMB_DIR", dir.join("cache"));
+        let src = dir.join("local.png");
+        let mut img = image::RgbaImage::new(64, 48);
+        for p in img.pixels_mut() {
+            *p = image::Rgba([10, 200, 10, 255]);
+        }
+        img.save(&src).unwrap();
+        // Same path, another machine.
+        let remote = Uri::parse(&format!("sftp://elsewhere{}", src.to_string_lossy())).unwrap();
+        assert!(!remote.is_local());
+        assert_eq!(generate(&remote, Kind::Image, Size::Normal, 1000), None, "a remote file is not this machine's to read");
+        assert!(!failed(&remote, 1000), "and no failure is recorded against it: nothing was tried");
         fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_THUMB_DIR");
     }

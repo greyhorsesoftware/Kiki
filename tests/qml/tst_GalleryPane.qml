@@ -159,4 +159,59 @@ TestCase {
         fake._resetListing(pane.listing.lid)
         tryCompare(gallery, "current", 1)
     }
+
+    /// What the filmstrip shows for a row: its thumbnail if it has one, else the kind artwork.
+    function stripThumbs() {
+        const strip = findChild(gallery, "gallery-strip")
+        const out = []
+        for (const shot of strip.contentItem.children) {
+            if (shot.index === undefined || !shot.r) continue
+            const img = shot.children.find(c => c.source !== undefined)
+            out.push({ index: shot.index, name: shot.r.name, thumb: shot.r.thumb,
+                       showing: img && img.visible ? String(img.source) : "kind-icon" })
+        }
+        return out.sort((a, b) => a.index - b.index)
+    }
+
+    // Plan 31, 4a: a rescan (a job finishing, a file arriving, `Refresh`) makes the daemon re-send
+    // the listing. The thumbnails it already knew come back with it, and the strip must draw them
+    // — this is the view's half of "pictures turn into generic file icons".
+    function test_the_filmstrip_keeps_its_pictures_across_a_reset() {
+        const pics = ["a.jpg", "b.jpg", "c.jpg"].map((n, i) => fake.file(n, { kind: "image", thumb: "/th/" + n + ".png" }))
+        openTree(pics)
+        tryVerify(() => stripThumbs().length === 3)
+        compare(stripThumbs().map(s => s.showing), ["file:///th/a.jpg.png", "file:///th/b.jpg.png", "file:///th/c.jpg.png"])
+
+        // The same rows again, as a rescan sends them: nothing about them changed.
+        fake._resetListing(pane.listing.lid)
+        tryVerify(() => stripThumbs().length === 3)
+        compare(stripThumbs().map(s => s.showing), ["file:///th/a.jpg.png", "file:///th/b.jpg.png", "file:///th/c.jpg.png"],
+                "still pictures, not the generic file artwork")
+    }
+
+    // And when a thumbnail lands late (the daemon pushes `Rows` when the job finishes), the tile
+    // that was showing the kind icon takes the picture up without being scrolled away and back.
+    function test_a_thumbnail_that_arrives_late_reaches_the_tile() {
+        const pics = ["a.jpg", "b.jpg"].map(n => fake.file(n, { kind: "image" }))
+        openTree(pics)
+        tryVerify(() => stripThumbs().length === 2)
+        compare(stripThumbs()[1].showing, "kind-icon")
+        const withThumb = fake.file("b.jpg", { kind: "image", thumb: "/th/b.png" })
+        fake.emitEvent({ event: "Rows", lid: pane.listing.lid, first: 1, rows: [withThumb] })
+        tryVerify(() => stripThumbs()[1].showing === "file:///th/b.png", 2000, "the tile re-read its row")
+    }
+
+    // Remote pictures have no thumbnails (owner, 2026-09-20: file:// only), so a tile shows the
+    // kind artwork rather than a broken image, and the stage says which file it is.
+    function test_a_remote_picture_shows_its_kind_artwork() {
+        fake.tree = { "sftp://ghs/pics": [fake.file("far.jpg", { kind: "image" })] }
+        pane.open("sftp://ghs/pics")
+        wait(60)
+        tryVerify(() => stripThumbs().length === 1)
+        compare(stripThumbs()[0].showing, "kind-icon")
+        const icon = findChild(gallery, "gallery-stage-icon")
+        const label = findChild(gallery, "gallery-stage-label")
+        verify(icon.visible)
+        compare(label.text, "far.jpg")
+    }
 }

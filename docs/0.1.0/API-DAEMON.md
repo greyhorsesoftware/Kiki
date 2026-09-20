@@ -106,6 +106,13 @@ Git event: `RepoChanged { root }`.
 | `Repo` | `uri` | `{ root: Uri, branch: string \| null, detached: bool, ahead: u32, behind: u32, dirty: bool } \| null` |
 | `GitRefresh` | `uri` | `{}` |
 
+Thumbnails are made for `file://` only (owner, 2026-09-20), so `Thumbnail` and a picture's `Preview`
+answer `Unsupported` for a remote URI and a remote row's `thumb` is `null` — the views draw the kind
+artwork for it. A thumbnail already in the cache under a remote URI is still served. `Uri::to_path`
+drops the scheme and the host, so asking otherwise reads *this* machine's copy of that path. The
+plugin SDK has a `thumb` hook for when remote thumbnails are built (post-0.1.0); only PTP implements
+it today, and the daemon does not yet send `Thumb`.
+
 ## Code viewer and editor (plan 13)
 
 | Request | Fields | Reply |

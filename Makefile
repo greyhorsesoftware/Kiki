@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test clippy test-rust test-qml test-e2e coverage run daemon shell fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history coverage run daemon shell fmt lint clean
 
 all: build
 
@@ -45,6 +45,13 @@ test-qml:
 # pairs whose server is not installed.
 test-e2e: build
 	tests/e2e/run.sh
+
+## 100,000 files scrolled in each view, timed, and recorded per build in bench/scroll-history.jsonl.
+scroll-perf: build
+	KIKID=$(ROOT)/target/release/kikid tests/e2e/run.sh --flow scroll_perf
+
+scroll-history:
+	@tests/e2e/scroll_history.py
 
 run: build
 	KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \

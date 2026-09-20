@@ -60,7 +60,7 @@ impl Listing {
                 continue;
             }
             let kind = inner.pool.kind(idx);
-            if crate::thumbs::thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
+            if self.thumbable(kind) && !inner.thumb.contains_key(&idx) && !inner.thumb_queued[idx as usize] {
                 inner.thumb_queued[idx as usize] = true;
                 let mtime = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0);
                 let name = String::from_utf8_lossy(inner.pool.name(idx)).into_owned();

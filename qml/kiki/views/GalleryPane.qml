@@ -423,6 +423,7 @@ Item {
         Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
         ListView {
             id: strip
+            objectName: "gallery-strip"
             // Centred while the pictures fit, filling the bar once they do not.
             height: parent.height - 12
             anchors.verticalCenter: parent.verticalCenter
@@ -459,6 +460,7 @@ Item {
                 border.color: index === root.current ? Kiki.Theme.accent : Qt.rgba(1, 1, 1, 0.05)
                 Connections { target: root.pane.listing; function onRowsUpdated(first, n) { if (shot.index >= first && shot.index < first + n) shot.r = root.pane.listing.row(shot.index) } }
                 Image {
+                    objectName: "strip-thumb"
                     visible: shot.r && shot.r.thumb
                     anchors.fill: parent; anchors.margins: 5
                     source: shot.r && shot.r.thumb ? "file://" + shot.r.thumb : ""
