@@ -134,6 +134,19 @@ Item {
     /// than bled to the edge, and the gap is where the eye rests.
     readonly property int inset: 28
     readonly property real fitScale: front ? front.fit : 1
+    /// A picture zoomed past the stage is moved around by dragging it, so only a stage with
+    /// nothing to pan starts a drag out of the gallery.
+    readonly property bool canPan: stage.contentWidth > stage.width || stage.contentHeight > stage.height
+
+    /// A drag leaving the gallery carries what List and Icon carry: the selection when the row
+    /// pressed is in it, that row alone when it is not. `proxy` is the item whose `Drag` hands
+    /// it to the compositor.
+    function dragFrom(active, index, proxy) {
+        if (!active) { proxy.Drag.active = false; return }
+        if (!pane.selection.has(index)) pane.selection.set(index)
+        proxy.Drag.mimeData = pane.dragMime(index)
+        proxy.Drag.active = true
+    }
 
     // The stage is darker than the rest of the window, so the picture is the brightest thing on
     // screen whatever the theme.
@@ -198,6 +211,7 @@ Item {
 
     Flickable {
         id: stage
+        objectName: "gallery-stage"
         width: parent.width; height: root.stageHeight
         contentWidth: Math.max(width, root.front.width); contentHeight: Math.max(height, root.front.height)
         clip: true; boundsBehavior: Flickable.StopAtBounds
@@ -288,9 +302,20 @@ Item {
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
         }
+        Item {
+            id: stageDrag
+            objectName: "gallery-stage-drag"
+            Drag.dragType: Drag.Automatic
+            Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+            Drag.proposedAction: Qt.MoveAction
+        }
         MouseArea {
+            objectName: "gallery-stage-mouse"
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
+            drag.target: root.current >= 0 && !root.canPan ? stageDrag : null
+            drag.threshold: 8
+            drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag)
             onDoubleClicked: root.activate(root.current)
             onClicked: mouse => { if (mouse.button === Qt.RightButton) root.contextMenu(root.current, root.mapToItem(null, mouse.x, mouse.y)) }
         }
@@ -472,8 +497,19 @@ Item {
                     anchors.centerIn: parent; size: 32
                     kind: shot.r ? shot.r.kind : "file"; color: Kiki.Theme.kindColor(shot.r ? shot.r.kind : "file")
                 }
+                Item {
+                    id: shotDrag
+                    objectName: "strip-drag"
+                    Drag.dragType: Drag.Automatic
+                    Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+                    Drag.proposedAction: Qt.MoveAction
+                }
+                // The drag starts at 8 px, under the strip's own threshold for scrolling, so a
+                // tile pulled along the strip leaves with the pointer instead of scrolling it.
                 MouseArea {
                     anchors.fill: parent
+                    drag.target: shotDrag; drag.threshold: 8
+                    drag.onActiveChanged: root.dragFrom(drag.active, shot.index, shotDrag)
                     onClicked: { root.pane.selection.set(shot.index); root.zoom = 0 }
                     onDoubleClicked: root.activate(shot.index)
                 }

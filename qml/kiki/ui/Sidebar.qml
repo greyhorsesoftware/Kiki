@@ -17,6 +17,7 @@ Rectangle {
     signal open(string uri)
     signal addLocation()
     signal dropOn(string uri, var drop)          // files dropped on a favorite or volume
+    signal dropOnTrash(var uris)
     signal addFavorites(var uris, int index)     // dropped into the Favorites list at `index`
     signal favoriteMenu(int index, point pos)
     signal volumeMenu(var volume)
@@ -124,7 +125,7 @@ Rectangle {
                 keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
                 active: sidebar.currentUri.startsWith("trash://")
                 droppable: true
-                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); Kiki.Jobs.submit({ op: "trash", items: urls }) } }
+                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); sidebar.dropOnTrash(urls) } }
                 onClicked: sidebar.open("trash:///")
             }
             Repeater {

@@ -74,7 +74,21 @@ QtObject {
         pane.renamingIndex = pane.selection.current
     }
 
-    function trashSelection(uris) { const u = uris || selectedUris(); if (u.length) Kiki.Jobs.submit({ op: "trash", items: u }) }
+    /// Del, the menu's Move to Trash, and files dropped on the Trash. A server has no trash, so
+    /// what is on one is deleted for good, once the user has been told so; this machine's files
+    /// go to the trash without asking.
+    function trashSelection(uris) {
+        const u = uris || selectedUris(); if (!u.length) return
+        const remote = u.filter(x => !/^(file|trash):/.test(x))
+        const local = u.filter(x => remote.indexOf(x) < 0)
+        if (local.length) Kiki.Jobs.submit({ op: "trash", items: local })
+        if (!remote.length) return
+        const host = Kiki.Format.authority(remote[0])
+        const what = remote.length === 1
+            ? decodeURIComponent(remote[0].replace(/\/+$/, "").split("/").pop()) + " is on " + host + ", which has no trash. It will be deleted for good, and this cannot be undone."
+            : "These " + remote.length + " items are on " + host + ", which has no trash. They will be deleted for good, and this cannot be undone."
+        confirmNeeded({ title: "Delete permanently?", message: what, label: "Delete" }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: remote }) })
+    }
     function restoreSelection() { const n = selectedNames(); if (n.length) Kiki.Jobs.submit({ op: "restore", names: n }) }
 
     /// In the trash there is nothing left to lose, so it goes without asking.

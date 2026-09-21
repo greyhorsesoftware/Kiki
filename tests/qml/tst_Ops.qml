@@ -134,12 +134,59 @@ TestCase {
 
     // ---------------------------------------------------------------- remove and restore
 
-    function test_trash_submits_the_selection() {
+    function test_trash_submits_the_selection_without_asking() {
         pane.selection.set(1)
         pane.selection.toggle(2)
         ops.trashSelection()
+        compare(asked, null)
         compare(submitted().op, "trash")
         compare(submitted().items.length, 2)
+    }
+
+    // A server has no trash: what is on one is deleted for good, and only once the user says so.
+    // Del, the menu and a drop on the Trash all come through `trashSelection`.
+    function test_del_on_a_server_asks_and_then_deletes() {
+        fake.tree["sftp://lab/srv"] = [fake.file("r.txt")]
+        pane.open("sftp://lab/srv")
+        wait(50)
+        pane.selection.set(0)
+        ops.trashSelection()
+        verify(asked !== null, "it asks first")
+        compare(Wire.count("Submit"), 0, "nothing until the answer comes back")
+        answer(true)
+        compare(submitted().op, "delete")
+        compare(submitted().items[0], "sftp://lab/srv/r.txt")
+    }
+
+    function test_remote_files_dropped_on_the_trash_are_deleted_after_asking() {
+        ops.trashSelection(["sftp://lab/srv/a.txt"])
+        verify(asked !== null, "it asks first")
+        compare(asked.title, "Delete permanently?")
+        verify(asked.message.indexOf("a.txt is on lab") === 0, asked.message)
+        compare(Wire.count("Submit"), 0, "nothing until the answer comes back")
+        answer(true)
+        compare(submitted().op, "delete")
+        compare(submitted().items.length, 1)
+        compare(submitted().items[0], "sftp://lab/srv/a.txt")
+    }
+
+    function test_remote_files_dropped_on_the_trash_and_declined_are_left_alone() {
+        ops.trashSelection(["sftp://lab/srv/a.txt", "sftp://lab/srv/b.txt"])
+        verify(asked.message.indexOf("These 2 items are on lab") === 0, asked.message)
+        answer(false)
+        compare(Wire.count("Submit"), 0)
+    }
+
+    function test_a_mixed_drop_trashes_the_local_files_and_asks_about_the_rest() {
+        ops.trashSelection(["file:///home/t/a.txt", "ftps://box/b.txt"])
+        compare(submitted().op, "trash")
+        compare(submitted().items.length, 1)
+        compare(submitted().items[0], "file:///home/t/a.txt")
+        verify(asked !== null)
+        answer(true)
+        compare(submitted().op, "delete")
+        compare(submitted().items.length, 1)
+        compare(submitted().items[0], "ftps://box/b.txt")
     }
 
     function test_delete_asks_before_it_deletes() {

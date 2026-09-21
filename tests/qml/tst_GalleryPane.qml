@@ -201,6 +201,91 @@ TestCase {
         tryVerify(() => stripThumbs()[1].showing === "file:///th/b.png", 2000, "the tile re-read its row")
     }
 
+    // ---------------------------------------------------------------- dragging out
+
+    // The offscreen platform ends a drag the moment it starts (nothing is there to drop on), so
+    // what is asserted is that one began and what it carried.
+    Component { id: spyC; SignalSpy { signalName: "dragStarted" } }
+    function spyOn(proxy) { return spyC.createObject(tc, { target: proxy.Drag }) }
+    /// Press on `item` at (x, y), move by (dx, dy) in steps with the button held, let go.
+    function pull(item, x, y, dx, dy) {
+        mousePress(item, x, y, Qt.LeftButton)
+        for (let k = 1; k <= 6; k++) mouseMove(item, x + dx * k / 6, y + dy * k / 6, -1, Qt.LeftButton)
+        wait(50)                                   // an automatic drag starts from a queued event
+        mouseRelease(item, x + dx, y + dy, Qt.LeftButton)
+    }
+    function stripTile(i) {
+        return findChild(gallery, "gallery-strip").contentItem.children.find(s => s.index === i && s.r)
+    }
+    function pictures(names) { openTree(names.map(n => fake.file(n, { kind: "image" }))) }
+
+    function test_the_picture_on_show_drags_out_as_a_uri_list() {
+        pictures(["a.jpg", "b.jpg"])
+        tryCompare(gallery, "current", 0)
+        const proxy = findChild(gallery, "gallery-stage-drag")
+        const spy = spyOn(proxy)
+        pull(gallery, gallery.width / 2, 40, 0, 40)            // above the pill, on the picture
+        compare(spy.count, 1, "a drag began")
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/docs/a.jpg\r\n")
+        spy.destroy()
+    }
+
+    function test_a_selection_drags_out_whole() {
+        pictures(["a.jpg", "b.jpg", "c.jpg"])
+        pane.selection.set(0)
+        pane.selection.toggle(2)                               // a and c, with c on the stage
+        const proxy = findChild(gallery, "gallery-stage-drag")
+        pull(gallery, gallery.width / 2, 40, 0, 40)
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/docs/a.jpg\r\nfile:///home/t/docs/c.jpg\r\n")
+    }
+
+    // A tile pulled out of the filmstrip carries its own picture, and the stage goes to it.
+    function test_a_filmstrip_tile_drags_out_its_picture() {
+        pictures(["a.jpg", "b.jpg"])
+        tryVerify(() => stripTile(1))
+        const tile = stripTile(1)
+        const proxy = findChild(tile, "strip-drag")
+        const spy = spyOn(proxy)
+        pull(tile, tile.width / 2, tile.height / 2, 0, -60)   // up, out of the strip
+        compare(spy.count, 1, "a drag began")
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/docs/b.jpg\r\n")
+        compare(gallery.current, 1)
+        spy.destroy()
+    }
+
+    function test_a_tile_pulled_sideways_drags_too() {
+        pictures(["a.jpg", "b.jpg", "c.jpg"])
+        tryVerify(() => stripTile(0))
+        const tile = stripTile(0)
+        const spy = spyOn(findChild(tile, "strip-drag"))
+        pull(tile, tile.width / 2, tile.height / 2, 60, 0)
+        compare(spy.count, 1)
+        spy.destroy()
+    }
+
+    // A picture zoomed past the stage is moved around by dragging it; that must not become a drag
+    // out of the gallery. A real file, because only a decoded picture has a size to zoom.
+    function test_a_zoomed_picture_pans_instead_of_leaving() {
+        const dir = Qt.resolvedUrl("../../app-images").toString()
+        fake.tree = { [dir]: [fake.file("kikifull.png", { kind: "image" })] }
+        pane.open(dir)
+        tryCompare(gallery, "current", 0)
+        tryVerify(() => gallery.front.status === Image.Ready && gallery.front.implicitWidth > 0, 5000, "the picture loads")
+        const proxy = findChild(gallery, "gallery-stage-drag")
+        const mouse = findChild(gallery, "gallery-stage-mouse")
+        verify(!gallery.canPan && mouse.drag.target === proxy, "fitted: a drag leaves")
+
+        gallery.actual()                                       // over 1024 px on an 800 × 516 stage
+        tryVerify(() => gallery.canPan)
+        verify(mouse.drag.target === null)
+        const stage = findChild(gallery, "gallery-stage")
+        const spy = spyOn(proxy)
+        pull(gallery, gallery.width / 4, 300, 0, -120)
+        compare(spy.count, 0, "no drag out")
+        verify(stage.contentY > 0, "it panned: " + stage.contentY)
+        spy.destroy()
+    }
+
     // Remote pictures have no thumbnails (owner, 2026-09-20: file:// only), so a tile shows the
     // kind artwork rather than a broken image, and the stage says which file it is.
     function test_a_remote_picture_shows_its_kind_artwork() {

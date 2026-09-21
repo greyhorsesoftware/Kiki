@@ -788,6 +788,44 @@ FloatingWindow {
             scrollProbe.start(s ? s.view : null, s ? s.cache : null, parseInt(ms) || 4000)
         }
         function scrollStats(): string { return JSON.stringify(scrollProbe.result) }
+        /// A drop, without a pointer: `uris` is one or more URIs separated by newlines — the very
+        /// shape of a `text/uri-list`, and not JSON, because Quickshell's IPC eats square brackets
+        /// out of an argument. `dest` is the folder it lands in — `trash:///` is the sidebar's
+        /// Trash — and `modifiers` any of ctrl/shift/alt. It goes through the same `Pane.dropInto`
+        /// a real drag does — the object below is shaped like the `DragEvent` Qt would hand it — so
+        /// a flow drives the code a hand drives, less the press and the pointer. Answers what the
+        /// drop decided.
+        function drop(uris: string, dest: string, modifiers: string): string {
+            const list = (uris || "").split(/[\r\n]+/).filter(u => u && !u.startsWith("#"))
+            if (dest.startsWith("trash:")) {
+                if (list.length) ops.trashSelection(list)
+                return JSON.stringify({ accepted: list.length > 0, action: list.length ? "move" : "none", items: list.length })
+            }
+            const named = { ctrl: Qt.ControlModifier, control: Qt.ControlModifier, shift: Qt.ShiftModifier, alt: Qt.AltModifier }
+            let mods = Qt.NoModifier
+            for (const m of (modifiers || "").split(/[+,\s]+/)) if (m && named[m.toLowerCase()] !== undefined) mods |= named[m.toLowerCase()]
+            let took = Qt.IgnoreAction
+            const ev = {
+                accepted: false,
+                hasUrls: list.length > 0,
+                urls: list.map(u => ({ toString: () => u })),
+                hasText: false, text: "",
+                modifiers: mods,
+                accept: a => { ev.accepted = true; took = a === undefined ? Qt.MoveAction : a }
+            }
+            win.pane.dropInto(dest, ev)
+            return JSON.stringify({ accepted: ev.accepted, action: took === Qt.CopyAction ? "copy" : took === Qt.MoveAction ? "move" : "none", items: list.length })
+        }
+        /// The yes/no question, for scripts and tests: `yes` or `no` answers it, anything else
+        /// leaves it up. Either way, answers what it was asking.
+        function question(answer: string): string {
+            const was = { open: confirm.visible, title: confirm.title, message: confirm.message, label: confirm.confirmLabel, danger: confirm.danger }
+            if (confirm.visible && (answer === "yes" || answer === "no")) confirm.answer(answer === "yes")
+            return JSON.stringify(was)
+        }
+        /// A rebindable action by its keymap id (`trash`, `deleteForever`, …): what its key does,
+        /// for a flow that has no keyboard.
+        function action(id: string): void { win.runAction(id) }
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }
@@ -1131,6 +1169,7 @@ FloatingWindow {
         onAddLocation: locationDialog.open(null)
         onOpenLocation: loc => win.openLocation(loc)
         onDropOn: (uri, drop) => win.pane.dropInto(uri, drop)
+        onDropOnTrash: uris => ops.trashSelection(uris)
         onFavoriteMenu: (index, pos) => menu.open([
             { label: "Remove from Sidebar", action: () => {
                 const list = win.favorites.slice()
