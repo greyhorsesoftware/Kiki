@@ -202,6 +202,8 @@ struct Counters {
     rests: Mutex<Vec<u64>>,
     /// PORT/EPRT, or a data command without a preceding PASV/EPSV
     violations: Mutex<Vec<String>>,
+    /// Successful sign-ins: how many control connections this server has really been given.
+    logins: AtomicUsize,
 }
 
 struct Mock {
@@ -211,6 +213,10 @@ struct Mock {
 }
 
 impl Mock {
+    fn logins(&self) -> usize {
+        self.counters.logins.load(Ordering::SeqCst)
+    }
+
     fn assert_passive_only(&self) {
         let v = self.counters.violations.lock().unwrap();
         assert!(v.is_empty(), "active mode or data command without PASV/EPSV: {v:?}");
@@ -317,6 +323,7 @@ impl Conn {
             "PASS" => {
                 if self.user == "kiki" && arg == "secret" {
                     self.logged_in = true;
+                    self.counters.logins.fetch_add(1, Ordering::SeqCst);
                     reply(&mut self.chan, "230 Login successful");
                 } else {
                     reply(&mut self.chan, "530 Login incorrect");
@@ -765,6 +772,40 @@ fn explicit_tls_trust_on_first_use_then_listing() {
 
     assert_listing(&m, &mut p);
     m.assert_passive_only();
+}
+
+/// A location's name can be given away: remove one and add another under the same name. The
+/// plugin keeps a session per name and role, so unless it compares the config it hands the new
+/// location the connection to the machine that was removed — and FTP answers a `LIST` of a path
+/// that is not there with an empty listing and a 226, so what the user sees is an empty folder
+/// and no error at all. (The daemon disconnects on remove; this is the plugin's own guard, and
+/// it holds even if something else ever forgets to.)
+#[test]
+fn a_name_reused_for_another_server_does_not_inherit_the_old_connection() {
+    let old = start(false);
+    let new = start(false);
+    new.fs.lock().unwrap().insert("/only-on-the-new-one.txt".into(), Node { kind: NodeKind::File(b"new".to_vec()), mode: 0o644, mtime: 1_700_000_000 });
+    let fp = fingerprint();
+    let mut p = Plugin::spawn();
+
+    assert!(p.connect(old.port, "secret", false, Some(&fp)).get("ok").is_some());
+    let first = normalise(&p.scan("/"));
+    assert_eq!(old.logins(), 1);
+
+    // The same details again: the session stands, and nobody signs in twice for nothing.
+    assert!(p.connect(old.port, "secret", false, Some(&fp)).get("ok").is_some());
+    assert_eq!(old.logins(), 1, "the same server and sign-in reuses the session it has");
+    assert_eq!(normalise(&p.scan("/")), first);
+
+    // The same location name and role, another machine behind it.
+    assert!(p.connect(new.port, "secret", false, Some(&fp)).get("ok").is_some());
+    assert_eq!(new.logins(), 1, "the new server was really connected to");
+    let second = normalise(&p.scan("/"));
+    assert!(second.iter().any(|e| e.0 == "only-on-the-new-one.txt"), "the listing is the new server's: {second:?}");
+    assert_ne!(first, second);
+
+    // And a changed password on the same server is a new sign-in too, not the old connection.
+    assert_eq!(err_of(&p.connect(new.port, "wrong", false, Some(&fp))).str_field("code"), Some("Auth"));
 }
 
 #[test]

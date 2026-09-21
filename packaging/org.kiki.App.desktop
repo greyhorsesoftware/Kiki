@@ -2,7 +2,7 @@
 Type=Application
 Name=kiki
 GenericName=File Manager
-Comment=Browse files locally and on SFTP, FTPS, SMB and WebDAV locations
+Comment=Browse files locally and on SFTP, FTPS and SMB locations
 Exec=kiki %U
 Icon=org.kiki.App
 Terminal=false

@@ -29,4 +29,16 @@ TestCase {
         Kiki.Theme.red = "#8a8a8a"                       // a monochrome theme: no hue to speak of
         verify(Qt.colorEqual(Kiki.Theme.danger, "#f7768e"))
     }
+
+    // The same rule the other way about: "changed" is the theme's yellow, unless that yellow is
+    // red (matte-black) — a modified file must not wear the colour of a conflicted one.
+    function test_changed_is_never_the_colour_of_danger() {
+        const y = Kiki.Theme.yellow
+        Kiki.Theme.yellow = "#e5c07b"
+        verify(Qt.colorEqual(Kiki.Theme.changed, "#e5c07b"), "a yellow yellow is used as it is")
+        Kiki.Theme.yellow = "#b91c1c"                    // matte-black
+        verify(!Kiki.Theme.isReddish(Kiki.Theme.changed), "a red yellow is not")
+        verify(!Qt.colorEqual(Kiki.Format.gitColor({ state: "modified" }), Kiki.Format.gitColor({ state: "conflicted" })))
+        Kiki.Theme.yellow = y
+    }
 }

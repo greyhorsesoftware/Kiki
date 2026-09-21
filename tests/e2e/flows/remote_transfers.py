@@ -58,7 +58,7 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     with open(big, "wb") as f:
         for _ in range(BIG_MB // 4):
             f.write(block)
-    for probe in ("before", "during", "after"):
+    for probe in ("before", "during", "during-again", "after"):
         os.makedirs(os.path.join(root, f"probe-{probe}-{tag}"))
         open(os.path.join(root, f"probe-{probe}-{tag}", "here.txt"), "w").close()
     os.makedirs(os.path.join(root, f"inbox-{tag}"))
@@ -67,20 +67,30 @@ def own_connection(ctx, c, d, tag, port, root, uri, local_root, local_uri):
     idle = connections(port)
     c.check(f"{tag}: browsing opens the one connection the panes use", idle == 1, idle)
 
-    job = d.ok("Submit", op={"op": "copy", "items": [local_uri(f"big-{tag}.bin")], "dest": uri(f"inbox-{tag}")})["job"]
-    moving = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and (e["job"]["bytes"] > 0 or e["job"]["state"] in ("done", "failed", "cancelled")), timeout=30)
+    # Twice at most. On a loaded machine the listing can be slow enough (and loopback fast enough)
+    # for the upload to be over by the time the folder has listed, and then the listing proved
+    # nothing about running beside it. A listing that WAITS for the upload loses both times — it
+    # comes back only once the upload is done — so the second go forgives the machine, not the bug.
+    for probe in ("during", "during-again"):
+        shutil.rmtree(os.path.join(root, f"inbox-{tag}")); os.makedirs(os.path.join(root, f"inbox-{tag}"))
+        job = d.ok("Submit", op={"op": "copy", "items": [local_uri(f"big-{tag}.bin")], "dest": uri(f"inbox-{tag}")})["job"]
+        moving = d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and (e["job"]["bytes"] > 0 or e["job"]["state"] in ("done", "failed", "cancelled")), timeout=30)
+        j = moving["job"] if moving else {}
+        prepared = [e["job"] for e in d.events if e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] == "running"]
+        busy = connections(port)
+        took = lists(ctx, uri(f"probe-{probe}-{tag}"), "here.txt")
+        still = _job_state(d, job)
+        if isinstance(still, dict) and still["state"] == "running":
+            break
+        print(f"  NOTE {tag}: the upload was over before the folder had listed ({took and round(took, 2)} s) — once more")
+        d.wait_event(lambda e: e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] in ("done", "failed", "cancelled"), timeout=60)
     c.check(f"{tag}: the upload is under way", moving and moving["job"]["state"] == "running", moving and moving["job"])
     # What the activity view is told about it (plan 32).
-    j = moving["job"] if moving else {}
     c.check(f"{tag}: it says what it is: an upload of that file, and which file is in hand",
             j.get("direction") == "upload" and j.get("name") == f"big-{tag}.bin" and (j.get("current") or {}).get("name") == f"big-{tag}.bin" and (j.get("current") or {}).get("size") == BIG_MB * 1024 * 1024,
             {k: j.get(k) for k in ("direction", "name", "current", "phase")})
-    prepared = [e["job"] for e in d.events if e.get("event") == "JobEvent" and e["job"]["id"] == job and e["job"]["state"] == "running"]
     c.check(f"{tag}: it was 'preparing' until its totals were known, then 'running'", prepared and prepared[0].get("phase") == "preparing" and j.get("phase") == "running", [p.get("phase") for p in prepared][:4])
-    busy = connections(port)
     c.check(f"{tag}: on a connection of its own", busy == idle + 1, f"{idle} before, {busy} during")
-    took = lists(ctx, uri(f"probe-during-{tag}"), "here.txt")
-    still = _job_state(d, job)
     c.check(f"{tag}: a folder never seen before lists while it runs", took is not None and took < 5, f"{took and round(took, 2)} s")
     c.check(f"{tag}: and the upload was still running when it did (else this proved nothing)", isinstance(still, dict) and still["state"] == "running", still)
 
@@ -337,6 +347,96 @@ def run(ctx):
             d.submit({"op": "copy", "items": [r_uri(f"dated-in-{tag}/served.txt")], "dest": ends["local"][1](f"dated-out-{tag}")})
             down = os.path.getmtime(os.path.join(local_root, f"dated-out-{tag}", "served.txt"))
             c.check(f"{tag}: a downloaded file takes the time the server gives it", abs(down - old) <= 2, down)
+
+        # Ctrl+Z after a copy TO a server (plan 07). There is no trash on the other side, so the
+        # inverse is a delete that cannot be taken back in its turn: it deletes what the copy made
+        # and nothing else — not the folder it landed in, not a file that has changed since — and
+        # both toasts say that it is for good. Checked on the server's own disk.
+        for tag in ports:
+            if tag not in ends:
+                continue
+            r_root, r_uri = ends[tag]
+            src = os.path.join(local_root, f"undo-{tag}", "site")
+            build(src)
+            before = snapshot(src)
+            inbox = os.path.join(r_root, f"undo-in-{tag}")
+            os.makedirs(inbox)
+            with open(os.path.join(inbox, "theirs.txt"), "w") as f:
+                f.write("was here first")
+            job = d.ok("Submit", op={"op": "copy", "items": [ends["local"][1](f"undo-{tag}/site")], "dest": r_uri(f"undo-in-{tag}")})["job"]
+            d.wait_job(job, timeout=JOB_TIMEOUT)
+            offered = d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == job, timeout=20)
+            c.check(f"{tag}: the copy's toast says what its Undo would do, before it is clicked",
+                    offered and f"Undo deletes it from e2e-{tag}, permanently" in offered["text"], offered and offered["text"])
+            c.same_tree(f"{tag}: the copy arrived", before, snapshot(os.path.join(inbox, "site")))
+
+            u = d.ok("Undo")["job"]
+            said = d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == u, timeout=JOB_TIMEOUT)
+            d.wait_job(u, timeout=JOB_TIMEOUT)
+            c.check(f"{tag}: Undo takes it off the server's own disk", not os.path.exists(os.path.join(inbox, "site")), os.listdir(inbox))
+            c.check(f"{tag}: and says how much went, from where, and that it is for good",
+                    said and said["text"].startswith("Undid copy — 10 items deleted from e2e-") and said["text"].endswith("(permanently)"), said and said["text"])
+            c.check(f"{tag}: what was in that folder before it is untouched", os.path.exists(os.path.join(inbox, "theirs.txt")), os.listdir(inbox))
+            c.check(f"{tag}: and so is the original on this machine", snapshot(src) == before)
+
+            # What somebody has changed since is not this copy's to delete. The check is the one
+            # the mirror makes about the same server: SFTP keeps the time a file was given, so a
+            # file rewritten at the same length is still seen to have changed; FTP cannot keep one,
+            # and the size is all there is.
+            job = d.ok("Submit", op={"op": "copy", "items": [ends["local"][1](f"undo-{tag}/site")], "dest": r_uri(f"undo-in-{tag}")})["job"]
+            d.wait_job(job, timeout=JOB_TIMEOUT)
+            d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == job, timeout=20)
+            with open(os.path.join(inbox, "site", "index.html"), "a") as f:
+                f.write("<!-- and a line of mine -->")
+            same_length = os.path.join(inbox, "site", "üñí.txt")
+            with open(same_length, "w") as f:
+                f.write("UNICODE")  # "unicode" was seven bytes, and so is this
+            os.utime(same_length, (time.time() + 5, time.time() + 5))
+            u = d.ok("Undo")["job"]
+            said = d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == u, timeout=JOB_TIMEOUT)
+            d.wait_job(u, timeout=JOB_TIMEOUT)
+            got = snapshot(os.path.join(inbox, "site"))
+            c.check(f"{tag}: a file that grew since the copy is left where it is", got.get("index.html", b"").endswith(b"<!-- and a line of mine -->"), sorted(got))
+            c.check(f"{tag}: and the rest of the copy is gone all the same", "images/logo.bin" not in got and "empty.txt" not in got, sorted(got))
+            if tag == "sftp":
+                # Two files and the folder it could not empty: three things are still there, and
+                # the line says three.
+                c.check("sftp: a file rewritten at the same length is left too — the time it carries says it is not the copy's",
+                        got.get("üñí.txt") == b"UNICODE" and said and "3 items left because they had changed" in said["text"], said and said["text"])
+            else:
+                c.check("ftps: with no time to compare, one of the same length is taken for the copy's — all FTP can promise",
+                        "üñí.txt" not in got and said and "2 items left because they had changed" in said["text"], said and said["text"])
+            c.check(f"{tag}: the folder it could not empty stays; the ones it did empty are gone",
+                    os.path.isdir(os.path.join(inbox, "site")) and not os.path.exists(os.path.join(inbox, "site", "images")) and not os.path.exists(os.path.join(inbox, "site", "hollow")), sorted(got))
+            shutil.rmtree(os.path.join(inbox, "site"))
+
+            # A move to a server offers nothing to undo: taking it back means putting an original
+            # back, and there is nowhere on the other side to take it from.
+            with open(os.path.join(local_root, f"undo-move-{tag}.txt"), "w") as f:
+                f.write("moved")
+            d.events.clear()
+            job = d.ok("Submit", op={"op": "move", "items": [ends["local"][1](f"undo-move-{tag}.txt")], "dest": r_uri(f"undo-in-{tag}")})["job"]
+            d.wait_job(job, timeout=JOB_TIMEOUT)
+            d.drain(0.3)
+            toasts = [e for e in d.events if e.get("event") == "Toast" and e.get("job") == job]
+            c.check(f"{tag}: a move to the server offers no undo at all", toasts == [] and os.path.exists(os.path.join(inbox, f"undo-move-{tag}.txt")), toasts)
+
+        # Server to server: the undo deletes on the destination, and only there.
+        if "sftp" in ends and "ftps" in ends:
+            src = os.path.join(ends["sftp"][0], "cross-undo", "site")
+            build(src)
+            before = snapshot(src)
+            os.makedirs(os.path.join(ends["ftps"][0], "cross-undo-in"))
+            job = d.ok("Submit", op={"op": "copy", "items": [ends["sftp"][1]("cross-undo/site")], "dest": ends["ftps"][1]("cross-undo-in")})["job"]
+            d.wait_job(job, timeout=JOB_TIMEOUT)
+            d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == job, timeout=20)
+            c.same_tree("sftp → ftps: the copy arrives", before, snapshot(os.path.join(ends["ftps"][0], "cross-undo-in", "site")))
+            u = d.ok("Undo")["job"]
+            said = d.wait_event(lambda e: e.get("event") == "Toast" and e.get("job") == u, timeout=JOB_TIMEOUT)
+            d.wait_job(u, timeout=JOB_TIMEOUT)
+            c.check("sftp → ftps: Undo deletes it from the FTPS server", not os.path.exists(os.path.join(ends["ftps"][0], "cross-undo-in", "site")), os.listdir(os.path.join(ends["ftps"][0], "cross-undo-in")))
+            c.check("sftp → ftps: and says which server it went from", said and "deleted from e2e-ftps (permanently)" in said["text"], said and said["text"])
+            c.same_tree("sftp → ftps: the SFTP side it was copied from is untouched", before, snapshot(src))
 
         # A mirror settles (plan 08; the rule is RelaySFTP's, which the engine is ported from): what
         # is copied is stamped with the time the NEXT SCAN will see, so a second run finds nothing

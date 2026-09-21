@@ -21,6 +21,9 @@ Rectangle {
     signal rightClicked()
     /// Set to accept dropped URIs; emits dropped(drop) with the DragEvent.
     property bool droppable: false
+    /// A small ball at the icon's corner, transparent for none: green on a location kiki is
+    /// connected to.
+    property color dot: "transparent"
     readonly property bool hovered: hover.containsMouse
     /// Rail style: the icon alone, centred. Plain folders show their initial instead, since
     /// a column of identical folder glyphs tells you nothing.
@@ -49,6 +52,13 @@ Rectangle {
                 objectName: "sidebar-image"
                 anchors.centerIn: parent; width: 20; height: 20; radius: 5
                 source: item.imageSource; visible: shown
+            }
+            Rectangle {
+                objectName: "sidebar-dot"
+                visible: item.dot.a > 0
+                anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.rightMargin: -3; anchors.bottomMargin: -3
+                width: 8; height: 8; radius: 4; color: item.dot
+                border.width: 1.5; border.color: item.active ? Kiki.Theme.surface : Kiki.Theme.bg
             }
         }
         Text { visible: !item.compact; text: item.label; color: item.active ? Kiki.Theme.fg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; elide: Text.ElideRight; width: item.width - 60 }

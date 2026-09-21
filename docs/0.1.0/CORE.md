@@ -84,7 +84,9 @@ Why this order: listing is the performance floor everything sits on, so it is me
 
 ## Out of scope for 0.1.0
 
-Tabs, bulk rename, further location plugins (S3 and other object stores, WebDAV; SMB is plan 25), iPhone app document folders, bidirectional sync, following symlinks, mirroring permissions.
+Tabs, bulk rename, further location plugins (S3 and other object stores; SMB is plan 25), iPhone app document folders, bidirectional sync, following symlinks, mirroring permissions.
+
+Removed from 0.1.0 after being built (owner, 2026-09-21), each in the git history and each one install line from coming back: **WebDAV** — the `dav` kind of the GIO plugin, never opened against a server (`25-smb.md`); **LocalSend** — nearby transfers, fixed against the desktop app but never sent to a phone (`18-share.md`). AFP, from the same GIO plugin, was never in 0.1.0 either. **SMB1 (NT1)** is not supported and will not be: kiki speaks SMB2 or later (`25-smb.md`).
 
 ## Decisions already taken
 

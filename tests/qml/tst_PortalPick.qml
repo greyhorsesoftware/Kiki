@@ -63,4 +63,27 @@ TestCase {
         verify(section !== null)
         verify(!section.visible)
     }
+
+    // The box fits the window it is in. It was 860 × 560 whatever the window, and in one shorter
+    // than that (the owner's, 625 px with the title bar) its buttons were below the edge.
+    function buttons() {
+        const out = []
+        function walk(it) { for (const c of it.children) { if (c.text !== undefined && c.clicked !== undefined && c.primary !== undefined) out.push(c); walk(c) } }
+        walk(portal); return out.filter(b => b.visible)
+    }
+    function test_it_fits_a_short_window_data() { return [{ tag: "roomy", w: 1200, h: 760 }, { tag: "the owner's", w: 1176, h: 590 }, { tag: "small", w: 700, h: 420 }] }
+    function test_it_fits_a_short_window(data) {
+        portal.anchors.fill = undefined; portal.width = data.w; portal.height = data.h
+        portal.pick({ mode: "save", title: "Save the mirror report", currentFolder: "/home/t", currentName: "kiki-mirror-ghs.txt" }, () => {})
+        wait(20)
+        const labels = buttons().map(b => b.text)
+        verify(labels.indexOf("Save") >= 0 && labels.indexOf("Cancel") >= 0, labels.join(","))
+        for (const b of buttons()) {
+            const p = b.mapToItem(portal, 0, 0)
+            verify(p.y >= 0 && p.y + b.height <= portal.height, b.text + " at y " + p.y + "–" + (p.y + b.height) + " in " + portal.height)
+            verify(p.x >= 0 && p.x + b.width <= portal.width, b.text + " at x " + p.x + "–" + (p.x + b.width) + " in " + portal.width)
+        }
+        portal.finish(null)
+        portal.anchors.fill = tc
+    }
 }

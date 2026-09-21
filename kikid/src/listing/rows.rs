@@ -99,7 +99,10 @@ impl Listing {
         }
         let inner = self.inner.lock().unwrap();
         for s in &inner.subscribers {
-            let mut positions: Vec<u32> = changed.iter().map(|&i| inner.pos[i as usize]).filter(|&p| p != u32::MAX && s.covers(p)).collect();
+            // `pos.get`, not `pos[..]`: the rows were chosen with the lock let go, and a rescan
+            // in between deals the indexes again — into a shorter table when the folder has
+            // shrunk. Every caller re-checks the epoch, but only up to the moment it unlocks.
+            let mut positions: Vec<u32> = changed.iter().filter_map(|&i| inner.pos.get(i as usize).copied()).filter(|&p| p != u32::MAX && s.covers(p)).collect();
             if positions.is_empty() {
                 continue;
             }
@@ -159,10 +162,14 @@ impl Inner {
             },
         )
         .v(
+            // A row that is a repository of its own speaks for itself: for a submodule the
+            // folder above has a state for it too, and it is the inner repository that the
+            // capsule names and is coloured by (plan 15).
             "git",
-            match self.deco.git(pname) {
-                Some(e) => crate::git::entry_json(e),
-                None => Value::Null,
+            match (self.deco.repo(pname), self.deco.git(pname)) {
+                (Some(r), _) => crate::git::root_json(r),
+                (None, Some(e)) => crate::git::entry_json(e),
+                (None, None) => Value::Null,
             },
         )
         .done()

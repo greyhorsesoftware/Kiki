@@ -135,6 +135,22 @@ Rectangle {
         Keys.onEscapePressed: bc.editing = false
         onActiveFocusChanged: if (!activeFocus) bc.editing = false
     }
+    // A press anywhere else does what Escape does: the field goes and the crumbs come back. The
+    // field only went when it lost the keyboard focus, and a click on the files takes no focus
+    // from anything — so it stayed until Escape. Over the whole window while the field is up,
+    // and it lets the press through: the row that was clicked is still clicked.
+    MouseArea {
+        objectName: "breadcrumb-outside"
+        parent: bc.Window.contentItem ? bc.Window.contentItem : bc
+        anchors.fill: parent; z: 1000
+        enabled: bc.editing; visible: bc.editing
+        acceptedButtons: Qt.AllButtons
+        onPressed: mouse => {
+            const p = mapToItem(bc, mouse.x, mouse.y)
+            if (!(p.x >= 0 && p.y >= 0 && p.x < bc.width && p.y < bc.height)) bc.editing = false
+            mouse.accepted = false
+        }
+    }
     // Sits behind the crumbs, so clicking a crumb still jumps to it. Clicking the rest of the
     // path turns it into a field you type in; the folders above are on the right button.
     MouseArea {

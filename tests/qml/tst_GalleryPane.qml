@@ -201,6 +201,55 @@ TestCase {
         tryVerify(() => stripThumbs()[1].showing === "file:///th/b.png", 2000, "the tile re-read its row")
     }
 
+    // ---------------------------------------------------------------- the size it is decoded at
+
+    /// A folder of real files on disk, so the pictures really decode: `tests/qml/fixtures` holds
+    /// a 120 × 80 icon and a 2400 × 600 panorama, either side of what the stage asks for.
+    function openFixtures(names) {
+        const dir = Qt.resolvedUrl("fixtures").toString()
+        fake.tree = { [dir]: names.map(n => fake.file(n, { kind: "image" })) }
+        pane.open(dir)
+        wait(60)
+        tryCompare(gallery, "current", 0)
+        tryVerify(() => gallery.front.status === Image.Ready && gallery.front.implicitWidth > 0, 5000, "the picture loads")
+        return gallery.front
+    }
+
+    // `sourceSize` is meant as a ceiling on the decode. With `PreserveAspectFit` set on the frame
+    // Qt read it as a size to scale TO instead, and a 120 × 80 icon came back 1600 px wide: shown
+    // stage-sized rather than at its own size, and `1` showing the upscale, not the file.
+    function test_a_small_picture_is_decoded_at_its_own_size() {
+        const f = openFixtures(["small.png"])
+        compare(f.implicitWidth, 120)
+        compare(f.implicitHeight, 80)
+        verify(f.sourceSize.width > 120, "the cap was asked for: " + f.sourceSize.width)
+    }
+
+    function test_a_small_picture_is_shown_at_its_own_size() {
+        const f = openFixtures(["small.png"])
+        compare(gallery.fitScale, 1, "nothing to shrink, and never blown up")
+        compare(f.width, 120)
+        compare(f.height, 80)
+    }
+
+    function test_actual_size_is_the_files_own_pixels() {
+        const f = openFixtures(["small.png"])
+        gallery.actual()
+        compare(f.width, 120)
+        compare(f.height, 80)
+    }
+
+    // The other half of the rule: a picture larger than the stage needs is still decoded smaller
+    // than it is — capped, and in its own proportions, not stretched to the cap.
+    function test_a_big_picture_is_still_decoded_capped() {
+        const f = openFixtures(["wide.png"])                    // 2400 × 600
+        verify(f.implicitWidth < 2400, "smaller than the file, not larger: " + f.implicitWidth)
+        verify(f.implicitWidth <= f.sourceSize.width && f.implicitHeight <= f.sourceSize.height,
+               "inside the cap: " + f.implicitWidth + "x" + f.implicitHeight)
+        verify(Math.abs(f.implicitWidth / f.implicitHeight - 4) < 0.02, "and still four to one")
+        verify(gallery.fitScale < 1, "so it is shrunk to the stage")
+    }
+
     // ---------------------------------------------------------------- dragging out
 
     // The offscreen platform ends a drag the moment it starts (nothing is there to drop on), so
@@ -298,5 +347,37 @@ TestCase {
         const label = findChild(gallery, "gallery-stage-label")
         verify(icon.visible)
         compare(label.text, "far.jpg")
+    }
+
+    // The strip recycles its tiles as it scrolls. A tile held its row as a value from the first
+    // update on, so one handed another place went on showing the file of the place before: a
+    // picture under another's name — and, in a folder of mixed kinds, a text file's icon where
+    // a picture was. Seen by the owner; every other view already read its row again.
+    function stripTiles() {
+        const out = []
+        function walk(it) { for (const c of it.children) { if (c.objectName === "strip-thumb") out.push(c.parent); else walk(c) } }
+        walk(gallery)
+        // On screen: the strip also keeps its current item alive wherever it has scrolled to.
+        return out.filter(t => { const v = t.ListView.view; return t.visible && t.index >= 0 && t.x + t.width > v.contentX && t.x < v.contentX + v.width })
+    }
+    function wrongTiles() {
+        return stripTiles().filter(t => { const want = pane.listing.row(t.index); return !t.r || !want || t.r.name !== want.name })
+                           .map(t => t.index + " shows " + (t.r ? t.r.name : "nothing") + " wants " + ((pane.listing.row(t.index) || {}).name))
+    }
+    function test_a_recycled_tile_shows_the_file_at_its_new_place() {
+        const rows = []
+        for (let i = 0; i < 400; i++) rows.push(i % 2 ? fake.file("n" + i + ".txt") : fake.file("p" + i + ".jpg", { kind: "image", thumb: "/t/" + i + ".png" }))
+        fake.tree = { "file:///home/long": rows }
+        pane.open("file:///home/long")
+        wait(100)
+        const strip = stripTiles()[0].ListView.view
+        const from = strip.contentX
+        for (let x = from; x < from + 3000; x += 37) { strip.contentX = x; wait(4) }
+        wait(200)
+        verify(stripTiles().length > 5)
+        compare(wrongTiles(), [])
+        for (let x = strip.contentX; x > 0; x -= 53) { strip.contentX = x; wait(4) }
+        strip.contentX = 0
+        tryVerify(() => wrongTiles().length === 0, 2000, "back at the start: " + wrongTiles())
     }
 }

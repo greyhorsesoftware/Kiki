@@ -124,9 +124,108 @@ struct Item {
     tree: Vec<(String, bool, u64, u64)>,
 }
 
+/// What a copy to a server made, so that its undo can take back exactly that and nothing else:
+/// every file it created, with what the server says about it, and every folder it created.
+///
+/// A copy never merges into what is already there — a name that is taken is asked about (replace,
+/// keep both, skip) and a folder the copy did not make is not in here — so the folder it landed
+/// in, and anything anybody else put beside it, is no part of the inverse.
+struct Made {
+    dest: Uri,
+    /// What a later look at the server can tell about these files (`guard_for`); empty for a
+    /// transfer that is not journalled this way, and then nothing is written down at all.
+    guard: &'static str,
+    /// `[uri, size, mtime]` each, as the DESTINATION reported them once the file had arrived.
+    files: Vec<Value>,
+    dirs: Vec<Value>,
+}
+
+impl Made {
+    fn of(dest: &Uri, guard: &'static str) -> Made {
+        Made { dest: dest.clone(), guard, files: Vec::new(), dirs: Vec::new() }
+    }
+
+    /// A file that has just arrived, and what the server says about it — asked of the destination
+    /// itself, as `arrived_whole` asks before a move takes an original away. It is the server's
+    /// answer that the undo will compare against, so it is the server's answer that is written
+    /// down: a file uploaded where times cannot be set carries the server's clock, not ours.
+    fn file(&mut self, at: &Side, rel: &str, uri: &Uri, sent: u64) {
+        if self.guard.is_empty() {
+            return;
+        }
+        let (size, mtime) = landed(at, rel).unwrap_or((sent, 0));
+        self.files.push(Value::Arr(vec![Value::Str(uri.to_string()), Value::Uint(size), Value::Uint(mtime)]));
+    }
+
+    fn dir(&mut self, uri: &Uri) {
+        if !self.guard.is_empty() {
+            self.dirs.push(Value::Str(uri.to_string()));
+        }
+    }
+
+    /// The op that takes it back; `None` for a copy that is not journalled this way, or one that
+    /// has made nothing yet.
+    fn inverse(&self) -> Option<Value> {
+        if self.guard.is_empty() || (self.files.is_empty() && self.dirs.is_empty()) {
+            return None;
+        }
+        Some(
+            Value::obj()
+                .s("op", "deleteCopies")
+                .s("dest", self.dest.to_string())
+                .s("guard", self.guard)
+                .v("files", Value::Arr(self.files.clone()))
+                .v("dirs", Value::Arr(self.dirs.clone()))
+                .b("_silent", true)
+                .done(),
+        )
+    }
+
+    /// Write down what has arrived so far: a copy that is cancelled or fails half way has still
+    /// put things on the server, and those are as undoable as if it had finished (`undo_so_far`).
+    fn journal(&self, job: &Job) {
+        if let Some(inv) = self.inverse() {
+            job.undo_so_far(inv);
+        }
+    }
+}
+
+/// Size and modification time as the destination itself reports them. `None` when it cannot be
+/// asked; a time of 0 means none is kept there, and what compares them goes by size alone (the
+/// rule `mirror::is_changed` follows for a side that gives no times).
+fn landed(at: &Side, rel: &str) -> Option<(u64, u64)> {
+    match at {
+        Side::Local(root) => {
+            let m = std::fs::metadata(root.join(rel)).ok()?;
+            Some((m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)))
+        }
+        Side::Remote(sess, root) => {
+            let path = format!("{}/{}", root.trim_end_matches('/'), rel);
+            let m = sess.plugin.request(sess.req("Stat").s("path", path).done()).ok()?;
+            Some((m.u64_field("size")?, m.u64_field("mtime").unwrap_or(0)))
+        }
+    }
+}
+
+/// What a later look at this server can honestly tell about a file a copy put there: `"sizeMtime"`
+/// where a file keeps a time that can be compared, `"size"` where it cannot. The same question the
+/// mirror asks about the same server before it calls a file changed — the plugin's own answer
+/// (`Describe.detector`, read by `pick_detector` for an upload to it). FTP cannot set a file's
+/// time, so its plugin says `sizeOnly` and the size is all there is to go on.
+fn guard_for(dest: &Uri) -> &'static str {
+    let spec = crate::mirror::Spec::from_json(&Value::obj().s("master", "file:///").s("replica", dest.to_string()).s("direction", "upload").done());
+    match spec.map(|s| crate::mirror::pick_detector(&s)) {
+        Ok(crate::mirror::Detector::SizeOnly) => "size",
+        _ => "sizeMtime",
+    }
+}
+
 /// `copy` or `move` of `items` into the folder `dest`. Returns the op that undoes it, when there
-/// is one: a copy that landed on this machine can be deleted again; anything that changed a
-/// server is not journalled — there is no trash there to take it back from.
+/// is one: a copy that landed on this machine can be deleted again, and so can one that landed on
+/// a server — from a note of exactly what it made there (`Made`), checked against the server
+/// before anything is deleted (`undo_copy`). A move that crossed to or from a server is still not
+/// journalled: taking one back means putting an original back, and there is no trash on the other
+/// side to take it from.
 pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: &AtomicBool) -> Result<Option<Value>, VfsError> {
     let to = side(dest)?;
     // 1. What is being taken, from where, and how much of it there is.
@@ -166,6 +265,9 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     // 2. One at a time, asking when the name is taken.
     let mut there = names(&to, cancel)?;
     let mut created: Vec<Uri> = Vec::new();
+    // A copy to a server is journalled from what it actually puts there, file by file; anything
+    // else that touches a server is not (see the doc comment).
+    let mut made = Made::of(dest, if !moving && !dest.is_local() { guard_for(dest) } else { "" });
     // Files that could not be copied (name, why), and originals a move could not remove.
     let mut lost: Vec<(String, String)> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
@@ -173,6 +275,7 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     let ctx = ExecCtx { cancel, workers: 1, on_change: &|_| {}, on_bytes: &on_bytes, exact_times: true };
     for it in &plan {
         if cancel.load(Ordering::Relaxed) {
+            made.journal(job);
             return Err(VfsError::Io("cancelled".into()));
         }
         // Did every part of this item arrive? Decides whether a move may take the original away.
@@ -194,9 +297,12 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
             job.progress(if it.is_dir { it.tree.iter().filter(|t| !t.1).count().max(1) as u64 } else { 1 }, 0);
         } else if it.is_dir {
             mkdir(&to, &target)?;
+            made.dir(&dest.join(&target));
             let (src_root, dst_root) = (child(&it.from, &it.name), child(&to, &target));
+            let landing = dest.join(&target);
             for (rel, is_dir, size, mtime) in &it.tree {
                 if cancel.load(Ordering::Relaxed) {
+                    made.journal(job);
                     return Err(VfsError::Io("cancelled".into()));
                 }
                 let shown = format!("{}/{rel}", it.name);
@@ -211,9 +317,15 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
                     copy_file(&src_root, rel, &dst_root, rel, *size, *mtime, &ctx).and_then(|_| if moving { arrived_whole(&dst_root, rel, *size) } else { Ok(()) })
                 };
                 match done {
-                    Ok(()) if !*is_dir => job.progress(1, 0),
-                    Ok(()) => {}
-                    Err(e) if is_cancel(&e) => return Err(e),
+                    Ok(()) if !*is_dir => {
+                        made.file(&dst_root, rel, &landing.join(rel), *size);
+                        job.progress(1, 0);
+                    }
+                    Ok(()) => made.dir(&landing.join(rel)),
+                    Err(e) if is_cancel(&e) => {
+                        made.journal(job);
+                        return Err(e);
+                    }
                     // One bad file does not stop the other four hundred: it is noted, the rest
                     // goes on, and the job fails at the end saying which (as a mirror skips).
                     Err(e) => {
@@ -229,8 +341,14 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
         } else {
             job.file_started(&it.name, it.meta.size);
             match copy_file(&it.from, &it.name, &to, &target, it.meta.size, it.meta.mtime_ms, &ctx).and_then(|_| if moving { arrived_whole(&to, &target, it.meta.size) } else { Ok(()) }) {
-                Ok(()) => job.progress(1, 0),
-                Err(e) if is_cancel(&e) => return Err(e),
+                Ok(()) => {
+                    made.file(&to, &target, &dest.join(&target), it.meta.size);
+                    job.progress(1, 0);
+                }
+                Err(e) if is_cancel(&e) => {
+                    made.journal(job);
+                    return Err(e);
+                }
                 Err(e) => {
                     crate::joblog::say(job.id, "error", format!("{}: {}", it.name, e.message()));
                     lost.push((it.name.clone(), why_lost(&it.name, &e)));
@@ -262,6 +380,8 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
                 job.undo_so_far(arrived(&created));
             }
         }
+        // The same for a copy to a server, from what this item really put there.
+        made.journal(job);
     }
     for u in items.iter().filter_map(|u| u.parent()).chain(std::iter::once(dest.clone())) {
         invalidate(&u);
@@ -274,7 +394,10 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     if !kept.is_empty() {
         return Err(VfsError::Io(format!("copied, but the original could not be removed: {}", kept.join(", "))));
     }
-    Ok((!moving && dest.is_local()).then(|| arrived(&created)))
+    Ok(match made.inverse() {
+        Some(inv) => Some(inv),
+        None => (!moving && dest.is_local()).then(|| arrived(&created)),
+    })
 }
 
 /// Why a file did not make it, for the person reading. One case gets words of its own: a name
@@ -315,6 +438,111 @@ fn arrived_whole(to: &Side, rel: &str, size: u64) -> Result<(), VfsError> {
 /// The inverse of a download: delete what arrived.
 fn arrived(created: &[Uri]) -> Value {
     Value::obj().s("op", "delete").v("items", Value::Arr(created.iter().map(|u| Value::Str(u.to_string())).collect())).b("_silent", true).done()
+}
+
+/// How the undo of a copy to a server went, for the line that tells the person (`jobs`): what was
+/// deleted, what was left where it is, and what the server refused.
+#[derive(Default)]
+pub struct TakenBack {
+    /// Files deleted and folders removed — all of it for good.
+    pub deleted: u64,
+    /// Left alone: not what the copy left any more, gone already, or a folder somebody has since
+    /// put something of their own in. Each one is named in the job's log.
+    pub kept: u64,
+    /// The server would not: named in the job's log, with what it said.
+    pub failed: u64,
+}
+
+/// Is this still the file the copy put there? The check `guard` asks for (written down when the
+/// copy finished): the size always, the time as well where the server keeps one that can be
+/// compared. A time of 0 on either side means none is known — the rule `mirror::is_changed`
+/// follows — and the size is then all there is.
+fn still_ours(guard: &str, was: (u64, u64), now: (u64, u64)) -> bool {
+    now.0 == was.0 && (guard == "size" || was.1 == 0 || now.1 == 0 || was.1 == now.1)
+}
+
+/// The inverse of a copy whose destination was a server: delete exactly what that copy created
+/// there, and only where it is still what the copy left. A server has no trash, so this cannot be
+/// taken back in its turn — which is why every file is asked about first, why a folder goes only
+/// while it is empty (somebody may have put something of their own in it), and why what was left
+/// is counted for the toast to say.
+pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack, VfsError> {
+    let guard = op.str_field("guard").unwrap_or("sizeMtime");
+    let files: Vec<Value> = op.get("files").and_then(Value::as_arr).map(<[Value]>::to_vec).unwrap_or_default();
+    let mut dirs: Vec<Uri> = op
+        .get("dirs")
+        .and_then(Value::as_arr)
+        .map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect())
+        .unwrap_or_default();
+    job.set_totals((files.len() + dirs.len()) as u64, 0);
+    let mut out = TakenBack::default();
+    let mut touched: Vec<Uri> = Vec::new();
+    let note = |out: &mut TakenBack, level: &str, line: String| {
+        crate::joblog::say(job.id, level, line);
+        out.kept += 1;
+    };
+    for f in &files {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(VfsError::Io("cancelled".into()));
+        }
+        let a = f.as_arr().unwrap_or_default();
+        let Some(uri) = a.first().and_then(Value::as_str).and_then(|s| Uri::parse(s).ok()) else { continue };
+        let was = (a.get(1).and_then(Value::as_u64).unwrap_or(0), a.get(2).and_then(Value::as_u64).unwrap_or(0));
+        let parent = uri.parent().ok_or(VfsError::NotFound)?;
+        let at = side(&parent)?;
+        job.file_started(uri.name(), was.0);
+        match landed(&at, uri.name()) {
+            None => note(&mut out, "warn", format!("{}: no longer there — nothing to take back", uri.display())),
+            Some(now) if !still_ours(guard, was, now) => note(
+                &mut out,
+                "warn",
+                format!("{}: changed since the copy ({} bytes at {}, now {} at {}) — left alone", uri.display(), was.0, was.1, now.0, now.1),
+            ),
+            Some(_) => match delete(&at, uri.name(), false, cancel) {
+                Ok(()) => {
+                    out.deleted += 1;
+                    touched.push(parent.clone());
+                }
+                Err(e) if is_cancel(&e) => return Err(e),
+                Err(e) => {
+                    crate::joblog::say(job.id, "error", format!("{}: {}", uri.display(), e.message()));
+                    out.failed += 1;
+                }
+            },
+        }
+        job.progress(1, 0);
+    }
+    // The folders it made, the deepest first so that a tree empties from the bottom.
+    dirs.sort_by_key(|u| std::cmp::Reverse(u.path.matches('/').count()));
+    for uri in &dirs {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(VfsError::Io("cancelled".into()));
+        }
+        let parent = uri.parent().ok_or(VfsError::NotFound)?;
+        match names(&side(uri)?, cancel) {
+            Err(_) => note(&mut out, "warn", format!("{}: no longer there — nothing to take back", uri.display())),
+            Ok(inside) if !inside.is_empty() => note(&mut out, "warn", format!("{}: {} things in it still — left alone", uri.display(), inside.len())),
+            // Empty, and a plugin's `Delete` takes an empty folder: no need to walk it again.
+            Ok(_) => match delete(&side(&parent)?, uri.name(), false, cancel) {
+                Ok(()) => {
+                    out.deleted += 1;
+                    touched.push(parent.clone());
+                }
+                Err(e) if is_cancel(&e) => return Err(e),
+                Err(e) => {
+                    crate::joblog::say(job.id, "error", format!("{}: {}", uri.display(), e.message()));
+                    out.failed += 1;
+                }
+            },
+        }
+        job.progress(1, 0);
+    }
+    touched.sort_by_key(|u| u.to_string());
+    touched.dedup();
+    for u in &touched {
+        invalidate(u);
+    }
+    Ok(out)
 }
 
 fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsError> {

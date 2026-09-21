@@ -271,6 +271,26 @@ fn server_of(config: &Value) -> String {
     format!("{}:{}", cfg(config, "host"), cfg(config, "port"))
 }
 
+/// What makes a cached session **this** location's: the machine it is connected to, and the
+/// sign-in it was made with. Sessions are kept by location name and role, and a name can be given
+/// away — remove a location and add another under the same name, and without this the new one
+/// inherits the connection to the machine that was removed. FTP then answers a `LIST` of a path
+/// that is not there with an empty listing and a 226, so the user browses the old server and sees
+/// an empty folder with nothing to say why. The daemon disconnects on remove; this is the same
+/// guard on the plugin's own side, and it costs one string comparison per `Connect`.
+///
+/// Spelled as what actually decides the connection — the port `open_ftp` will dial, implicit or
+/// explicit TLS — so that a cosmetic edit is not a needless reconnect. Pure, so it is tested
+/// without a server.
+fn identity(config: &Value, password: &str) -> String {
+    let port = cfg(config, "port").parse::<u16>().unwrap_or(21);
+    let implicit = cfg(config, "encryption").starts_with("Implicit");
+    let insecure = config.get("insecure").and_then(Value::as_bool).unwrap_or(false);
+    // Joined on NUL, which `on_the_wire` keeps out of every one of these fields, so no two
+    // different sign-ins can spell the same identity.
+    [cfg(config, "host"), &port.to_string(), cfg(config, "username"), if implicit { "implicit" } else { "explicit" }, if insecure { "insecure" } else { "" }, cfg(config, "trustedFingerprint"), password].join("\u{0}")
+}
+
 /// Connect, secure, sign in. `reusing`: over TLS 1.2 with the control session held for the data
 /// connections (see `Held`).
 fn open_ftp(config: &Value, password: &str, reusing: bool) -> Result<(RustlsFtpStream, bool, Option<String>)> {
@@ -391,10 +411,19 @@ impl Handler for Ftps {
 
     fn connect(&self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value> {
         let k = key(location, role);
-        if let Some(s) = self.sessions.lock().unwrap().get(&k) {
-            return Ok(Value::obj().opt_s("fingerprint", s.lock().unwrap().fingerprint.as_deref()).v("banner", Value::Null).done());
-        }
         let password = secrets.str_field("password").unwrap_or("").to_string();
+        let want = identity(config, &password);
+        let cached = self.sessions.lock().unwrap().get(&k).cloned();
+        if let Some(s) = cached {
+            let held = s.lock().unwrap();
+            if identity(&held.config, &held.password) == want {
+                return Ok(Value::obj().opt_s("fingerprint", held.fingerprint.as_deref()).v("banner", Value::Null).done());
+            }
+            // The name is the same and the server is not: let the old connection go rather than
+            // hand it back for somewhere else's files.
+            drop(held);
+            self.disconnect(location, role);
+        }
         let mut reusing = demanding().lock().unwrap().contains(&server_of(config));
         let (mut ftp, mut mlsd, mut fingerprint) = open_ftp(config, &password, reusing)?;
         // Asked once per server, before any file moves: does it demand TLS session reuse? A
@@ -536,5 +565,50 @@ fn main() {
     let h = Ftps { sessions: Mutex::new(HashMap::new()) };
     if let Err(e) = sdk::run(&h) {
         eprintln!("kiki-plugin-ftps: {e}");
+    }
+}
+
+#[cfg(test)]
+mod session_cache_tests {
+    use super::*;
+
+    fn server(fields: &[(&str, &str)]) -> Value {
+        let mut o = Value::obj().s("name", "homelab").s("host", "files.example").s("port", "21").s("username", "dave").s("encryption", "Explicit TLS (AUTH TLS)");
+        for (k, v) in fields {
+            o = o.s(k, *v);
+        }
+        o.done()
+    }
+
+    /// A cached session is handed back only for the server and sign-in it was made with. Without
+    /// this, a location removed and another added under its name browsed the old machine — and an
+    /// FTP `LIST` of a path that is not there is an empty listing and a 226, so it looked like an
+    /// empty folder rather than an error.
+    #[test]
+    fn a_cached_session_is_only_this_server_and_this_sign_in() {
+        let base = server(&[]);
+        assert_eq!(identity(&base, "hunter2"), identity(&server(&[]), "hunter2"), "the same details are the same session");
+
+        for (field, other) in [("host", "nas.example"), ("port", "2121"), ("username", "root"), ("encryption", "Implicit TLS"), ("trustedFingerprint", "SHA256:someone-else")] {
+            assert_ne!(identity(&server(&[(field, other)]), "hunter2"), identity(&base, "hunter2"), "a different {field} is a different server");
+        }
+        assert_ne!(identity(&base, "hunter3"), identity(&base, "hunter2"), "a different password is a different sign-in");
+        let insecure = match base.clone() {
+            Value::Obj(mut m) => {
+                m.insert("insecure".into(), Value::Bool(true));
+                Value::Obj(m)
+            }
+            v => v,
+        };
+        assert_ne!(identity(&insecure, "hunter2"), identity(&base, "hunter2"), "checking the certificate or not is part of it");
+
+        // What does not change the connection does not force one: the port is the port that will
+        // be dialled, whatever it was typed as, and an empty one is 21.
+        assert_eq!(identity(&server(&[("port", "0021")]), "hunter2"), identity(&base, "hunter2"));
+        assert_eq!(identity(&server(&[("port", "")]), "hunter2"), identity(&base, "hunter2"));
+        assert_eq!(identity(&server(&[("remotePath", "/srv/backup")]), "hunter2"), identity(&base, "hunter2"), "which folder is being looked at is not which server it is");
+
+        // Two fields cannot be run together into one identity by moving a character between them.
+        assert_ne!(identity(&server(&[("host", "files.example2121"), ("port", "")]), "x"), identity(&server(&[("host", "files.example"), ("port", "2121")]), "x"));
     }
 }

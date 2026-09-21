@@ -12,6 +12,9 @@ QtObject {
     function toggle(i) { const r = Object.assign({}, rows); if (r[i]) delete r[i]; else r[i] = true; rows = r; current = i; changed() }
     function range(i) { const a = anchor < 0 ? i : anchor; const r = {}; for (let k = Math.min(a, i); k <= Math.max(a, i); k++) r[k] = true; rows = r; current = i; changed() }
     function clear() { rows = ({}); anchor = -1; current = -1; changed() }
+    /// Exactly these positions — what a lasso holds at this moment. The anchor stays where it
+    /// was, so a Shift+click afterwards extends from the last row chosen by hand.
+    function setMany(list, cur) { const r = {}; for (const i of list) r[i] = true; rows = r; if (cur !== undefined) current = cur; changed() }
     /// Rows came or went above some of these positions (`WindowCache.spliced`): what was selected
     /// stays selected, wherever it now is. A selected row that was removed is simply no longer.
     function splice(ops) {

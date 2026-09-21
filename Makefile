@@ -19,10 +19,9 @@ all: build
 ## plugin::LOCATION_KINDS. Other location plugins build with `cargo build -p …`.
 build:
 	$(CARGO) build --release
-	@# One binary, two kinds (plan 25): what the package does with a symlink, done here too, or
-	@# SMB and WebDAV are invisible to `make run` and to every test.
+	@# A kind is the name a plugin is run by (plan 25): what the package does with a rename,
+	@# done here too, or SMB is invisible to `make run` and to every test.
 	@ln -sf kiki-plugin-gio target/release/kiki-plugin-smb
-	@ln -sf kiki-plugin-gio target/release/kiki-plugin-dav
 
 ## Clippy is part of the suite, not a separate chore: a warning fails `make test` (plan 30 W5).
 test: clippy test-rust test-qml test-e2e
@@ -38,6 +37,8 @@ test-rust:
 test-qml: export QT_QPA_PLATFORM ?= offscreen
 test-qml:
 	$(QMLTESTRUNNER) -import tests/qml/stubs -input tests/qml
+	@# Real drags: `offscreen` ends every drag the moment it starts, `minimal` performs one.
+	QT_QPA_PLATFORM=minimal $(QMLTESTRUNNER) -import tests/qml/stubs -input tests/qml-drag
 
 ## End to end against a real daemon and a real tree. Without cage it runs the daemon-only flows
 ## and says which it skipped.

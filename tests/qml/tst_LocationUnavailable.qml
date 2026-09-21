@@ -25,7 +25,7 @@ TestCase {
             { scheme: "sftp", displayName: "SFTP", version: "1.0", form: tc.form, secretFields: [] },
             { scheme: "smb", displayName: "SMB", version: "0.1", form: tc.form, secretFields: [],
               available: false, unavailableReason: "SMB needs GVfs and its SMB backend: install gvfs-smb" },
-            { scheme: "dav", displayName: "WebDAV", version: "0.1", form: tc.form, secretFields: [], available: true, unavailableReason: "" }] })
+            { scheme: "ftps", displayName: "FTPS", version: "1.0", form: tc.form, secretFields: [], available: true, unavailableReason: "" }] })
         wait(30)
         Wire.reset()
     }

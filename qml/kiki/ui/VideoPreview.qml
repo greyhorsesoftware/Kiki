@@ -28,7 +28,10 @@ Item {
         audioOutput: AudioOutput { muted: vp.muted }
         // Back to the first frame, stopped, when it runs out: the button offers play again.
         onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) { pause(); position = 0 }
-        Component.onCompleted: play()
+        // Played once there is something to play. The panel's Loader hands over `source` AFTER
+        // this exists, and `play()` on a player with nothing in it is simply forgotten — so the
+        // first click built the player and a second was needed to start it.
+        onSourceChanged: if (source.toString() !== "") play()
     }
     VideoOutput { id: out; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
 }

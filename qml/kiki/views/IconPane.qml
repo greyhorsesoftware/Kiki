@@ -43,31 +43,118 @@ Item {
         }
     }
 
-    // Right-clicking between the icons asks for the folder's menu, not nothing at all.
+    // ---------------------------------------------------------------- the lasso
+    // A press between the icons and a drag draws a band, and what the band touches is selected:
+    // Ctrl (or Shift) adds to what was selected before, and touching one of those again takes
+    // it out — the band toggles, as Ctrl+click does. Worked out from the grid's geometry, not
+    // from the tiles on screen, so a band dragged past the edge — the view scrolls under it —
+    // holds rows that have no tile any more.
+    property bool lassoing: false
+    property point _lassoFrom: Qt.point(0, 0)      // content coordinates: it scrolls with the files
+    property point _lassoTo: Qt.point(0, 0)        // viewport coordinates: it stays under the pointer
+    property var _lassoBase: []
+    /// The band, in content coordinates.
+    function lassoRect() {
+        const tx = _lassoTo.x, ty = _lassoTo.y + grid.contentY
+        return Qt.rect(Math.min(_lassoFrom.x, tx), Math.min(_lassoFrom.y, ty), Math.abs(tx - _lassoFrom.x), Math.abs(ty - _lassoFrom.y))
+    }
+    /// The positions whose tile the rectangle touches. A tile is its cell less the gutter round
+    /// it: a band drawn down the gap between two columns selects neither.
+    function tilesIn(r) {
+        const inset = 10, n = root.pane.listing.count, per = grid.perRow, out = []
+        const c0 = Math.max(0, Math.floor((r.x + inset) / cellW)), c1 = Math.min(per - 1, Math.floor((r.x + r.width - inset) / cellW))
+        const r0 = Math.max(0, Math.floor((r.y + inset) / cellH)), r1 = Math.floor((r.y + r.height - inset) / cellH)
+        for (let row = r0; row <= r1; row++) {
+            for (let c = c0; c <= c1; c++) {
+                const i = row * per + c
+                if (i >= n) return out
+                const x = c * cellW, y = row * cellH
+                if (r.x < x + cellW - inset && r.x + r.width > x + inset && r.y < y + cellH - inset && r.y + r.height > y + inset) out.push(i)
+            }
+        }
+        return out
+    }
+    function _lassoApply() {
+        const hit = tilesIn(lassoRect()), base = _lassoBase
+        const keep = base.filter(i => hit.indexOf(i) < 0)
+        const add = hit.filter(i => base.indexOf(i) < 0)
+        root.pane.selection.setMany(keep.concat(add), hit.length ? hit[hit.length - 1] : undefined)
+    }
     MouseArea {
+        id: lasso
+        objectName: "icon-lasso"
         anchors.fill: grid; z: -1
-        acceptedButtons: Qt.RightButton
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        property bool _down: false
+        onPressed: mouse => {
+            if (mouse.button !== Qt.LeftButton) return
+            _down = true
+            root._lassoFrom = Qt.point(mouse.x, mouse.y + grid.contentY)
+            root._lassoTo = Qt.point(mouse.x, mouse.y)
+            root._lassoBase = (mouse.modifiers & (Qt.ControlModifier | Qt.ShiftModifier)) ? root.pane.selection.positions() : []
+        }
+        onPositionChanged: mouse => {
+            if (!_down) return
+            root._lassoTo = Qt.point(Math.max(0, Math.min(width, mouse.x)), mouse.y)
+            if (!root.lassoing && Math.abs(mouse.x - root._lassoFrom.x) + Math.abs(mouse.y + grid.contentY - root._lassoFrom.y) < 6) return
+            root.lassoing = true
+            root._lassoApply()
+        }
+        onReleased: mouse => {
+            if (mouse.button !== Qt.LeftButton) return
+            // A click that went nowhere: between the icons, it lets go of the selection.
+            if (_down && !root.lassoing && !root._lassoBase.length) root.pane.selection.clear()
+            _down = false; root.lassoing = false
+        }
+        onCanceled: { _down = false; root.lassoing = false }
+        // Right-clicking between the icons asks for the folder's menu, not nothing at all.
         onClicked: mouse => {
+            if (mouse.button !== Qt.RightButton) return
             root.pane.selection.clear()
             root.contextMenu(-1, mapToItem(null, mouse.x, mouse.y))
         }
+    }
+    // Past the top or the bottom the view follows, faster the further out the pointer is.
+    Timer {
+        interval: 16; repeat: true
+        running: root.lassoing && (root._lassoTo.y < 0 || root._lassoTo.y > grid.height)
+        onTriggered: {
+            const over = root._lassoTo.y < 0 ? root._lassoTo.y : root._lassoTo.y - grid.height
+            const to = Math.max(0, Math.min(grid.contentY + Math.max(-40, Math.min(40, over / 3)), Math.max(0, grid.contentHeight - grid.height)))
+            if (to !== grid.contentY) { grid.contentY = to; root._lassoApply() }
+        }
+    }
+    Rectangle {
+        objectName: "icon-lasso-band"
+        visible: root.lassoing
+        z: 5
+        readonly property rect r: root.lassoing ? root.lassoRect() : Qt.rect(0, 0, 0, 0)
+        x: grid.x + r.x; y: grid.y + Math.max(0, r.y - grid.contentY)
+        width: r.width; height: Math.max(0, Math.min(grid.height, r.y + r.height - grid.contentY) - Math.max(0, r.y - grid.contentY))
+        color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.12)
+        border.width: 1; border.color: Kiki.Theme.accent
     }
     GridView {
         id: grid
         UI.NaturalScroll { }
         anchors.fill: parent; anchors.margins: 18
         clip: true; reuseItems: true; cacheBuffer: root.cellH * 6
+        // A drag with the mouse moves files or draws the lasso; the wheel and two fingers scroll.
+        interactive: false
         cellWidth: root.cellW; cellHeight: root.cellH
         model: root.pane.listing.count
         readonly property int perRow: Math.max(1, Math.floor(width / cellWidth))
-        onContentYChanged: root.pane.listing.setViewport(Math.max(0, Math.floor(contentY / cellHeight) * perRow), (Math.ceil(height / cellHeight) + 1) * perRow)
-        onHeightChanged: root.pane.listing.setViewport(Math.max(0, Math.floor(contentY / cellHeight) * perRow), (Math.ceil(height / cellHeight) + 1) * perRow)
+        function tellViewport() { if (root.pane) root.pane.listing.setViewport(Math.max(0, Math.floor(contentY / cellHeight) * perRow), (Math.ceil(height / cellHeight) + 1) * perRow) }
+        onContentYChanged: tellViewport()
+        onHeightChanged: tellViewport()
+        // Handed another pane after it was built (the right-hand view is): tell that one too.
+        Connections { target: root; function onPaneChanged() { grid.tellViewport() } }
         Connections { target: root.pane.listing; function onReset() { grid.forceLayout() } }
         // Drops on empty space land in the folder being shown (tiles sit above this and win).
         // Re-parented to the pane: declared here it would be a child of the grid's CONTENT, which
         // is only as tall as its rows of tiles — everything below the last row, and the margins,
         // took no drop at all, so a drag had to find a folder to land on.
-        DropArea { objectName: "icon-drop-background"; parent: root; anchors.fill: parent; z: -1; keys: ["text/uri-list"]; enabled: !root.pane.isTrash; onDropped: drop => root.pane.dropInto(root.pane.uri, drop, mapToItem(null, drop.x, drop.y)) }
+        DropTarget { objectName: "icon-drop-background"; parent: root; anchors.fill: parent; z: -1; enabled: !root.pane.isTrash; pane: root.pane; dest: root.pane.uri }
         delegate: Item {
             id: cell
             required property int index
@@ -109,6 +196,7 @@ Item {
                 }
                 Column {
                     id: col
+                    objectName: "tile-body"
                     anchors.horizontalCenter: parent.horizontalCenter; y: 14; spacing: 14; width: parent.width - 12
                     // Ignored by git: the whole tile steps back, as the row's name does in the list.
                     opacity: Kiki.Format.gitDimmed(cell.row) && !cell.selected ? 0.45 : 1
@@ -117,16 +205,18 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter; width: Math.min(root.iconSize + 20, parent.width); height: root.iconSize + 4
                         UI.KindIcon { visible: !(cell.row && cell.row.thumb); anchors.centerIn: parent; kind: cell.row ? cell.row.kind : ""; size: root.iconSize; color: Kiki.Theme.kindColor(cell.row ? cell.row.kind : "file") }
                         Image { id: thumb; visible: cell.row && cell.row.thumb; anchors.fill: parent; source: cell.row && cell.row.thumb ? "file://" + cell.row.thumb : ""; sourceSize: Qt.size(Math.round(root.iconSize * 1.6), Math.round(root.iconSize * 1.6)); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
-                        Rectangle { objectName: "git-dot"; visible: !!Kiki.Format.gitMark(cell.row); anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(cell.row ? cell.row.git : null); border.width: 2; border.color: Kiki.Theme.bg }
+                        // A repository root has no room for a branch on a tile, so the dot it
+                        // already draws carries the whole of it: the aggregate's colour (plan 15).
+                        Rectangle { objectName: "git-dot"; visible: !!Kiki.Format.gitDotMark(cell.row); anchors.right: parent.right; anchors.top: parent.top; width: 10; height: 10; radius: 5; color: Kiki.Format.gitColor(Kiki.Format.gitDotMark(cell.row)); border.width: 2; border.color: Kiki.Theme.bg }
                     }
                     Text { id: label; width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight; text: cell.row ? cell.row.name : ""; color: cell.selected ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 }
-                DropArea {
+                DropTarget {
                     anchors.fill: parent
-                    enabled: cell.row && cell.row.isDir
-                    keys: ["text/uri-list"]
-                    onDropped: drop => root.pane.dropInto(root.pane.childUri(cell.row.name), drop, mapToItem(null, drop.x, drop.y))
-                    Rectangle { anchors.fill: parent; radius: 2; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
+                    enabled: !!cell.row && cell.row.isDir
+                    pane: root.pane
+                    dest: cell.row ? root.pane.childUri(cell.row.name) : ""
+                    Rectangle { anchors.fill: parent; radius: 2; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.welcoming }
                 }
                 Item {
                     id: cellDrag
@@ -135,9 +225,14 @@ Item {
                     Drag.proposedAction: Qt.MoveAction
                 }
                 MouseArea {
-                    anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    objectName: "tile-hit"
+                    // The picture and the name, not the whole cell: the space round them is
+                    // where a lasso starts, and a press there must not pick the file up.
+                    width: Math.min(parent.width, Math.max(cell.artWidth + 16, label.paintedWidth + 16))
+                    x: Math.round((parent.width - width) / 2); y: col.y; height: col.height
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
                     drag.target: cellDrag; drag.threshold: 8
-                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index, pressedButtons & Qt.RightButton); cellDrag.Drag.active = true } else cellDrag.Drag.active = false }
+                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index); cellDrag.Drag.active = true } else cellDrag.Drag.active = false }
                     onClicked: mouse => {
                         if (mouse.button === Qt.RightButton) { if (!cell.selected) root.pane.selection.set(cell.index); root.contextMenu(cell.index, cell.mapToItem(null, mouse.x, mouse.y)); return }
                         if (mouse.modifiers & Qt.ShiftModifier) root.pane.selection.range(cell.index)

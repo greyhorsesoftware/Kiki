@@ -12,9 +12,17 @@ Rectangle {
     signal activate()
     signal contextMenu(point pos)
     property var columns: [{ role: "name" }, { role: "mtime", w: 160 }, { role: "size", w: 80 }, { role: "kind", w: 120 }]
+    // What each value column is drawn at, by role — the header's, so a cell follows a grip being
+    // dragged. A property of its own and not a field of `columns`, because `columns` is a model:
+    // changing it rebuilds every cell, and a resize must only rebind their widths.
+    property var widths: ({})
     property int valueWidth: 160 + 80 + 120 + 36
     // Matches ListPane: whatever the value columns leave, never less than a sliver.
     readonly property int nameWidth: Math.max(48, r.width - 24 - r.valueWidth)
+    // A folder that is a repository of its own (plan 15); at most a share of the name column,
+    // because the file's name comes first and a branch can be called anything.
+    readonly property var capsule: Kiki.Format.gitCapsule(row)
+    readonly property int capsuleMax: Math.round(r.nameWidth * 0.4)
     // Accessed: kiki's own opens when that source is chosen and known, else the filesystem atime.
     readonly property bool kikiSource: Kiki.Settings.view.heatSource === "kiki"
     function heatTime() { if (!row) return 0; if (kikiSource && row.opened) return row.opened; return row.meta ? row.meta.atime : 0 }
@@ -52,14 +60,17 @@ Rectangle {
                 UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
-            Text { anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (Kiki.Format.gitMark(r.row) ? 20 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (Kiki.Format.gitDimmed(r.row) && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { objectName: "row-name"; anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (Kiki.Format.gitMark(r.row) ? 20 : 0) - (capsule.visible ? capsule.width + 8 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (Kiki.Format.gitDimmed(r.row) && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { objectName: "git-badge"; visible: !!Kiki.Format.gitMark(r.row); anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(Kiki.Format.gitMark(r.row)); color: r.selected ? Kiki.Theme.bg : Kiki.Format.gitColor(Kiki.Format.gitMark(r.row)); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
+            // The same place, for a folder that is a repository: the branch, coloured by how it stands.
+            GitCapsule { id: capsule; anchors.verticalCenter: parent.verticalCenter; mark: r.capsule; onBar: r.selected; maxWidth: r.capsuleMax }
         }
         Repeater {
             model: r.columns.slice(1)
             delegate: Item {
                 required property var modelData
-                width: modelData.w; height: r.height
+                objectName: "cell-" + modelData.role
+                width: r.widths[modelData.role] || modelData.w; height: r.height
                 // Accessed: a heat swatch behind the text, bright for files touched recently.
                 Rectangle { visible: modelData.role === "atime" && !r.selected && r.heatTime() > 0; anchors.fill: parent; anchors.topMargin: 3; anchors.bottomMargin: 3; anchors.rightMargin: 6; radius: 2
                     // hollow when the value is the filesystem fallback under the "kiki opens" source
@@ -69,26 +80,20 @@ Rectangle {
         }
     }
     // Inline rename (F2): a text input over the name column.
-    Rectangle {
+    RenameEditor {
         visible: r.pane && r.pane.renamingIndex === r.rowIndex
-        x: 40; y: 2; width: Math.max(40, r.nameWidth - 24); height: parent.height - 4; radius: 2
-        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent; z: 2
-        onVisibleChanged: if (visible) { edit.text = r.row ? r.row.name : ""; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
-        TextInput {
-            id: edit; objectName: "renameEditor"; anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; verticalAlignment: TextInput.AlignVCenter
-            color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; clip: true
-            onAccepted: { const name = text; r.pane.renamingIndex = -1; if (r.row && name && name !== r.row.name) r.pane.renameRequested(r.pane.childUri(r.row.name), name) }
-            Keys.onEscapePressed: r.pane.renamingIndex = -1
-            onActiveFocusChanged: if (!activeFocus && r.pane.renamingIndex === r.rowIndex) r.pane.renamingIndex = -1
-        }
+        x: 40; y: 2; width: Math.max(40, r.nameWidth - 24); height: parent.height - 4
+        name: r.row ? r.row.name : ""
+        onDismissed: if (r.pane.renamingIndex === r.rowIndex) r.pane.renamingIndex = -1
+        onRenamed: n => { if (r.row) r.pane.renameRequested(r.pane.childUri(r.row.name), n) }
     }
     // Drop target: a folder row accepts files (move within the scheme, copy across, Ctrl copies).
-    DropArea {
+    DropTarget {
         anchors.fill: parent
-        enabled: r.row && r.row.isDir
-        keys: ["text/uri-list"]
-        onDropped: drop => r.pane.dropInto(r.pane.childUri(r.row.name), drop, mapToItem(null, drop.x, drop.y))
-        Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
+        enabled: !!r.row && r.row.isDir
+        pane: r.pane
+        dest: r.row && r.pane ? r.pane.childUri(r.row.name) : ""
+        Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.welcoming }
     }
     // Drag source: an invisible proxy carries the selection as text/uri-list.
     Item {
@@ -101,7 +106,7 @@ Rectangle {
     MouseArea {
         id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton
         drag.target: dragProxy; drag.threshold: 8
-        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex, hover.pressedButtons & Qt.RightButton); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
+        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(r.mapToItem(null, mouse.x, mouse.y)); return }
             if (mouse.modifiers & Qt.ShiftModifier) r.pane.selection.range(r.rowIndex)

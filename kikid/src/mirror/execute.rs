@@ -25,7 +25,11 @@ fn enforce_guards(plan: &Plan, spec: &Spec) -> Result<(), VfsError> {
 }
 
 fn audit(line: &str) {
-    let d = std::env::var("XDG_STATE_HOME").map(PathBuf::from).unwrap_or_else(|_| crate::config::home().join(".local/state")).join("kiki");
+    // The state directory every other part of the daemon writes to — the journal, the failed-job
+    // log. This built its own from `XDG_STATE_HOME` and so ignored `KIKI_STATE_DIR`: every e2e run
+    // appended its mirrors to the audit log in the developer's own home, which the harness
+    // promises it leaves as it found it.
+    let d = crate::jobs::state_dir();
     let _ = std::fs::create_dir_all(&d);
     if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(d.join("audit.log")) {
         use std::io::Write;

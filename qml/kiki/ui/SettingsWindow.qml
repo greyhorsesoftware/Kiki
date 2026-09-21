@@ -163,8 +163,16 @@ Rectangle {
     }
     component NumberBox: Rectangle {
         property int value: 0; property string error: ""; signal edited(int v)
+        /// What the field does when it is left: a number in range is written through, anything
+        /// else is refused where it was typed and nothing is sent. The typing calls this, so a
+        /// test drives the same path a hand does.
+        function commit(text) {
+            const v = parseInt(text)
+            if (isNaN(v) || v < 48 || v > 2000) error = "48 to 2000"
+            else { error = ""; edited(v) }
+        }
         width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: error ? Kiki.Theme.danger : Kiki.Theme.gutter
-        TextInput { activeFocusOnTab: true; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: { const v = parseInt(text); if (isNaN(v) || v < 48 || v > 2000) parent.error = "48 to 2000"; else { parent.error = ""; parent.edited(v) } } }
+        TextInput { objectName: "number-input"; activeFocusOnTab: true; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: parent.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: parent.commit(text) }
         Text { anchors.left: parent.right; anchors.leftMargin: 8; anchors.verticalCenter: parent.verticalCenter; text: parent.error; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
     }
 
@@ -219,7 +227,7 @@ Rectangle {
                 Button { text: sw.integration[modelData.id] ? "Remove" : "Apply"; onClicked: Kiki.Daemon.request(sw.integration[modelData.id] ? "Unintegrate" : "Integrate", { parts: [modelData.id] }, ok => { if (ok) { sw.integration = ok.status; const r = ok.results[0]; sw.flash = r.ok ? r.message : "Failed: " + r.message; flashTimer.restart() } }) }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.file || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         }
-        Text { visible: sw.integration.hyprConfigErrors && sw.integration.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland config errors: " + (sw.integration.hyprConfigErrors || []).join("; "); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Text { visible: !!sw.integration.hyprConfigErrors && sw.integration.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland config errors: " + (sw.integration.hyprConfigErrors || []).join("; "); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         Row { spacing: 8
             Button { text: "Make kiki the default"; primary: true; onClicked: Kiki.Daemon.request("Integrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = ok.results.every(r => r.ok) ? "kiki is the default" : "Some steps failed: " + ok.results.filter(r => !r.ok).map(r => r.part + ": " + r.message).join("; "); flashTimer.restart() } }) }
             Button { text: "Remove kiki from Omarchy"; onClicked: Kiki.Daemon.request("Unintegrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = "integration removed"; flashTimer.restart() } }) }
@@ -231,7 +239,7 @@ Rectangle {
         Row2 { label: "Folders"; Choice { options: ["aggregate", "off"]; value: Kiki.Settings.git.folders; onPicked: v => sw.set("git", "folders", v) } }
     } }
     Component { id: project; Column { spacing: 12
-        Row2 { label: "Tree width (px)"; NumberBox { value: Kiki.Settings.project.width; onEdited: v => sw.set("project", "width", v) } }
+        Row2 { label: "Tree width (px)"; NumberBox { objectName: "project-width"; value: Kiki.Settings.project.width; onEdited: v => sw.set("project", "width", v) } }
         Row2 { label: "Arrange windows"; Switch { on: Kiki.Settings.project.arrange !== false; onToggled: sw.set("project", "arrange", !on) } }
         Row2 { label: "Agent slot"; Switch { on: Kiki.Settings.project.agent !== false; onToggled: sw.set("project", "agent", !on) } }
     } }
@@ -240,7 +248,7 @@ Rectangle {
         function refresh() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok }) }
         Component.onCompleted: refresh()
         Text { text: status.configured ? "\"Open AI here…\" starts " + status.cli + " for " + status.provider + " in a terminal (using its own login)" : "\"Open AI here…\" needs " + (status.cli || "a command-line tool") + " for " + (status.provider || "…") + " on PATH, or a custom command"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WordWrap; width: 560 }
-        Row2 { label: "AI"; Choice { options: ["omarchy", "anthropic", "openai", "gemini", "xai", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } }
+        Row2 { label: "AI"; Choice { objectName: "ai-provider"; options: ["omarchy", "anthropic", "openai", "gemini", "xai", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } }
         Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each started for a conversation."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
         Row2 { label: "Custom command"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.cliCommand || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { cliCommand: text }, () => { Kiki.Settings.load(); refresh(); sw.saved() })
@@ -253,8 +261,11 @@ Rectangle {
                 Switch { anchors.verticalCenter: parent.verticalCenter; on: modelData.enabled !== false; onToggled: { Kiki.Daemon.request("ShareConfigure", { plugin: modelData.id, config: Object.assign({}, modelData.config || {}, { enabled: !on }), secrets: {} }, () => sw.reload()); sw.saved() } }
                 Text { width: 200; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "targets: " + modelData.targets + " · v" + modelData.version; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
-            Repeater { model: modelData.form || []; delegate: FormField { required property var fieldData; property var f: fieldData; width: 420; field: f; value: (modelData.config || {})[f.key] || f.default || ""; onEdited: v => { const cfg = Object.assign({}, modelData.config || {}); cfg[f.key] = v; const secrets = {}; if ((modelData.secretFields || []).includes(f.key)) { secrets[f.key] = v; delete cfg[f.key] } Kiki.Daemon.request("ShareConfigure", { plugin: modelData.id, config: cfg, secrets: secrets }, () => sw.saved()) } }
-                property var fieldData: modelData }
+            // The plugin's own form (mail's SMTP fields). The field is the inner repeater's
+            // `modelData`, and the plugin is the outer one's, kept under a name of its own —
+            // the delegate used to ask for a `fieldData` no Repeater supplies, so not one of
+            // these fields was ever drawn: "Cannot create delegate", once a field, in the log.
+            Repeater { id: fields; property var plugin: modelData; model: modelData.form || []; delegate: FormField { required property var modelData; readonly property var f: modelData; readonly property var plugin: fields.plugin; objectName: "share-field-" + f.key; width: 420; field: f; value: (plugin.config || {})[f.key] || f.default || ""; onEdited: v => { const cfg = Object.assign({}, plugin.config || {}); cfg[f.key] = v; const secrets = {}; if ((plugin.secretFields || []).includes(f.key)) { secrets[f.key] = v; delete cfg[f.key] } Kiki.Daemon.request("ShareConfigure", { plugin: plugin.id, config: cfg, secrets: secrets }, () => sw.saved()) } } }
         } }
         Text { visible: sw.sharePlugins.length === 0; text: "No share plugins found in the plugin directory."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
     } }
@@ -276,6 +287,6 @@ Rectangle {
             Text { anchors.verticalCenter: parent.verticalCenter; text: sw.pingResult[modelData.name] || ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
         Text { visible: sw.plugins.length === 0; text: "No plugins found. Directories: " + (sw.about.pluginDir || ""); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; width: 560 }
         Item { width: 1; height: 10 }
-        Button { text: "Reset all settings"; onClicked: Kiki.Daemon.request("ResetSettings", {}, () => sw.reload()) }
+        Button { objectName: "reset-all"; text: "Reset all settings"; onClicked: Kiki.Daemon.request("ResetSettings", {}, () => sw.reload()) }
     } }
 }

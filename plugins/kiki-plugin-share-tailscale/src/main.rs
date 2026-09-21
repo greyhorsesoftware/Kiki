@@ -52,7 +52,6 @@ impl ShareHandler for Tailscale {
             secret_fields: vec![],
             compose: vec![],
             requires: vec!["tailscale"],
-            off_by_default: false,
         }
     }
     fn targets(&mut self, _c: &Value, _s: &Value, query: Option<&str>) -> Result<Vec<Target>> {
@@ -70,14 +69,19 @@ impl ShareHandler for Tailscale {
         let mut bytes = 0u64;
         for (i, f) in files.iter().enumerate() {
             p.report(i as u64, total, bytes, bytes_total, &format!("sending {f}"));
-            let st = Command::new("tailscale").args(["file", "cp"]).arg(f).arg(format!("{peer}:")).status().map_err(PluginError::io)?;
-            if !st.success() {
-                return Err(PluginError::network(format!("tailscale file cp failed for {f}")));
+            // Tailscale's own words when it refuses — "target is offline", "not logged in" — are
+            // the whole of the explanation; they used to go to a terminal nobody was reading.
+            let out = Command::new("tailscale").args(["file", "cp"]).arg(f).arg(format!("{peer}:")).output().map_err(PluginError::io)?;
+            if !out.status.success() {
+                let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                return Err(PluginError::network(format!("tailscale would not send {f} to {peer}{}", if why.is_empty() { String::new() } else { format!(": {why}") })));
             }
             bytes += std::fs::metadata(f).map(|m| m.len()).unwrap_or(0);
         }
         p.report(total, total, bytes, bytes_total, "sent");
-        Ok(ShareResult { result: "sent", detail: Some(format!("{total} file(s) to {peer}")) })
+        // Handed to Tailscale, which is all this end can know: the file waits in the other
+        // device's Tailscale until it is taken — Downloads on a Mac, the Tailscale app on a phone.
+        Ok(ShareResult { result: "sent", detail: Some(format!("{total} {} to {peer}, waiting in its Tailscale", if total == 1 { "file" } else { "files" })) })
     }
 }
 

@@ -29,7 +29,7 @@ Files and folders inside a git repository show their status in every view, the b
 |---|---|
 | List and columns rows | a one-letter badge after the name: `M` modified (yellow), `A` added (green), `D` deleted (red), `R` renamed (yellow), `!` conflicted (red), `?` untracked (muted green); ignored files and folders dimmed |
 | Icon tiles | a coloured dot at the top-right of the icon in the same colours; ignored dimmed |
-| Folders | the aggregated state as a dot; a repository root folder additionally shows the branch name under its name in list view |
+| Folders | the aggregated state as a mark; a folder that is **itself a repository** shows a **branch capsule** instead — `⎇ main`, or the short hash on a detached HEAD — where the one-letter badge goes, on the same line, coloured by that repository's own aggregate state: one element says both which branch and whether it is dirty. Icon tiles carry that colour on the dot they already draw; columns rows carry the capsule as list rows do. A long branch elides inside the capsule, which takes at most 40 % of the name column. `folders = "off"` takes it away with the other folder marks. *(Amended 2026-09-21, owner: "why not just make that a branch capsule that has same colors as dot and shows branch too?" — this replaces "the branch name under its name", which wanted taller rows.)* |
 | Breadcrumb | a chip `⎇ main ↑2 ↓1` at the right end of the path when the pane is inside a repository; click copies the branch name |
 | Inspector, General tab | Git: state, branch, last commit (short hash, author, relative date, subject) |
 | Sidebar Favorites | a small dot on a favorite that is a dirty repository root |
@@ -62,3 +62,20 @@ Event: `RepoChanged { root }` when HEAD or the index changes, so the breadcrumb 
 - A directory outside any repository runs no git process (counted).
 - The breadcrumb chip shows `main`, then a detached short hash after `git checkout <hash>`, with no process spawned for the chip itself.
 - A repository with 200,000 tracked files: status scoped to a 100-file subdirectory returns under 300 ms warm.
+
+## The branch capsule (added 2026-09-21)
+
+**Why it was needed.** A listing's git state comes from the repository the *listed* folder is in. A folder like `~/Projects` is in none, so the rows that most want a mark — the projects themselves — had nothing at all.
+
+**Repository-root rows.** Each folder row is checked for a `.git` of its own (one `stat`; for a worktree or a submodule it is a file, whose `gitdir:` is followed) and its branch read straight out of that repository's `HEAD` — one small read, no process, so the branch arrives with the listing. The state is a second, cheaper `git status --porcelain=v2 -z --untracked-files=normal` per repository, reduced to its worst state: never on the listing's path, at most four in flight across the daemon, remembered while that repository's `HEAD` and index sit still. A repository inside a repository shows its own branch and state. **Measured on forty small repositories**: time-to-listing 2.3 ms with the capsules and 2.3 ms without; all forty coloured 13 ms later. A test fails if `git` ever creeps onto the listing's path.
+
+**Freshness without a watch.** Forty projects cannot have forty watches — there are 64 for the whole daemon. The watcher's one-second sweep stats each repository row's `HEAD` and index instead (two stats a project, only while somebody is looking) and re-works the rows whose stamps moved: a commit, a checkout or a `git add` from a terminal reaches the capsule within about a second. *Known and left*: an edit in a project's working tree moves neither file, so that colour waits for the next `HEAD` or index move, for the folder to be opened again, or for `GitRefresh`.
+
+**Protocol.** On a folder that is itself a repository, `Row.git` also carries `root: true`, `branch: string` and `detached: bool`, and its `state` is that repository's own aggregate (`clean` until the aggregate has run, which arrives as a `Rows` update). No other row's `git` changes.
+
+**Colours are meanings.** Badges and capsules take the theme's colours (they were Tokyo Night literals until 2026-09-21), with two guards: *danger* is the theme's red unless that red is not red, and **changed** is the theme's yellow unless that yellow is red — matte-black's is `#b91c1c`, which drew a modified project in the colour of a conflicted one (`Theme.changed`, `tst_ThemeDanger`).
+
+**Found on the way, fixed**: the breadcrumb's branch chip was blank or garbage in a worktree or a submodule (it read `<root>/.git/HEAD` literally); `push_rows` could panic with a stale row index after a rescan.
+
+**Where it sits**: at the right edge of the name column, where the letter badge has always been, so the branches line up as a column. Tests: `git.rs` (4), `listing/tests.rs` (4), `tst_GitBadges` (+12), `tst_ColumnsCapsule`, `git_status.py` (+9, 18 in all); a picture at `tests/e2e/out/git-capsule.png`.
+

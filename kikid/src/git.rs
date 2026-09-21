@@ -5,8 +5,8 @@ use crate::json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -51,6 +51,17 @@ impl State {
 pub struct Entry {
     pub state: State,
     pub staged: bool,
+}
+
+/// A row that is itself a repository (plan 15): which branch it is on, and how the repository
+/// stands — its own state, not what the folder above makes of it.
+#[derive(Clone, Debug)]
+pub struct RepoMark {
+    pub branch: String,
+    pub detached: bool,
+    /// `None` until the aggregate has run: the branch is a file read and arrives with the
+    /// listing, the state is a `git` and follows.
+    pub state: Option<State>,
 }
 
 pub struct Status {
@@ -117,6 +128,41 @@ pub fn repo_root(dir: &Path) -> Option<PathBuf> {
     found
 }
 
+/// Is this folder itself a repository? `.git` is there — a directory, or a file naming one
+/// elsewhere, which is what a worktree and a submodule have. One `stat`.
+pub fn is_repo_root(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
+/// Where a repository keeps itself: `<root>/.git`, or wherever a `.git` *file* points. A
+/// worktree's and a submodule's `HEAD` are not under the folder at all, and reading
+/// `<root>/.git/HEAD` from one gets nothing.
+pub fn git_dir(root: &Path) -> Option<PathBuf> {
+    let dot = root.join(".git");
+    let md = std::fs::metadata(&dot).ok()?;
+    if md.is_dir() {
+        return Some(dot);
+    }
+    let text = std::fs::read_to_string(&dot).ok()?;
+    let at = Path::new(text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim());
+    Some(if at.is_absolute() { at.to_path_buf() } else { root.join(at) })
+}
+
+/// Which branch a repository is on, straight out of `HEAD` — one small read, no process, which
+/// is what lets a folder of forty projects name all forty at once. Detached: the short hash,
+/// and `true`, as git itself shows it.
+pub fn head(root: &Path) -> Option<(String, bool)> {
+    let text = std::fs::read_to_string(git_dir(root)?.join("HEAD")).ok()?;
+    let head = text.trim();
+    if head.is_empty() {
+        return None;
+    }
+    match head.strip_prefix("ref: ") {
+        Some(r) => Some((r.strip_prefix("refs/heads/").unwrap_or(r).to_string(), false)),
+        None => Some((head.chars().take(8).collect(), true)),
+    }
+}
+
 pub fn enabled() -> bool {
     crate::config::settings().get("git").and_then(|g| g.get("enabled")).and_then(Value::as_bool).unwrap_or(true)
 }
@@ -140,10 +186,12 @@ fn status_cache() -> &'static Mutex<HashMap<PathBuf, Status>> {
 }
 
 /// The directory changed, or nobody is showing it any more: forget what was known about it,
-/// whether it is in a repository included.
+/// whether it is in a repository included — and how the projects in it stood, which is what an
+/// explicit refresh of a folder full of repositories is asking to be told again.
 pub fn invalidate(dir: &Path) {
     status_cache().lock().unwrap().remove(dir);
     roots().lock().unwrap().remove(dir);
+    aggs().lock().unwrap().retain(|root, _| root != dir && root.parent() != Some(dir));
 }
 
 #[cfg(test)]
@@ -279,18 +327,151 @@ pub fn state_for(dir: &Path, name: &str, is_dir: bool) -> Option<Entry> {
     Some(Entry { state: State::Clean, staged: false })
 }
 
+// ---------------------------------------------------------------- repository-root rows (plan 15)
+//
+// A folder like `~/Projects` is not a repository, so the status above says nothing at all about
+// the projects in it — each of them is its own repository and the folder above can see none of
+// them. What such a row shows is its branch, coloured by how that repository stands, and the two
+// halves cost very different things: the branch is one file read, the state is a `git` per
+// project. So the branch lands with the listing and the state follows, bounded and remembered.
+
+/// How many aggregate status runs may be in flight at once, over the whole daemon. A folder of
+/// forty projects must not be forty gits: the machine has other work, and nobody asked for a
+/// listing to be expensive.
+const AGGREGATE_AT_ONCE: usize = 4;
+/// How long an aggregate is believed while the repository's `.git` sits still. An edit in the
+/// working tree moves neither `HEAD` nor the index, so this — not the stamps — is what makes a
+/// folder listed again notice one.
+const AGG_FOR: Duration = Duration::from_millis(1500);
+/// Repositories whose aggregate is remembered.
+const AGG_KEEP: usize = 256;
+
+/// What `HEAD` and the index looked like when an aggregate ran. Two `stat`s, which is how a
+/// commit or a checkout made in a terminal is noticed without a watch per project (`watch.rs`).
+type Stamp = (Option<SystemTime>, Option<SystemTime>);
+
+struct Agg {
+    state: State,
+    at: Instant,
+    stamp: Stamp,
+}
+
+fn aggs() -> &'static Mutex<HashMap<PathBuf, Agg>> {
+    static C: OnceLock<Mutex<HashMap<PathBuf, Agg>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn stamp(root: &Path) -> Stamp {
+    let Some(g) = git_dir(root) else { return (None, None) };
+    let at = |p: PathBuf| std::fs::metadata(p).ok().and_then(|m| m.modified().ok());
+    (at(g.join("HEAD")), at(g.join("index")))
+}
+
+/// Has a repository's `HEAD` or index moved since its aggregate was worked out? A repository
+/// nobody has asked about yet answers `false`: it has nothing to be stale against, and saying
+/// otherwise would have the poll run a `git` a second for a repository whose status fails.
+pub fn moved(root: &Path) -> bool {
+    let now = stamp(root);
+    aggs().lock().unwrap().get(root).is_some_and(|a| a.stamp != now)
+}
+
+/// The slots `aggregate` runs in, and the guard that gives one back however the run ends.
+fn slots() -> &'static (Mutex<usize>, Condvar) {
+    static S: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+    S.get_or_init(|| (Mutex::new(AGGREGATE_AT_ONCE), Condvar::new()))
+}
+
+struct Slot;
+
+impl Slot {
+    fn take() -> Slot {
+        let (n, cv) = slots();
+        let mut n = n.lock().unwrap();
+        while *n == 0 {
+            n = cv.wait(n).unwrap();
+        }
+        *n -= 1;
+        Slot
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let (n, cv) = slots();
+        *n.lock().unwrap() += 1;
+        cv.notify_one();
+    }
+}
+
+/// The worst state anywhere in a repository — the one thing a repository-root row's colour has
+/// to say. Cheaper than the listing's own status on purpose: only the worst matters, so
+/// untracked files need not be named one by one and ignored ones need not be found at all.
+pub fn aggregate(root: &Path) -> Option<State> {
+    let now = stamp(root);
+    if let Some(a) = aggs().lock().unwrap().get(root) {
+        if a.stamp == now && a.at.elapsed() < AGG_FOR {
+            return Some(a.state);
+        }
+    }
+    let out = {
+        let _slot = Slot::take();
+        git(root).args(["status", "--porcelain=v2", "-z", "--untracked-files=normal"]).output().ok()?
+    };
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut worst = State::Clean;
+    let mut fields = text.split('\0');
+    while let Some(rec) = fields.next() {
+        let state = match rec.as_bytes().first() {
+            Some(b'?') => State::Untracked,
+            Some(b'u') => State::Conflicted,
+            Some(k @ (b'1' | b'2')) => {
+                if *k == b'2' {
+                    let _ = fields.next(); // a rename's old path is its own record
+                }
+                let xy = rec.split(' ').nth(1).unwrap_or("..").as_bytes();
+                let (x, y) = (xy.first().copied().unwrap_or(b'.'), xy.get(1).copied().unwrap_or(b'.'));
+                match if y != b'.' { y } else { x } {
+                    b'A' => State::Added,
+                    b'D' => State::Deleted,
+                    b'R' | b'C' => State::Renamed,
+                    _ => State::Modified,
+                }
+            }
+            _ => continue,
+        };
+        if state.weight() > worst.weight() {
+            worst = state;
+        }
+    }
+    let mut c = aggs().lock().unwrap();
+    c.insert(root.to_path_buf(), Agg { state: worst, at: Instant::now(), stamp: now });
+    while c.len() > AGG_KEEP {
+        let Some(oldest) = c.iter().min_by_key(|(_, a)| a.at).map(|(k, _)| k.clone()) else { break };
+        c.remove(&oldest);
+    }
+    Some(worst)
+}
+
 pub fn entry_json(e: &Entry) -> Value {
     Value::obj().s("state", e.state.as_str()).b("staged", e.staged).done()
 }
 
-/// Branch chip: read `.git/HEAD` directly, no process.
+/// A repository-root row's `git`: the same shape as any other row's, plus what only a root has.
+/// Until the aggregate lands the state is `clean`, which draws the capsule muted — "this is the
+/// branch, and nothing is known against it yet" — and the colour arrives as a row update.
+pub fn root_json(r: &RepoMark) -> Value {
+    Value::obj().s("state", r.state.unwrap_or(State::Clean).as_str()).b("staged", false).b("root", true).s("branch", r.branch.clone()).b("detached", r.detached).done()
+}
+
+/// Branch chip: read `HEAD` directly, no process.
 pub fn repo_json(dir: &Path) -> Value {
     let Some(root) = repo_root(dir) else { return Value::Null };
-    let head = std::fs::read_to_string(root.join(".git/HEAD")).unwrap_or_default();
-    let head = head.trim();
-    let (branch, detached) = match head.strip_prefix("ref: refs/heads/") {
-        Some(b) => (Some(b.to_string()), false),
-        None => (Some(head.chars().take(8).collect()), true),
+    let (branch, detached) = match head(&root) {
+        Some((b, d)) => (Some(b), d),
+        None => (None, false),
     };
     let (ahead, behind, dirty) = {
         let c = status_cache().lock().unwrap();
@@ -315,7 +496,7 @@ pub fn file_json(path: &Path) -> Value {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let Some(root) = repo_root(dir) else { return Value::Null };
     let e = state_for(dir, &name, path.is_dir()).unwrap_or(Entry { state: State::Clean, staged: false });
-    let branch = std::fs::read_to_string(root.join(".git/HEAD")).ok().and_then(|h| h.trim().strip_prefix("ref: refs/heads/").map(str::to_string));
+    let branch = head(&root).filter(|(_, detached)| !detached).map(|(b, _)| b);
     let last = git(&root)
         .args(["log", "-1", "--format=%H%x00%h%x00%an%x00%at%x00%s", "--"])
         .arg(path)
@@ -476,6 +657,165 @@ mod tests {
         assert_eq!(state_for(&d.join(format!("d{}", n - 1)), "new.txt", false).map(|e| e.state), Some(State::Untracked));
         assert_eq!(state_for(&d.join("d0"), "new.txt", false).map(|e| e.state), Some(State::Untracked));
         assert!(cached_statuses() <= STATUS_KEEP);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    // ------------------------------------------------ repository-root rows (plan 15)
+
+    /// A folder inside `~/Projects` is a repository the folder above knows nothing about: what
+    /// it says for itself is its branch, and — for a worktree or a submodule — `.git` is a file
+    /// naming a directory somewhere else entirely, which reading `<root>/.git/HEAD` never finds.
+    #[test]
+    fn a_repository_row_names_its_branch_wherever_its_git_lives() {
+        if !crate::openin::on_path("git") {
+            return;
+        }
+        let base = scratch("roots-branch");
+        let d = base.join("project");
+        std::fs::create_dir_all(&d).unwrap();
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.email", "t@t"]);
+        git(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("a.txt"), b"a").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "one"]);
+
+        assert!(is_repo_root(&d));
+        assert!(!is_repo_root(&base), "the folder projects live in is not one of them");
+        assert_eq!(head(&d), Some(("main".into(), false)));
+        assert_eq!(head(&base), None);
+
+        // A branch with a slash in it keeps the slash, and is not mistaken for a hash.
+        git(&d, &["checkout", "-qb", "feature/capsule"]);
+        assert_eq!(head(&d), Some(("feature/capsule".into(), false)));
+
+        // Detached: the short hash, and said to be detached.
+        let hash = Command::new("git").arg("-C").arg(&d).args(["rev-parse", "HEAD"]).output().unwrap();
+        let hash = String::from_utf8_lossy(&hash.stdout).trim().to_string();
+        git(&d, &["checkout", "-q", &hash]);
+        let (shown, detached) = head(&d).unwrap();
+        assert!(detached, "a detached HEAD says so");
+        assert_eq!(shown, hash[..8].to_string());
+
+        // A worktree's `.git` is a file; its HEAD is not under the folder at all.
+        git(&d, &["checkout", "-q", "main"]);
+        let tree = base.join("wt");
+        git(&d, &["worktree", "add", "-q", "-b", "side", &tree.to_string_lossy()]);
+        assert!(tree.join(".git").is_file(), "a worktree's .git is a file");
+        assert!(is_repo_root(&tree));
+        assert_eq!(head(&tree), Some(("side".into(), false)));
+        assert!(git_dir(&tree).unwrap().join("HEAD").exists());
+
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// What a capsule is coloured by: the worst thing anywhere in the repository, whether or not
+    /// the folder that is showing it is in a repository at all.
+    #[test]
+    fn the_aggregate_is_the_worst_state_in_the_repository() {
+        if !crate::openin::on_path("git") {
+            return;
+        }
+        let base = scratch("roots-aggregate");
+        let d = base.join("project");
+        std::fs::create_dir_all(d.join("deep/deeper")).unwrap();
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.email", "t@t"]);
+        git(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join(".gitignore"), b"*.log\n").unwrap();
+        std::fs::write(d.join("deep/deeper/a.txt"), b"a").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "one"]);
+        assert_eq!(aggregate(&d), Some(State::Clean), "committed and quiet");
+
+        // An ignored file is not a state: a repository full of build output is still clean.
+        // (An edit moves neither HEAD nor the index, so the answer is believed for a moment —
+        // `invalidate` is what a folder being listed again, or refreshed, goes through.)
+        std::fs::write(d.join("build.log"), b"l").unwrap();
+        invalidate(&d);
+        assert_eq!(aggregate(&d), Some(State::Clean), "ignored files leave it clean");
+
+        // Untracked, then modified, then conflicted — each one worse than the last, and the
+        // worst is what comes back however deep it is.
+        std::fs::write(d.join("new.txt"), b"n").unwrap();
+        invalidate(&d);
+        assert_eq!(aggregate(&d), Some(State::Untracked));
+        std::fs::write(d.join("deep/deeper/a.txt"), b"changed").unwrap();
+        invalidate(&d);
+        assert_eq!(aggregate(&d), Some(State::Modified), "a change three folders down still counts");
+
+        // A real conflict: two branches touching the same line.
+        git(&d, &["checkout", "-q", "--", "deep/deeper/a.txt"]);
+        std::fs::remove_file(d.join("new.txt")).unwrap();
+        git(&d, &["checkout", "-qb", "other"]);
+        std::fs::write(d.join("deep/deeper/a.txt"), b"theirs").unwrap();
+        git(&d, &["commit", "-qam", "theirs"]);
+        git(&d, &["checkout", "-q", "main"]);
+        std::fs::write(d.join("deep/deeper/a.txt"), b"ours").unwrap();
+        git(&d, &["commit", "-qam", "ours"]);
+        let merge = Command::new("git").arg("-C").arg(&d).args(["merge", "other"]).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+        assert!(!merge.success(), "the merge is meant to conflict");
+        assert_eq!(aggregate(&d), Some(State::Conflicted), "a conflict outranks everything");
+
+        // A folder that is not a repository has no aggregate to give.
+        assert_eq!(aggregate(&base), if repo_root(&base).is_some() { aggregate(&base) } else { None });
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// A repository inside a repository — a submodule, or simply a clone made in a working tree
+    /// — is a row of its own: the folder above can only say that something under it changed,
+    /// and the capsule has to name the inner repository's branch and state.
+    #[test]
+    fn a_repository_inside_a_repository_answers_for_itself() {
+        if !crate::openin::on_path("git") {
+            return;
+        }
+        let outer = scratch("roots-nested");
+        git(&outer, &["init", "-q", "-b", "main"]);
+        git(&outer, &["config", "user.email", "t@t"]);
+        git(&outer, &["config", "user.name", "t"]);
+        std::fs::write(outer.join("a.txt"), b"a").unwrap();
+        git(&outer, &["add", "-A"]);
+        git(&outer, &["commit", "-qm", "one"]);
+
+        let inner = outer.join("vendor");
+        std::fs::create_dir_all(&inner).unwrap();
+        git(&inner, &["init", "-q", "-b", "trunk"]);
+        git(&inner, &["config", "user.email", "t@t"]);
+        git(&inner, &["config", "user.name", "t"]);
+        std::fs::write(inner.join("b.txt"), b"b").unwrap();
+        git(&inner, &["add", "-A"]);
+        git(&inner, &["commit", "-qm", "one"]);
+        std::fs::write(inner.join("b.txt"), b"changed").unwrap();
+
+        assert!(is_repo_root(&inner));
+        assert_eq!(head(&inner), Some(("trunk".into(), false)), "the inner branch, not the outer one");
+        assert_eq!(aggregate(&inner), Some(State::Modified), "and the inner repository's own state");
+        assert_eq!(repo_root(&inner), Some(inner.clone()), "walking up stops at the inner one");
+        std::fs::remove_dir_all(&outer).unwrap();
+    }
+
+    /// The poll that stands in for a watch: it asks whether `HEAD` or the index has moved since
+    /// the aggregate ran, and a repository nobody has asked about yet is not "moved".
+    #[test]
+    fn a_commit_moves_what_the_poll_looks_at() {
+        if !crate::openin::on_path("git") {
+            return;
+        }
+        let d = scratch("roots-moved");
+        assert!(!moved(&d), "nothing has been worked out for it, so there is nothing to be stale");
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.email", "t@t"]);
+        git(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("a.txt"), b"a").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "one"]);
+        assert_eq!(aggregate(&d), Some(State::Clean));
+        assert!(!moved(&d), "and nothing has happened since");
+        // `git checkout -b` writes HEAD; the stat sees it without a watch being spent.
+        std::thread::sleep(Duration::from_millis(10));
+        git(&d, &["checkout", "-qb", "feature"]);
+        assert!(moved(&d), "a checkout moves HEAD");
         std::fs::remove_dir_all(&d).unwrap();
     }
 

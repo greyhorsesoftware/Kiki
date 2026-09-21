@@ -92,7 +92,9 @@ QtObject {
     }
     property bool _applying: false
     property bool hasPref: false
-    // Smart default (plan 24): with no memory for this folder, a picture folder opens in icon view.
+    // Smart default (plan 24's rule, plan 27's answer): with no memory for this folder, a picture
+    // folder — by name, or by holding mostly pictures — opens in GALLERY, not icon view. Plan 24
+    // still says icon; the code is right and the plan is amended (D18). `tst_PaneSmartView` pins it.
     property string _smartChecked: ""
     readonly property var pictureNames: ["pictures", "photos", "dcim", "screenshots", "wallpapers", "camera", "camera roll"]
     function _smart() {
@@ -187,39 +189,50 @@ QtObject {
         const rows = selection.has(index) ? selection.positions() : [index]
         return rows.map(i => { const r = listing.row(i); return r ? childUri(r.name) : null }).filter(u => u)
     }
-    function dragMime(index, ask) { return uriListMime(dragUris(index), ask) }
+    function dragMime(index) { return uriListMime(dragUris(index)) }
     /// What every view drags, in one place: columns builds its own list of URIs — its rows can
     /// belong to a folder this pane is not standing in — but the payload is shaped here.
-    /// `ask` marks a drag that is to be asked about when it lands — the right button's drag. The
-    /// mark travels in the payload because the drop end is never told which button started it.
-    function uriListMime(uris, ask) {
-        const mime = { "text/uri-list": uris.join("\r\n") + "\r\n" }
-        if (ask) mime[askKey] = "1"
-        return mime
-    }
-    readonly property string askKey: "application/x-kiki-ask"
-    /// A drop that is to be asked about rather than acted on: `{ items, dest, op, pos }`, where
-    /// `op` is what it would have done unasked. The window puts the menu up at `pos`.
-    signal askDrop(var spec)
+    function uriListMime(uris) { return { "text/uri-list": uris.join("\r\n") + "\r\n" } }
+    /// A drop landed here. The window gives this pane the focus.
+    signal received()
 
-    // Drop `drop` (a DragEvent) into `dest`: move within one scheme, copy across, Ctrl forces copy.
-    // `pos` is where the pointer let go, in window coordinates, for the menu an asked drop opens.
-    function dropInto(dest, drop, pos) {
+    /// Whether the keys held ask for a copy, read off the event Qt really delivers. A DragEvent
+    /// has NO `modifiers` (Qt's own metatypes: x, y, source, keys, supportedActions,
+    /// proposedAction, action, accepted, …); Qt folds the keys into `proposedAction` instead.
+    /// Measured with real in-process drags (tests/qml-drag): no key and Shift → Move, the
+    /// source's proposal; Ctrl → Copy — and Alt too, Qt's fallback for a source that offers no
+    /// Link. So Copy means a key asked for one; Move is no key OR Shift — they cannot be told
+    /// apart — and gets kiki's own rule by place.
+    function wantsCopy(ev) { return ev.proposedAction === Qt.CopyAction }
+    function urlsOf(ev) {
+        return ev.hasUrls ? ev.urls.map(u => u.toString()) : (ev.hasText ? ev.text.split(/\r?\n/).filter(l => l && !l.startsWith("#")) : [])
+    }
+
+    /// What letting go here would do, told to the drag while it is still in the air: the cursor
+    /// is drawn from it — the theme's copy and move cursors, and "not allowed" over a target that
+    /// would refuse, *now* rather than when the button comes up. Read again on every move, so a
+    /// key going down changes it on the spot. True when the drop would be taken.
+    function dragOver(dest, drag) {
+        const action = dropAction(urlsOf(drag), dest, wantsCopy(drag))
+        // Taken either way, with "ignore" as the answer when it would refuse — see DropTarget.
+        drag.accepted = true
+        drag.action = !action ? Qt.IgnoreAction : action.op === "copy" ? Qt.CopyAction : Qt.MoveAction
+        return !!action
+    }
+
+    // Drop `drop` (a DragEvent) into `dest`: move within one place, copy across, Ctrl copies.
+    function dropInto(dest, drop) {
         // One drop, one job. Drop targets lie over each other — a folder row over its view's
         // background, a column over the pane's — and Qt hands the same drop to each of them in
         // turn, topmost first. The second would move the files again: a collision prompt for a
         // file that has already gone ("incoming 0 B"). Whoever accepted it first has dealt with it.
         if (drop.accepted) return
-        const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : (drop.hasText ? drop.text.split(/\r?\n/).filter(l => l && !l.startsWith("#")) : [])
-        const action = dropAction(urls, dest, drop.modifiers)
-        if (!action) { drop.accepted = false; return }
-        // Alt, or a drag the right button started, asks first. It is left UNACCEPTED while the
-        // question stands: a source told its files were moved may delete them, and the answer
-        // can still be Cancel. kiki does the copy or the move itself either way.
-        if ((drop.modifiers & Qt.AltModifier) || (drop.formats || []).indexOf(askKey) >= 0) {
-            askDrop({ items: action.items, dest: dest, op: action.op, pos: pos || null })
-            return
-        }
+        const action = dropAction(urlsOf(drop), dest, wantsCopy(drop))
+        // A refusal is answered, not passed on: "ignore" sends the drag back to where it came
+        // from, and marks the drop dealt with, so the folder behind this one — which may well
+        // take it — does not quietly do what was just refused.
+        if (!action) { drop.accept(Qt.IgnoreAction); return }
+        received()
         drop.accept(action.op === "copy" ? Qt.CopyAction : Qt.MoveAction)
         Kiki.Jobs.submit({ op: action.op, items: action.items, dest: dest })
     }
@@ -229,9 +242,15 @@ QtObject {
     /// What dropping `urls` on the folder `dest` does: `{ op, items }`, or null for nothing.
     ///  - What is already there is not dropped again: an item whose folder IS `dest`, `dest`
     ///    itself, and a folder onto itself or into something inside it.
-    ///  - Ctrl copies, Shift moves. Otherwise: a MOVE within one place, a COPY between places —
-    ///    between machines a move is a copy and then a delete, and nobody asked for the delete.
-    function dropAction(urls, dest, modifiers) {
+    ///  - `copy` (Ctrl was held) copies. Otherwise: a MOVE within one place, a COPY between
+    ///    places — between machines a move is a copy and then a delete, and nobody asked for the
+    ///    delete. Shift cannot force a move across machines: Qt reports it as it reports no key
+    ///    at all (`wantsCopy`); cut and paste moves across machines.
+    function dropAction(urls, dest, copy) {
+        // Never INTO the trash view — not the folder being shown and not a folder inside it: what
+        // is in there is on its way out. (The Trash in the sidebar is a different target, and a
+        // drop on it goes to `trashSelection` instead of here.)
+        if (dest.startsWith("trash:")) return null
         const d = dest.replace(/\/+$/, "")
         const items = urls.filter(u => {
             const s = (u || "").replace(/\/+$/, "")
@@ -239,7 +258,7 @@ QtObject {
         })
         if (!items.length) return null
         const samePlace = items.every(u => placeOf(u) === placeOf(dest))
-        const op = (modifiers & Qt.ControlModifier) ? "copy" : (modifiers & Qt.ShiftModifier) ? "move" : (samePlace ? "move" : "copy")
+        const op = copy || !samePlace ? "copy" : "move"
         return { op: op, items: items }
     }
 }

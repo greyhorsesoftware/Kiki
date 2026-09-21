@@ -7,12 +7,12 @@ import "../ui" as UI
 Item {
     id: root
     // The gallery shows one folder: anything dropped on it, anywhere, goes into that folder.
-    DropArea {
+    DropTarget {
         objectName: "gallery-drop-background"
         anchors.fill: parent; z: -1
-        keys: ["text/uri-list"]
         enabled: !!root.pane && !root.pane.isTrash
-        onDropped: drop => root.pane.dropInto(root.pane.uri, drop, mapToItem(null, drop.x, drop.y))
+        pane: root.pane
+        dest: root.pane ? root.pane.uri : ""
     }
     property Kiki.Pane pane
     property string home: ""
@@ -141,10 +141,10 @@ Item {
     /// A drag leaving the gallery carries what List and Icon carry: the selection when the row
     /// pressed is in it, that row alone when it is not. `proxy` is the item whose `Drag` hands
     /// it to the compositor.
-    function dragFrom(active, index, proxy, ask) {
+    function dragFrom(active, index, proxy) {
         if (!active) { proxy.Drag.active = false; return }
         if (!pane.selection.has(index)) pane.selection.set(index)
-        proxy.Drag.mimeData = pane.dragMime(index, ask)
+        proxy.Drag.mimeData = pane.dragMime(index)
         proxy.Drag.active = true
     }
 
@@ -221,7 +221,12 @@ Item {
             z: root.bFront ? 0 : 1
             visible: opacity > 0
             asynchronous: true; smooth: true; cache: false
-            fillMode: Image.PreserveAspectFit
+            // No fill mode: the frame gives itself the picture's own proportions below, so there
+            // is nothing left for one to decide — and `PreserveAspectFit` here is what made
+            // `sourceSize` a size to scale TO rather than a ceiling. Measured under Qt 6.11.2: a
+            // 120 × 80 icon came back 1600 px wide and a 3000 × 600 panorama 5160 px — bigger
+            // than the file, and more memory than asking for nothing at all. Plain, the same
+            // property is the cap it was meant to be: fitted inside, never enlarged.
             // Decoded at the size it is shown at, not the size it was taken at.
             sourceSize: Qt.size(Math.max(64, stage.width * 2), Math.max(64, stage.height * 2))
             /// How much this picture has to shrink to sit inside the stage; never blown up.
@@ -253,7 +258,8 @@ Item {
             z: root.bFront ? 1 : 0
             visible: opacity > 0
             asynchronous: true; smooth: true; cache: false
-            fillMode: Image.PreserveAspectFit
+            // The same as frameA: no fill mode, so `sourceSize` caps the decode instead of
+            // setting it. See the note there.
             // Decoded at the size it is shown at, not the size it was taken at.
             sourceSize: Qt.size(Math.max(64, stage.width * 2), Math.max(64, stage.height * 2))
             /// How much this picture has to shrink to sit inside the stage; never blown up.
@@ -315,7 +321,7 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             drag.target: root.current >= 0 && !root.canPan ? stageDrag : null
             drag.threshold: 8
-            drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag, pressedButtons & Qt.RightButton)
+            drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag)
             onDoubleClicked: root.activate(root.current)
             onClicked: mouse => { if (mouse.button === Qt.RightButton) root.contextMenu(root.current, root.mapToItem(null, mouse.x, mouse.y)) }
         }
@@ -478,15 +484,35 @@ Item {
             delegate: Rectangle {
                 id: shot
                 required property int index
-                property var r: root.pane.listing.row(index)
+                // What a tile shows is the file at its place in the listing NOW, read again every
+                // time either can have changed: the tile is handed another place (the strip
+                // recycles its tiles as it scrolls), rows arrive or change, files come and go
+                // (a splice announces itself as rows updated from the first change on), the
+                // order changes. It was a binding that the first update replaced with a plain
+                // value, so a recycled tile went on showing the file of the place it had before
+                // — a picture under another's name, or a text file's icon where a picture was.
+                // The picture itself is never by position: `thumb` is the daemon's path for
+                // that file, and comes with the row.
+                property var r: null
+                // Neither the pane nor the view itself while it is being taken down: a delegate
+                // outlives them by a moment, and re-reading its row then was 83 TypeErrors in a
+                // session's log.
+                function refresh() { r = root && root.pane ? root.pane.listing.row(index) : null }
+                onIndexChanged: refresh()
+                Component.onCompleted: refresh()
+                ListView.onReused: refresh()
                 width: root.shotWidth; height: strip.height; radius: 8
                 color: index === root.current ? Kiki.Theme.surface : Qt.rgba(1, 1, 1, 0.03)
                 border.width: index === root.current ? 2 : 1
                 border.color: index === root.current ? Kiki.Theme.accent : Qt.rgba(1, 1, 1, 0.05)
-                Connections { target: root.pane.listing; function onRowsUpdated(first, n) { if (shot.index >= first && shot.index < first + n) shot.r = root.pane.listing.row(shot.index) } }
+                Connections {
+                    target: root && root.pane ? root.pane.listing : null
+                    function onRowsUpdated(first, n) { if (shot.index >= first && shot.index < first + n) shot.refresh() }
+                    function onReset() { shot.refresh() }
+                }
                 Image {
                     objectName: "strip-thumb"
-                    visible: shot.r && shot.r.thumb
+                    visible: !!(shot.r && shot.r.thumb)
                     anchors.fill: parent; anchors.margins: 5
                     source: shot.r && shot.r.thumb ? "file://" + shot.r.thumb : ""
                     sourceSize: Qt.size(144, 144); fillMode: Image.PreserveAspectFit
@@ -495,7 +521,7 @@ Item {
                 UI.KindIcon {
                     visible: !(shot.r && shot.r.thumb)
                     anchors.centerIn: parent; size: 32
-                    kind: shot.r ? shot.r.kind : "file"; color: Kiki.Theme.kindColor(shot.r ? shot.r.kind : "file")
+                    kind: shot.r ? shot.r.kind : ""; color: Kiki.Theme.kindColor(shot.r ? shot.r.kind : "file")
                 }
                 Item {
                     id: shotDrag

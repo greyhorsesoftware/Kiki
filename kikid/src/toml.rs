@@ -198,9 +198,7 @@ pub fn write(v: &Value) -> String {
         for (k, x) in m {
             if let Value::Obj(t) = x {
                 out.push_str(&format!("\n[{k}]\n"));
-                for (tk, tv) in t {
-                    out.push_str(&format!("{} = {}\n", tk, scalar(tv)));
-                }
+                write_table(&mut out, k, t);
             }
         }
         for (k, x) in m {
@@ -211,25 +209,31 @@ pub fn write(v: &Value) -> String {
                 for item in a {
                     if let Value::Obj(t) = item {
                         out.push_str(&format!("\n[[{k}]]\n"));
-                        for (tk, tv) in t {
-                            if !matches!(tv, Value::Obj(_)) {
-                                out.push_str(&format!("{} = {}\n", tk, scalar(tv)));
-                            }
-                        }
-                        for (tk, tv) in t {
-                            if let Value::Obj(sub) = tv {
-                                out.push_str(&format!("[{k}.{tk}]\n"));
-                                for (sk, sv) in sub {
-                                    out.push_str(&format!("{} = {}\n", sk, scalar(sv)));
-                                }
-                            }
-                        }
+                        write_table(&mut out, k, t);
                     }
                 }
             }
         }
     }
     out
+}
+
+/// A table's own keys, then each table inside it under its dotted name — `[view.listColumnWidths]`,
+/// `[location.config]`. A map written on one line, as JSON, is what `parse` calls an unsupported
+/// value: `[mirror] last` (the folders last mirrored) made settings.toml unreadable, which loses
+/// every setting on the next start and stops kiki writing the file at all.
+fn write_table(out: &mut String, path: &str, t: &BTreeMap<String, Value>) {
+    for (tk, tv) in t {
+        if !matches!(tv, Value::Obj(_)) {
+            out.push_str(&format!("{} = {}\n", tk, scalar(tv)));
+        }
+    }
+    for (tk, tv) in t {
+        if let Value::Obj(sub) = tv {
+            out.push_str(&format!("\n[{path}.{tk}]\n"));
+            write_table(out, &format!("{path}.{tk}"), sub);
+        }
+    }
 }
 
 fn is_scalar_array(v: &Value) -> bool {
@@ -291,6 +295,24 @@ uri = "file:///home/david/Projects"
         let n = parse(nested).unwrap();
         assert_eq!(n.get("location").unwrap().as_arr().unwrap()[0].get("config").unwrap().u64_field("port"), Some(22));
         assert_eq!(parse(&write(&n)).unwrap(), n);
+    }
+
+    /// A map inside a table — the list's column widths, `[mirror] last` — goes out as a table of
+    /// its own and comes back the same. Written on one line it was JSON, and the next read of
+    /// settings.toml failed on it.
+    #[test]
+    fn a_map_inside_a_table_survives_the_round_trip() {
+        let mut widths = BTreeMap::new();
+        widths.insert("mtime".to_string(), Value::Uint(240));
+        let mut view = BTreeMap::new();
+        view.insert("columns".to_string(), Value::Arr(vec![Value::Str("mtime".into())]));
+        view.insert("listColumnWidths".to_string(), Value::Obj(widths));
+        let mut root = BTreeMap::new();
+        root.insert("view".to_string(), Value::Obj(view));
+        let v = Value::Obj(root);
+        let out = write(&v);
+        assert!(out.contains("[view.listColumnWidths]"), "{out}");
+        assert_eq!(parse(&out).unwrap(), v, "{out}");
     }
 
     #[test]

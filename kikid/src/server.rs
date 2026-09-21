@@ -31,6 +31,8 @@ pub fn serve(listener: UnixListener) -> std::io::Result<()> {
 struct Client {
     id: u64,
     tx: Sender<Value>,
+    /// A kiki window, by its own Hello: its jobs stop when the last one has gone.
+    shell: bool,
     listings: HashMap<u64, Arc<Listing>>,
     /// Mirror plans served as windowed views: lid -> (job, reason filter)
     plans: HashMap<u64, (u64, String)>,
@@ -74,7 +76,7 @@ impl Client {
                 }
             })
             .expect("spawn writer");
-        let mut client = Client { id, tx, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new() };
+        let mut client = Client { id, tx, shell: false, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new() };
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -88,6 +90,9 @@ impl Client {
         }
         for (lid, l) in client.listings.drain() {
             l.unsubscribe(id, lid);
+        }
+        if client.shell {
+            crate::jobs::shell_went();
         }
         // A window that went away was showing these: nobody will close them now.
         for (_, (job, _)) in client.plans.drain() {
@@ -117,6 +122,16 @@ impl Client {
         let _ = self.tx.send(v);
     }
 
+    /// The answer to anything that starts a job — and the job is this window's, if a window asked.
+    fn started(&self, r: Result<u64, (&'static str, String)>) -> Result<Option<Value>, (&'static str, String)> {
+        r.map(|j| {
+            if self.shell {
+                crate::jobs::own(j);
+            }
+            Some(Value::obj().u("job", j).done())
+        })
+    }
+
     fn handle(&mut self, req: Request) {
         let id = req.id;
         let b = &req.body;
@@ -131,6 +146,10 @@ impl Client {
                     }
                 }
                 if b.str_field("client") == Some("kiki") {
+                    if !self.shell {
+                        self.shell = true;
+                        crate::jobs::shell_came();
+                    }
                     crate::dbus::register_shell(self.tx.clone());
                 }
                 Ok(Some(
@@ -154,7 +173,6 @@ impl Client {
                     None => Ok(Some(Value::obj().done())),
                 }
             }
-            "Keymap" => Ok(Some(Value::obj().v("keys", crate::config::keymap()).done())),
             "About" => Ok(Some(
                 Value::obj()
                     .s("version", env!("CARGO_PKG_VERSION"))
@@ -234,7 +252,7 @@ impl Client {
                     .opt_s("target", b.str_field("target"))
                     .v("compose", b.get("compose").cloned().unwrap_or(Value::Null))
                     .done();
-                crate::jobs::submit(op, Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done()))
+                self.started(crate::jobs::submit(op, Some(self.tx.clone())))
             }
             "AiStatus" => Ok(Some(crate::ai::status())),
             "AiConfigure" => crate::ai::configure(b.str_field("provider"), b.str_field("cliCommand")).map(|_| Some(crate::ai::status())).map_err(vfs_err),
@@ -270,13 +288,15 @@ impl Client {
                 for u in b.get("uris").and_then(Value::as_arr).into_iter().flatten().filter_map(Value::as_str) {
                     crate::access::record(u);
                 }
-                let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
+                // `tool`, not `id`: every request carries the client's numeric `id`, so a tool
+                // named in an `id` field of its own replaces it and the request never parses.
+                let key = b.str_field("tool").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 let class = crate::openin::find(&key).and_then(|t| t.str_field("id").map(crate::openin::window_class)).unwrap_or_default();
                 crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).s("class", class).done())).map_err(|e| ("Invalid", e))
             }
             "OpenInTest" => {
-                let key = b.str_field("id").or(b.str_field("role")).unwrap_or("").to_string();
+                let key = b.str_field("tool").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 match crate::openin::find(&key) {
                     Some(t) => crate::openin::prepare(&t, &uris, b.u64_field("line"), t.str_field("command").unwrap_or(""))
@@ -286,10 +306,10 @@ impl Client {
                 }
             }
             "OpenInSessions" => Ok(Some(Value::obj().v("sessions", crate::openin::sessions_json()).done())),
-            "OpenInClose" => match b.str_field("id") {
+            "OpenInClose" => match b.str_field("tool") {
                 Some(i) if crate::openin::close(i) => Ok(Some(Value::obj().done())),
                 Some(_) => Err(("NotFound", "no session".into())),
-                None => Err(("Protocol", "missing id".into())),
+                None => Err(("Protocol", "missing tool".into())),
             },
             "SetOpenIn" => match b.get("tools").and_then(Value::as_arr) {
                 Some(t) => crate::openin::write_tools(t)
@@ -324,36 +344,36 @@ impl Client {
             "MirrorPlan" => self.mirror_plan(b),
             "MirrorFilter" => self.mirror_filter(b),
             "MirrorCheck" => self.mirror_check(b),
+            // With `saveTo`, the report is written to that file (a local URI) as well as answered.
             "MirrorReport" => match b.u64_field("job").and_then(crate::mirror::stored) {
-                Some(s) => Ok(Some(Value::obj().s("text", crate::mirror::report(&s.spec, &s.plan.lock().unwrap())).done())),
+                Some(s) => {
+                    let text = crate::mirror::report(&s.spec, &s.plan.lock().unwrap());
+                    let saved: Result<(), (&'static str, String)> = match b.str_field("saveTo") {
+                        Some(to) => Uri::parse(to).map_err(|e| ("Protocol", e.0.to_string())).and_then(|uri| crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))).and_then(|path| std::fs::write(&path, &text).map_err(|e| ("Io", format!("{}: {e}", path.display())))),
+                        None => Ok(()),
+                    };
+                    saved.map(|_| Some(Value::obj().s("text", text).done()))
+                }
                 None => Err(("NotFound", "no such plan".into())),
             },
-            "Filters" => Ok(Some(
-                Value::obj()
-                    .v(
-                        "rules",
-                        Value::Arr(
-                            crate::mirror::load_filters()
-                                .iter()
-                                .map(|r| match r {
-                                    crate::mirror::Rule::Contains(v) => Value::obj().s("kind", "contains").s("value", v.clone()).done(),
-                                    crate::mirror::Rule::StartsWith(v) => Value::obj().s("kind", "startsWith").s("value", v.clone()).done(),
-                                    crate::mirror::Rule::EndsWith(v) => Value::obj().s("kind", "endsWith").s("value", v.clone()).done(),
-                                    crate::mirror::Rule::Matches(v) => Value::obj().s("kind", "matches").s("value", v.clone()).done(),
-                                })
-                                .collect(),
-                        ),
-                    )
-                    .done(),
-            )),
-            "SetFilters" => match b.get("rules").and_then(Value::as_arr) {
-                Some(rules) => {
-                    let mut m = std::collections::BTreeMap::new();
-                    m.insert("rule".to_string(), Value::Arr(rules.to_vec()));
-                    crate::config::write_named("filters.toml", &Value::Obj(m)).map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string()))
+            "MirrorFilters" => Ok(Some(crate::mirror::filters_json())),
+            // `defaults: true` is "Restore defaults": the file goes, and the built-in rules are
+            // what the next scan reads. Otherwise every rule is checked before any of it is
+            // written, so a refusal leaves the file exactly as it was. Either way the answer is
+            // the rules as they now stand, so the dialog never has to ask again.
+            "SetMirrorFilters" => {
+                if b.get("defaults").and_then(Value::as_bool) == Some(true) {
+                    crate::mirror::restore_default_filters().map(|_| Some(crate::mirror::filters_json())).map_err(|e| ("Io", e.to_string()))
+                } else {
+                    match b.get("rules").and_then(Value::as_arr) {
+                        Some(rules) => crate::mirror::check_rules(rules)
+                            .map_err(|m| ("Invalid", m))
+                            .and_then(|checked| crate::mirror::set_filters(&checked).map_err(|e| ("Io", e.to_string())))
+                            .map(|_| Some(crate::mirror::filters_json())),
+                        None => Err(("Protocol", "missing rules".into())),
+                    }
                 }
-                None => Err(("Protocol", "missing rules".into())),
-            },
+            }
             "Sort" => self.sort(b, id),
             "Filter" => self.filter(b),
             "ShowHidden" => self.show_hidden(b),
@@ -417,7 +437,7 @@ impl Client {
                 None => Err(("Protocol", "missing location".into())),
             },
             "AddLocation" | "UpdateLocation" => match b.get("location") {
-                Some(loc) if !crate::plugin::ships(loc.str_field("plugin").unwrap_or("")) => Err(("Unsupported", format!("{} locations are not part of this build", loc.str_field("plugin").unwrap_or("?")))),
+                Some(loc) if !crate::plugin::ships(loc.str_field("plugin").unwrap_or("")) => Err(("Unsupported", crate::plugin::no_such_kind(loc.str_field("plugin").unwrap_or("")))),
                 // `verify` in the reply means the server offered a key nobody has accepted yet:
                 // the shell shows it and asks again with `trust` set to what it displayed.
                 Some(loc) => crate::locations::save(loc.clone(), b.get("secrets").unwrap_or(&Value::Null), b.str_field("trust"), b.get("check").and_then(Value::as_bool).unwrap_or(true))
@@ -497,7 +517,7 @@ impl Client {
                 Err(e) => Err(e),
             },
             "Submit" => match b.get("op") {
-                Some(op) => crate::jobs::submit(op.clone(), Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
+                Some(op) => self.started(crate::jobs::submit(op.clone(), Some(self.tx.clone()))),
                 None => Err(("Protocol", "missing op".into())),
             },
             "Cancel" => match b.u64_field("job") {
@@ -523,8 +543,8 @@ impl Client {
                 Some(job) => Ok(Some(Value::obj().u("cleared", crate::jobs::dismiss(Some(job))).done())),
                 None => Err(("Protocol", "missing job".into())),
             },
-            "Undo" => crate::jobs::undo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
-            "Redo" => crate::jobs::redo(Some(self.tx.clone())).map(|j| Some(Value::obj().u("job", j).done())),
+            "Undo" => self.started(crate::jobs::undo(Some(self.tx.clone()))),
+            "Redo" => self.started(crate::jobs::redo(Some(self.tx.clone()))),
             "JobEvents" => {
                 crate::jobs::subscribe(self.tx.clone());
                 Ok(Some(Value::obj().done()))
@@ -840,9 +860,20 @@ impl Client {
                 Ok(Some(Value::obj().done()))
             }
             "OpenWith" => {
-                let uri = Uri::parse(b.str_field("uri").unwrap_or("")).map_err(|e| ("Protocol", e.0.to_string()))?;
-                let path = crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))?;
-                Ok(Some(crate::desktop::apps_json(&path)))
+                // `uris` for a selection, `uri` for one file (and for clients older than the list).
+                let asked: Vec<&str> = match b.get("uris").and_then(Value::as_arr) {
+                    Some(a) => a.iter().filter_map(Value::as_str).collect(),
+                    None => b.str_field("uri").into_iter().collect(),
+                };
+                if asked.is_empty() {
+                    return Err(("Protocol", "missing uris".into()));
+                }
+                let mut paths = Vec::new();
+                for u in asked {
+                    let uri = Uri::parse(u).map_err(|e| ("Protocol", e.0.to_string()))?;
+                    paths.push(crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))?);
+                }
+                Ok(Some(crate::desktop::apps_json_for(&paths)))
             }
             "PluginBrowse" => {
                 let scheme = b.str_field("plugin").unwrap_or("");

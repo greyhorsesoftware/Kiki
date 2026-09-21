@@ -233,6 +233,48 @@ pub fn apps_json(path: &Path) -> Value {
     Value::obj().s("mime", mime).v("apps", Value::Arr(apps.iter().map(|(a, d)| a.to_json(*d)).collect())).done()
 }
 
+/// The applications that can take the whole of a selection: those offered for every kind in it,
+/// in the order the first file's kind has them. One is the default only if it is for them all —
+/// "default" beside an app that would not have opened half of them says the wrong thing.
+pub fn apps_json_for(paths: &[PathBuf]) -> Value {
+    let mut mimes: Vec<String> = Vec::new();
+    for p in paths {
+        let m = mime_of(p);
+        if !mimes.contains(&m) {
+            mimes.push(m);
+        }
+    }
+    let mut apps = mimes.first().map(|m| apps_for(m)).unwrap_or_default();
+    for m in mimes.iter().skip(1) {
+        let others = apps_for(m);
+        apps.retain_mut(|(a, d)| match others.iter().find(|(o, _)| o.id == a.id) {
+            Some((_, od)) => {
+                *d = *d && *od;
+                true
+            }
+            None => false,
+        });
+    }
+    Value::obj()
+        .s("mime", if mimes.len() == 1 { mimes[0].clone() } else { String::new() })
+        .v("mimes", Value::Arr(mimes.into_iter().map(Value::Str).collect()))
+        .v("apps", Value::Arr(apps.iter().map(|(a, d)| a.to_json(*d)).collect()))
+        .done()
+}
+
+/// What to run for these files: one command with all of them when the entry takes a list (`%F`,
+/// `%U`), and one command EACH when it takes a single file (`%f`, `%u`) — which is what the
+/// Desktop Entry spec asks for, and what the first file alone being opened was not.
+pub fn commands(app: &App, files: &[String]) -> Vec<Vec<String>> {
+    let takes_many = app.exec.contains("%F") || app.exec.contains("%U");
+    let takes_one = app.exec.contains("%f") || app.exec.contains("%u");
+    if files.len() > 1 && takes_one && !takes_many {
+        files.iter().map(|f| expand_exec(&app.exec, Some(app), std::slice::from_ref(f))).collect()
+    } else {
+        vec![expand_exec(&app.exec, Some(app), files)]
+    }
+}
+
 /// Split an `Exec` value into arguments (double quotes and backslash escapes per the spec) and
 /// expand the field codes with the given files or URIs.
 pub fn expand_exec(exec: &str, app: Option<&App>, files: &[String]) -> Vec<String> {
@@ -306,17 +348,19 @@ pub fn launch(app_id: &str, uris: &[String]) -> Result<(), String> {
         .iter()
         .map(|u| if wants_uris { u.clone() } else { crate::vfs::uri::Uri::parse(u).ok().filter(|x| x.is_local()).map(|x| x.to_path().to_string_lossy().into_owned()).unwrap_or_else(|| u.clone()) })
         .collect();
-    let mut argv = expand_exec(&app.exec, Some(&app), &files);
-    if argv.is_empty() {
-        return Err("empty Exec".into());
+    for mut argv in commands(&app, &files) {
+        if argv.is_empty() {
+            return Err("empty Exec".into());
+        }
+        if app.terminal {
+            let term = std::env::var("TERMINAL").unwrap_or_else(|_| "alacritty".into());
+            let mut t = vec![term, "-e".to_string()];
+            t.append(&mut argv);
+            argv = t;
+        }
+        spawn_detached(&argv)?;
     }
-    if app.terminal {
-        let term = std::env::var("TERMINAL").unwrap_or_else(|_| "alacritty".into());
-        let mut t = vec![term, "-e".to_string()];
-        t.append(&mut argv);
-        argv = t;
-    }
-    spawn_detached(&argv)
+    Ok(())
 }
 
 pub fn spawn_detached(argv: &[String]) -> Result<(), String> {
@@ -385,6 +429,38 @@ mod tests {
         assert!(apps_for("application/x-unknown").is_empty());
         std::env::remove_var("KIKI_APP_DIRS");
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_selection_is_offered_what_opens_all_of_it() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = fixture();
+        std::env::set_var("KIKI_APP_DIRS", std::env::join_paths([d.join("user"), d.join("sys")]).unwrap());
+        let names = |v: &Value| -> Vec<String> { v.get("apps").and_then(Value::as_arr).unwrap().iter().map(|a| a.str_field("name").unwrap().to_string()).collect() };
+        let default = |v: &Value| -> Vec<bool> { v.get("apps").and_then(Value::as_arr).unwrap().iter().map(|a| a.get("default").and_then(Value::as_bool).unwrap()).collect() };
+        // Two of a kind: that kind's list, default and all.
+        let two = apps_json_for(&[PathBuf::from("/x/a.txt"), PathBuf::from("/x/b.txt")]);
+        assert_eq!(names(&two), vec!["Code", "Neovim"]);
+        assert_eq!(default(&two), vec![true, false]);
+        assert_eq!(two.str_field("mime"), Some("text/plain"));
+        // Text and markdown: Obsidian opens only one of them and is not offered.
+        let mixed = apps_json_for(&[PathBuf::from("/x/a.md"), PathBuf::from("/x/b.txt")]);
+        assert_eq!(names(&mixed), vec!["Code", "Neovim"]);
+        assert_eq!(mixed.str_field("mime"), Some(""));
+        // Nothing opens both a text file and a picture.
+        assert!(names(&apps_json_for(&[PathBuf::from("/x/a.txt"), PathBuf::from("/x/b.png")])).is_empty());
+        std::env::remove_var("KIKI_APP_DIRS");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn an_app_that_takes_one_file_is_run_once_for_each() {
+        let app = |exec: &str| App { id: "x.desktop".into(), name: "X".into(), exec: exec.into(), icon: String::new(), terminal: false, path: PathBuf::from("/a/x.desktop") };
+        let files = vec!["/tmp/a.txt".to_string(), "/tmp/b.txt".to_string()];
+        assert_eq!(commands(&app("imv %U"), &files), vec![vec!["imv", "/tmp/a.txt", "/tmp/b.txt"]]);
+        assert_eq!(commands(&app("obsidian %u"), &files), vec![vec!["obsidian", "/tmp/a.txt"], vec!["obsidian", "/tmp/b.txt"]]);
+        assert_eq!(commands(&app("obsidian %u"), &files[..1]), vec![vec!["obsidian", "/tmp/a.txt"]]);
+        assert_eq!(commands(&app("plain"), &files), vec![vec!["plain"]]);
     }
 
     #[test]

@@ -21,6 +21,10 @@ use std::collections::HashMap;
 pub struct Deco {
     pub thumb: Option<Thumb>,
     pub git: Option<git::Entry>,
+    /// Set only on a row that is itself a repository (plan 15). Kept apart from `git` because a
+    /// repository inside a repository — a submodule — has both, and the one to show is the
+    /// inner one's own: the folder above can only say that something under it changed.
+    pub repo: Option<git::RepoMark>,
 }
 
 #[derive(Clone)]
@@ -104,15 +108,37 @@ impl Decorations {
         }
     }
 
+    pub fn repo(&self, name: &[u8]) -> Option<&git::RepoMark> {
+        self.by_name.get(name).and_then(|d| d.repo.as_ref())
+    }
+
+    pub fn set_repo(&mut self, name: &[u8], r: Option<git::RepoMark>) {
+        match r {
+            Some(r) => self.by_name.entry(name.to_vec()).or_default().repo = Some(r),
+            None => {
+                if let Some(d) = self.by_name.get_mut(name) {
+                    d.repo = None;
+                }
+            }
+        }
+    }
+
+    /// The names known to be repositories of their own — what the watcher's poll stats, having
+    /// no watch to spare for them.
+    pub fn repo_names(&self) -> Vec<Vec<u8>> {
+        self.by_name.iter().filter(|(_, d)| d.repo.is_some()).map(|(k, _)| k.clone()).collect()
+    }
+
     /// Drop everything known about names that the folder no longer has. Called after a rescan,
     /// which is the only time a name can leave; before then the map grows only with the folder.
     pub fn retain_names(&mut self, present: &std::collections::HashSet<Vec<u8>>) {
-        self.by_name.retain(|k, d| present.contains(k) && (d.thumb.is_some() || d.git.is_some()));
+        self.by_name.retain(|k, d| present.contains(k) && (d.thumb.is_some() || d.git.is_some() || d.repo.is_some()));
     }
 
     pub fn clear_git(&mut self) {
         for d in self.by_name.values_mut() {
             d.git = None;
+            d.repo = None;
         }
     }
 

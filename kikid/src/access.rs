@@ -150,4 +150,47 @@ mod tests {
         std::env::remove_var("KIKI_DATA_DIR");
         let _ = std::fs::remove_dir_all(&d);
     }
+
+    /// Plan 22: past 50,000 lines the log is rewritten with the newest entry per URI. Left to
+    /// grow it is a file that is appended to for ever and read whole at the first lookup of every
+    /// session — and the heat of a file that has been opened a thousand times is one number.
+    #[test]
+    fn the_log_is_compacted_once_it_passes_fifty_thousand_lines() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-access-compact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::env::set_var("KIKI_DATA_DIR", &d);
+        clear().unwrap();
+
+        // Twenty files, opened over and over, which is what a working week looks like.
+        let files: Vec<String> = (0..20).map(|i| format!("file:///tmp/heat/f{i}.txt")).collect();
+        let lines = |ends_at: usize| std::fs::read_to_string(path()).map(|t| t.lines().count()).unwrap_or(ends_at);
+        for i in 0..COMPACT_ABOVE {
+            record(&files[i % files.len()]);
+        }
+        assert_eq!(lines(0), COMPACT_ABOVE, "up to the mark it is only appended to");
+        assert_eq!(count(), files.len(), "however many lines, it is twenty files");
+
+        // The one that takes it over.
+        record(&files[0]);
+        assert_eq!(lines(0), files.len(), "past the mark it is rewritten, one line per file");
+        assert_eq!(count(), files.len());
+        let newest = opened(&files[0]).expect("the file that tipped it over");
+        for f in &files {
+            assert!(opened(f).is_some(), "{f} is still in it");
+        }
+        // And what is on disk is what a daemon starting tomorrow will read.
+        let text = std::fs::read_to_string(path()).unwrap();
+        assert_eq!(text.lines().filter(|l| l.ends_with("/f0.txt")).count(), 1);
+        assert!(text.lines().any(|l| l == format!("{newest}\t{}", files[0])), "with the newest time, not the first: {text:.200}");
+        assert!(!path().with_extension("log.tmp").exists(), "and the file it was written through is gone");
+
+        // It goes on counting from where compaction left it, rather than compacting every time.
+        record(&files[1]);
+        assert_eq!(lines(0), files.len() + 1);
+
+        clear().unwrap();
+        std::env::remove_var("KIKI_DATA_DIR");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

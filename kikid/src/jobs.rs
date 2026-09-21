@@ -44,6 +44,9 @@ pub struct Job {
     pub kind: String,
     pub title: String,
     pub client: Option<Sender<Value>>,
+    /// Asked for from a kiki window, and so stopped when the last window has gone (`shell_went`).
+    /// A script's jobs, the portal's and a test's are nobody's to stop but their own.
+    shell: AtomicBool,
     pub cancel: Arc<AtomicBool>,
     pub status: Mutex<Status>,
     prompt: Mutex<Option<Receiver<(String, bool)>>>,
@@ -199,7 +202,7 @@ pub fn broadcast(v: Value) {
 pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
     let kind = op.str_field("op").ok_or(("Protocol", "missing op".to_string()))?.to_string();
     let title = title_for(&op);
-    let undoable = !matches!(kind.as_str(), "delete" | "emptyTrash" | "mirrorScan" | "mirrorRun" | "share");
+    let undoable = !matches!(kind.as_str(), "delete" | "deleteCopies" | "emptyTrash" | "mirrorScan" | "mirrorRun" | "share");
     let (ptx, prx) = mpsc::channel();
     let job = {
         let mut q = queue().lock().unwrap();
@@ -214,6 +217,7 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
             kind,
             title,
             client,
+            shell: AtomicBool::new(false),
             cancel: Arc::new(AtomicBool::new(false)),
             status: Mutex::new(Status { state: State::Queued, done: 0, total: 0, bytes: 0, bytes_total: 0, undoable, last_emit: None }),
             prompt: Mutex::new(Some(prx)),
@@ -284,17 +288,17 @@ fn pump() {
                             let st = job.status.lock().unwrap();
                             crate::joblog::say(job.id, "info", format!("{}: {} of {} items, {} bytes", if ended == State::Done { "finished" } else { "cancelled" }, st.done, st.total, st.bytes));
                         }
-                        job.set_state(ended);
+                        job.status.lock().unwrap().state = ended;
                         inv
                     }
                     Err(e) => {
                         if job.cancel.load(Ordering::Relaxed) {
                             crate::joblog::say(job.id, "warn", "cancelled");
-                            job.set_state(State::Cancelled);
+                            job.status.lock().unwrap().state = State::Cancelled;
                         } else {
                             crate::joblog::say(job.id, "error", format!("failed: {}", e.message()));
                             crate::joblog::keep_failure(job.id, &job.title, &e.message());
-                            job.set_state(State::Failed(e.message()));
+                            job.status.lock().unwrap().state = State::Failed(e.message());
                         }
                         // What it got done before it stopped — and only what is really there: a copy
                         // names its target before it starts on it, so one that failed at once has
@@ -303,7 +307,15 @@ fn pump() {
                     }
                 };
                 let finished_well = job.status.lock().unwrap().state == State::Done;
+                // The end is said only once the journal has it. It used to be said first, and a
+                // client quick enough to answer "done" with `Undo` — a script, never a hand — took
+                // back whatever was done before this instead.
+                let undoable_now = inverse.is_some();
                 if let Some(inv) = inverse {
+                    // A copy that landed on a server is taken back by deleting it there, and a
+                    // server has no trash (plan 07): the line that offers the undo says so, while
+                    // there is still a choice about clicking it.
+                    let permanent = (inv.str_field("op") == Some("deleteCopies")).then(|| inv.str_field("dest").and_then(|d| Uri::parse(d).ok()).map(|u| u.authority).unwrap_or_default());
                     let mut q = queue().lock().unwrap();
                     q.journal.push(Value::obj().u("job", job.id).s("title", job.title.clone()).v("inverse", inv).v("redo", job.op.clone()).done());
                     if q.journal.len() > JOURNAL_CAP {
@@ -312,13 +324,20 @@ fn pump() {
                     q.redo.clear();
                     save_journal(&q.journal);
                     drop(q);
+                    job.announce();
                     if matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
                         // A job that stopped half way did not do what its title says: the toast
                         // offers to take back the part that it did, and says that is what it is.
-                        let text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
+                        let mut text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
+                        if let Some(host) = permanent {
+                            text.push_str(&format!(" — Undo deletes {} from {}, permanently", if job.about.count > 1 { "them" } else { "it" }, server_name(&host)));
+                        }
                         broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", true).done());
                     }
-                } else if matches!(job.kind.as_str(), "delete" | "emptyTrash") && job.status.lock().unwrap().state == State::Done {
+                } else {
+                    job.announce();
+                }
+                if !undoable_now && matches!(job.kind.as_str(), "delete" | "emptyTrash") && job.status.lock().unwrap().state == State::Done {
                     broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", false).done());
                 }
                 queue().lock().unwrap().running -= 1;
@@ -331,6 +350,11 @@ fn pump() {
 impl Job {
     fn set_state(&self, s: State) {
         self.status.lock().unwrap().state = s;
+        broadcast(self.event());
+    }
+
+    /// Tell everyone where the job stands now; for a state that was set quietly.
+    fn announce(&self) {
         broadcast(self.event());
     }
 
@@ -563,6 +587,61 @@ pub fn cancel(id: u64) -> bool {
     }
 }
 
+// ---------------------------------------------------------------- the shell's jobs
+//
+// "If kiki is not running, stuff should not continue in the background." The window asks before
+// it closes on running jobs and cancels them itself; this is for every other way of going — a
+// kill, a crash, a compositor that went first. The daemon stays up (it is socket-activated and
+// answers the desktop's file chooser too), but idle.
+
+/// (windows connected, how many have ever connected). The second is how the grace knows that a
+/// window came back while it slept, even if that one has gone again.
+fn shells() -> &'static Mutex<(usize, u64)> {
+    static S: OnceLock<Mutex<(usize, u64)>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new((0, 0)))
+}
+
+/// How long a window may be gone before its jobs are stopped: long enough for a dropped socket
+/// to be picked up again, short enough that nothing much is copied behind the user's back.
+fn shell_grace() -> std::time::Duration {
+    std::time::Duration::from_millis(std::env::var("KIKI_SHELL_GRACE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(4000))
+}
+
+/// The job was asked for from a kiki window.
+pub fn own(id: u64) {
+    if let Some(j) = queue().lock().unwrap().jobs.iter().find(|j| j.id == id) {
+        j.shell.store(true, Ordering::Relaxed);
+    }
+}
+
+pub fn shell_came() {
+    let mut s = shells().lock().unwrap();
+    s.0 += 1;
+    s.1 += 1;
+}
+
+pub fn shell_went() {
+    let seen = {
+        let mut s = shells().lock().unwrap();
+        s.0 = s.0.saturating_sub(1);
+        if s.0 > 0 {
+            return;
+        }
+        s.1
+    };
+    let _ = std::thread::Builder::new().name("shell-grace".into()).spawn(move || {
+        std::thread::sleep(shell_grace());
+        if *shells().lock().unwrap() != (0, seen) {
+            return;
+        }
+        let mine: Vec<u64> = queue().lock().unwrap().jobs.iter().filter(|j| j.shell.load(Ordering::Relaxed) && !finished(j)).map(|j| j.id).collect();
+        for id in mine {
+            crate::joblog::say(id, "warn", "kiki was closed: stopping");
+            cancel(id);
+        }
+    });
+}
+
 fn prompt_reply_inner(j: &Job, choice: &str) -> bool {
     match j.prompt_tx.lock().unwrap().as_ref() {
         Some(tx) => tx.send((choice.to_string(), false)).is_ok(),
@@ -703,7 +782,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
     // Long work on a server runs on connections of the job's own, closed when it ends however it
     // ends. Nothing is opened until the job resolves a remote URI, so a local job pays nothing;
     // `mkdir` and `rename` are one round trip and stay on the browser's, which is already up.
-    let _sessions = matches!(job.kind.as_str(), "copy" | "move" | "delete" | "share" | "mirrorScan" | "mirrorRun").then(|| crate::locations::JobSessions::enter(job.id));
+    let _sessions = matches!(job.kind.as_str(), "copy" | "move" | "delete" | "deleteCopies" | "share" | "mirrorScan" | "mirrorRun").then(|| crate::locations::JobSessions::enter(job.id));
     let inverse = match job.kind.as_str() {
         // Anything with an end that is not this machine goes through `transfer`: what follows
         // works on local paths.
@@ -725,6 +804,23 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
         }
         "rename" if remote_op(op) => {
             crate::transfer::rename_item(&uri_value(op, "uri")?, op.str_field("name").unwrap_or(""))?;
+            None
+        }
+        // Taking back a copy that landed on a server: delete what it made there, where that is
+        // still what it left. Nothing on a server is trashed, so the toast says what was done.
+        "deleteCopies" => {
+            let host = uri_value(op, "dest").map(|u| u.authority).unwrap_or_default();
+            let taken = crate::transfer::undo_copy(job, op, &cancel);
+            let text = match &taken {
+                Ok(out) => Some(undid_copy_text(&host, out)),
+                // A hidden job that failed is a failure nobody would ever see; this one says so.
+                Err(e) if !cancel.load(Ordering::Relaxed) => Some(format!("Could not undo the copy to {}: {}", server_name(&host), e.message())),
+                Err(_) => None,
+            };
+            if let Some(text) = text {
+                broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", false).done());
+            }
+            taken?;
             None
         }
         "copy" | "move" => {
@@ -938,15 +1034,25 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let plugin = op.str_field("plugin").ok_or(VfsError::Io("missing plugin".into()))?.to_string();
             let uris: Vec<Uri> = op.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
             let r = crate::share::run(job, &plugin, &uris, op.str_field("target"), op.get("compose").unwrap_or(&Value::Null), &cancel)?;
-            broadcast(proto::event("Toast").u("job", job.id).s("text", format!("Shared via {}: {}", plugin, r.str_field("result").unwrap_or("done"))).b("undoable", false).done());
+            // What was sent and to whom, in the toast and in the job's log: "sent" alone left
+            // nothing to go on when a file that kiki had handed over did not turn up.
+            let said = match r.str_field("detail") {
+                Some(d) if !d.is_empty() => format!("{} — {}", r.str_field("result").unwrap_or("done"), d),
+                _ => r.str_field("result").unwrap_or("done").to_string(),
+            };
+            crate::joblog::say(job.id, "info", format!("{plugin}: {said}"));
+            broadcast(proto::event("Toast").u("job", job.id).s("text", format!("Shared via {plugin}: {said}")).b("undoable", false).done());
             None
         }
         "mirrorScan" => {
             let mut spec = crate::mirror::Spec::from_json(op.get("spec").ok_or(VfsError::Io("missing spec".into()))?).map_err(VfsError::Io)?;
-            let plan = crate::mirror::scan(&mut spec, &cancel)?;
+            // A compare has no total — nobody knows how many entries a tree holds until it has
+            // been walked — so what it reports as it goes is the count so far, which is what the
+            // Preflight screen counts up instead of sitting on one unchanging line.
+            let plan = crate::mirror::scan_counting(&mut spec, &cancel, &|seen| job.set_progress(seen, 0))?;
             let n = plan.actions.len() as u64;
             job.set_totals(n, 0);
-            job.progress(n, 0);
+            job.set_progress(n, 0);
             crate::mirror::store(job.id, spec, plan);
             None
         }
@@ -974,7 +1080,11 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 (p.actions.iter().filter(|a| a.checked && a.kind != crate::mirror::ActionKind::Skip).count() as u64, p.copy_bytes())
             };
             job.set_totals(total, bytes);
-            let workers = op.u64_field("workers").unwrap_or(3).clamp(1, 8) as usize;
+            // Five at a time unless the client asks for another number, so a client that says
+            // nothing runs what the workspace runs. (Against a server the bytes still move one
+            // file at a time — a plugin process carries one binary stream — so this is what
+            // overlaps the mkdirs, deletes and set-times around them.)
+            let workers = op.u64_field("workers").unwrap_or(5).clamp(1, 8) as usize;
             // Items are counted as they finish and the one in hand is named as it starts. (Every
             // change used to be reported as "nothing done", so a run sat at 0 of 900 until the
             // end.) With several workers the file named is the one most recently begun, and its
@@ -1012,6 +1122,33 @@ pub fn plan_wanted(plan: u64) -> bool {
     })
 }
 
+/// The location's own name, or something to call a server that has none.
+fn server_name(host: &str) -> &str {
+    if host.is_empty() {
+        "the server"
+    } else {
+        host
+    }
+}
+
+/// What the undo of a copy to a server says when it is over. A remote delete is final — there is
+/// no trash on the other side (plan 07) — so the line says so, and says what it left alone.
+fn undid_copy_text(host: &str, out: &crate::transfer::TakenBack) -> String {
+    let items = |n: u64| format!("{n} item{}", if n == 1 { "" } else { "s" });
+    let mut text = if out.deleted == 0 {
+        format!("Undid copy — nothing was deleted from {}", server_name(host))
+    } else {
+        format!("Undid copy — {} deleted from {} (permanently)", items(out.deleted), server_name(host))
+    };
+    if out.kept > 0 {
+        text.push_str(&format!(", {} left because {} had changed", items(out.kept), if out.kept == 1 { "it" } else { "they" }));
+    }
+    if out.failed > 0 {
+        text.push_str(&format!(", {} could not be deleted — see the log", items(out.failed)));
+    }
+    text
+}
+
 fn audit_summary(job: &Job, out: &crate::mirror::Outcome) {
     let mut st = job.status.lock().unwrap();
     st.done = st.total;
@@ -1039,6 +1176,7 @@ fn title_for(op: &Value) -> String {
         "trash" => format!("Move {what} to Trash"),
         "restore" => "Restore from Trash".into(),
         "delete" => format!("Delete {what}"),
+        "deleteCopies" => "Undo copy".into(),
         "emptyTrash" => "Empty Trash".into(),
         "mkdir" => "New folder".into(),
         "rmdirIfEmpty" => "Remove folder".into(),

@@ -13,6 +13,33 @@ FloatingWindow {
     implicitWidth: 1200
     implicitHeight: 760
     color: Kiki.Theme.bg
+    // Closing the window closes kiki. Quickshell only hides a closed window and keeps the shell
+    // up behind it, and a hidden one cannot be shown again (setting `visible` does not map it):
+    // the next launch found a running kiki, asked it to come to the front, and nothing came —
+    // no window until the process was killed by hand.
+    property bool _wasShown: false
+    onVisibleChanged: { if (visible) _wasShown = true; else if (_wasShown) Qt.quit() }
+    // Nothing runs on behind a window that is gone, so a close with jobs going is a question
+    // first. The `closing` that can be refused is the real window's — Quickshell's proxy has only
+    // `closed`, which is after the fact. Yes stops the jobs here and now; a kiki that goes any
+    // other way (killed, crashed) has them stopped by the daemon, a few seconds after it has gone.
+    readonly property var _backing: win.contentItem ? win.contentItem.Window.window : null
+    property bool _quitting: false
+    property var _quit: () => Qt.quit()     // a test's to replace: it would take the runner along
+    function closeAsked(ev) {
+        const live = Kiki.Jobs.running(), seen = live.filter(j => !j.hidden)
+        if (win._quitting || !seen.length) return
+        ev.accepted = false
+        const what = seen.length === 1 ? "“" + Kiki.Jobs.headline(seen[0]) + "” is still running and will be stopped."
+                                       : seen.length + " jobs are still running and will be stopped."
+        confirm.ask({ title: "Quit kiki?", message: what + " What has already finished stays where it is.", label: "Quit" }, yes => {
+            if (!yes) return
+            for (const j of Kiki.Jobs.running()) Kiki.Jobs.cancel(j.id)
+            win._quitting = true
+            win._quit()
+        })
+    }
+    Connections { target: win._backing; ignoreUnknownSignals: true; function onClosing(ev) { win.closeAsked(ev) } }
 
     readonly property string home: Quickshell.env("HOME")
     property var favorites: []
@@ -39,19 +66,37 @@ FloatingWindow {
     // without a view of its own and wrote "mirror" into views.toml as the folder's preference.)
     property bool sideBySide: false
     readonly property bool split: sideBySide
-    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onAskDrop: spec => win.dropMenu(spec) }
-    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide; onAskDrop: spec => win.dropMenu(spec) }
-    /// A drop held `Alt`, or was dragged with the right button: it asks instead of deciding.
-    /// Nothing has happened yet — the drop was not even accepted — so Cancel is truly nothing.
-    function dropMenu(spec) {
-        const n = spec.items.length
-        const what = n === 1 ? decodeURIComponent(spec.items[0].replace(/\/+$/, "").split("/").pop()) : n + " items"
-        menu.open([
-            { label: "Copy here", action: () => Kiki.Jobs.submit({ op: "copy", items: spec.items, dest: spec.dest }) },
-            { label: "Move here", action: () => Kiki.Jobs.submit({ op: "move", items: spec.items, dest: spec.dest }) },
-            { label: what, enabled: false, sep: true, action: () => {} },
-            { label: "Cancel", sep: true, action: () => {} },
-        ], spec.pos ? Qt.point(spec.pos.x, spec.pos.y) : Qt.point(win.width / 2, win.height / 2))
+    // A drop hands the focus to the pane it landed in: that is where the files now are.
+    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.left) }
+    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.right) }
+    /// The drop the IPC makes, shaped as Qt shapes a real one — which has no `modifiers` at all:
+    /// the keys held arrive folded into `proposedAction`, by the table measured in
+    /// `Pane.wantsCopy` (no key and Shift → Move, the source's proposal; Ctrl and Alt → Copy).
+    /// What the drop decided comes back. `ontoPane` names a pane as the target, which is what
+    /// tells the two trashes apart: `trash:///` on its own is the Trash in the SIDEBAR, which
+    /// trashes what is dropped on it, while the same URI aimed at a pane is the trash VIEW's own
+    /// folder — and nothing goes into that.
+    function fakeDrop(target, uris, dest, modifiers, ontoPane) {
+        const list = (uris || "").split(/[\r\n]+/).filter(u => u && !u.startsWith("#"))
+        if (!ontoPane && dest.startsWith("trash:")) {
+            if (list.length) ops.trashSelection(list)
+            return JSON.stringify({ accepted: list.length > 0, action: list.length ? "move" : "none", items: list.length })
+        }
+        const keys = (modifiers || "").toLowerCase().split(/[+,\s]+/)
+        const copy = keys.indexOf("ctrl") >= 0 || keys.indexOf("control") >= 0 || keys.indexOf("alt") >= 0
+        let took = Qt.IgnoreAction
+        const ev = {
+            accepted: false,
+            hasUrls: list.length > 0,
+            urls: list.map(u => ({ toString: () => u })),
+            hasText: false, text: "",
+            proposedAction: copy ? Qt.CopyAction : Qt.MoveAction,
+            accept: a => { ev.accepted = true; took = a === undefined ? ev.proposedAction : a }
+        }
+        target.dropInto(dest, ev)
+        return JSON.stringify({ accepted: ev.accepted && took !== Qt.IgnoreAction,
+                                action: took === Qt.CopyAction ? "copy" : took === Qt.MoveAction ? "move" : "none",
+                                items: list.length, focused: win.pane === win.right ? "right" : "left" })
     }
     function defaultView() { const d = Kiki.Settings.view["default"]; return !d || d === "mirror" ? "list" : d }
     // `[view] default = "mirror"` in an old settings.toml still means: start side by side.
@@ -86,7 +131,9 @@ FloatingWindow {
     /// left by default, the right after Swap — and the left when both (or neither) are local.
     readonly property var localPane: !split ? pane : (left.uri.indexOf("file://") === 0 || right.uri.indexOf("file://") !== 0 ? left : right)
     /// A path from the title bar, which only shows when there is one pane.
-    function navigateFromTitle(uri) { pane.open(uri) }
+    /// A pill in the title bar's path. In columns view one that is among the columns brings them
+    /// back to it instead of starting again from that folder.
+    function navigateFromTitle(uri) { const c = columnsPane(); if (c && c.backTo(uri)) return; pane.open(uri) }
     /// The breadcrumb that is on screen for the focused pane: the title bar's with one pane,
     /// that pane's own header side by side. Ctrl+L and the path menu go to it.
     function activeCrumb() { return !split ? toolbar.breadcrumb : (pane === right ? rightHeader.breadcrumb : leftHeader.breadcrumb) }
@@ -120,10 +167,23 @@ FloatingWindow {
         left.view = "list"; right.view = "list"
     }
     // Entering Mirror view from a local folder: the right pane gets the last location, else home.
+    function isRemote(uri) { return !!uri && !/^(file|trash):/.test(uri) }
+    function locationOf(uri) { const m = (uri || "").match(/^([a-z0-9]+):\/\/([^/]+)/); return m ? locations.find(l => l.plugin === m[1] && l.name === decodeURIComponent(m[2])) : undefined }
+    /// Side by side is a server and the folder it is kept beside (owner, 2026-09-21): there is a
+    /// button and a key for it only while a server is open — or while it is on, so there is
+    /// always a way out. Scripts can still put two local folders side by side (`shell split on`).
+    readonly property bool remoteOpen: split ? (isRemote(left.uri) || isRemote(right.uri)) : isRemote(pane.uri)
     function enterMirror() {
         if (sideBySide) return
         _enterSplit()
-        if (!right.uri) right.open(lastLocation && lastLocation.remoteUri ? lastLocation.remoteUri : "file://" + home)
+        // Coming from one pane on a server: the server goes to the right, as a location opened
+        // from the sidebar is laid out, and the folder it is paired with — or home — to the left.
+        if (isRemote(left.uri) && !isRemote(right.uri)) {
+            const u = left.uri, loc = locationOf(u)
+            if (loc) lastLocation = loc
+            right.open(u); left.open(loc && loc.localUri ? loc.localUri : "file://" + home)
+            focusPane(right)
+        } else if (!right.uri) right.open(lastLocation && lastLocation.remoteUri ? lastLocation.remoteUri : "file://" + home)
     }
     /// Back to one pane — the one you were in. The single layout draws `left`, so when the focus
     /// was on the right the two Pane objects change places: its folder, selection and history
@@ -131,7 +191,9 @@ FloatingWindow {
     /// for nothing), and the other folder waits in `right` for the layout to return.
     function leaveMirror() {
         if (!sideBySide) return
-        const keepRight = pane === right
+        // One pane again is the SERVER's pane, whichever had the focus; between two folders on
+        // this machine (a script's doing) it is the one in use.
+        const keepRight = isRemote(right.uri) ? true : (isRemote(left.uri) ? false : pane === right)
         if (keepRight) _swapPaneObjects()
         _swappedOnLeave = keepRight
         sideBySide = false
@@ -140,16 +202,43 @@ FloatingWindow {
     }
     /// The view menu and Ctrl+1/2/3 change the focused pane, side by side or not.
     function setView(v) { win.pane.view = v }
-    function toggleMirrorView() { if (win.split) win.leaveMirror(); else win.enterMirror() }
+    /// The button and Ctrl+4. `force` is the IPC's: a script may split two local folders.
+    function toggleMirrorView(force) { if (win.split) win.leaveMirror(); else if (force || win.remoteOpen) win.enterMirror() }
     function swapPanes() { const l = left.uri, r = right.uri; if (!l || !r) return; left.open(r); right.open(l) }
     // A remote URI opened directly (breadcrumb, IPC, Show in folder) opens in Mirror view with its location's local path beside it.
-    Connections { target: win.left; function onNavigated(uri) { const m = uri.match(/^([a-z]+):\/\/([^/]+)/); if (!m || m[1] === "file" || m[1] === "trash" || win.sideBySide || win.left.hasPref) return
+    /// A server URI opened in one pane pairs itself with its location's local folder — on
+    /// ARRIVING at the server, not on every step inside it: side by side turned off with the
+    /// server left on its own must stay off while folders in it are opened (owner, 2026-09-21:
+    /// "turned off side by side, double clicked a folder — it went back into side by side").
+    property string _leftHost: ""
+    function _hostOf(uri) { const m = (uri || "").match(/^([a-z]+):\/\/([^/]+)/); return m && m[1] !== "file" && m[1] !== "trash" ? m[1] + "://" + m[2] : "" }
+    // Leaving side by side can swap the two pane objects, so "the left pane" is another one now.
+    onLeftChanged: _leftHost = _hostOf(left.uri)
+    Connections { target: win.left; function onNavigated(uri) {
+        const from = win._leftHost, m = uri.match(/^([a-z]+):\/\/([^/]+)/)
+        win._leftHost = win._hostOf(uri)
+        if (!win._leftHost || win._leftHost === from || win.sideBySide || win.left.hasPref) return
         if (Kiki.Settings.view.smartView === false) return
         const loc = win.locations.find(l => l.plugin === m[1] && l.name === m[2]); if (!loc) return
         win.lastLocation = loc; win._enterSplit(); win.right.open(uri); if (loc.localUri) win.left.open(loc.localUri); win.focusPane(win.right) } }
     // Last mirror time per remote root, kept in settings so the bar can say "last mirrored 2 h ago".
     property var lastMirror: Kiki.Settings.mirror && Kiki.Settings.mirror.last ? Kiki.Settings.mirror.last : ({})
     function remoteUri() { return left.uri.startsWith("file://") ? right.uri : left.uri }
+    /// The server a pane is on, "" when neither is: what the toolbar's Disconnect names.
+    function remoteHost() { const u = [left.uri, right.uri].find(x => x !== "" && !/^(file|trash):/.test(x)); return u ? Kiki.Format.authority(u) : "" }
+    /// Let go of that server. A pane standing on it goes to the folder the location is paired
+    /// with, or home: left where it was it would only say the server had gone.
+    function disconnectRemote() { disconnectLocation(remoteHost()) }
+    /// Let go of a location by name: the toolbar's Disconnect and the sidebar's menu item both.
+    function disconnectLocation(host) {
+        if (!host) return
+        const loc = win.locations.find(l => l.name === host)
+        const to = loc && loc.localUri ? loc.localUri : "file://" + win.home
+        for (const p of [left, right]) if (p.uri !== "" && Kiki.Format.authority(p.uri) === host && !/^(file|trash):/.test(p.uri)) p.open(to)
+        Kiki.Daemon.request("Disconnect", { name: host }, (ok, err) => Kiki.Jobs.showToast({ text: err ? err.message : "Disconnected from " + host, undoable: false }))
+        // Side by side was that server and its folder: with the server gone it is one pane again.
+        if (!remoteOpen) leaveMirror()
+    }
     function localUri() { return left.uri.startsWith("file://") ? left.uri : right.uri }
     function recordMirror() { const m = Object.assign({}, lastMirror); m[remoteUri()] = Date.now(); lastMirror = m; Kiki.Daemon.request("SetSettings", { patch: { mirror: { last: m } } }) }
     function mirrorOptions(pos) {
@@ -165,7 +254,9 @@ FloatingWindow {
     function transfer(move) { if (split) ops.transferTo(otherPane().uri, move) }
     onSplitChanged: if (!split) mirrorOpen = false
     property bool mirrorOpen: false
-    function toggleMirror() { if (!split) { startMirror(true); return } mirrorOpen = !mirrorOpen }
+    // Leaving goes through the workspace's own `leave`, so Ctrl+M out of it puts it back at
+    // Configure exactly as the Cancel button does — and not on the table of the last run.
+    function toggleMirror() { if (!split) { startMirror(true); return } if (mirrorOpen) mirrorWs.leave(); else mirrorOpen = true }
     property string toast: ""
     // Search (plan 12). Folder scope filters the listing; other scopes open a results view.
     property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
@@ -202,11 +293,13 @@ FloatingWindow {
         const uris = selectedUris(); const target = uris.length ? uris : [pane.uri]
         const tool = id ? openInTools.find(t => t.id === id) : openInDefaultTool()
         if (!tool) return
-        Kiki.Daemon.request("OpenIn", { id: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+        // `tool`, not `id`: the request's own id is a number the daemon replies with, and a
+        // second `id` beside it took its place — every Alt+Enter was answered "missing id".
+        Kiki.Daemon.request("OpenIn", { tool: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
     function editSelected() {
         const uris = selectedUris(); if (!uris.length) return
-        const r = pane.listing.row(pane.selection.current)
+        const r = selectedRow()
         if (r && r.isDir) { enterProject(uris[0]); return }
         editAt(uris[0], 1)
     }
@@ -238,7 +331,10 @@ FloatingWindow {
         const windows = [{ role: "kiki", class: "", pid: Quickshell.processId }].concat(spawned)
         Kiki.Daemon.request("Arrange", { layout: "project", root: projectRoot, windows: windows, leftWidth: Kiki.Settings.project.width || 320 }, (ok, err) => { if (ok && ok.missing.length) Kiki.Jobs.showToast({ text: "Could not place: " + ok.missing.join(", "), undoable: false }) })
     }
-    function leaveProject() { projectMode = false; win.width = savedWidth; pane.open(projectRoot) }
+    // The tree took the keyboard when project mode began (`focus: win.projectMode`, and it forces
+    // the focus as it appears); hiding it hands the focus to nobody, so every shortcut — Escape
+    // included — was dead until something was clicked. Give the keymap its focus back by hand.
+    function leaveProject() { projectMode = false; win.width = savedWidth; pane.open(projectRoot); keys.forceActiveFocus() }
 
     // Share (plan 18)
     property var sharePlugins: []
@@ -246,14 +342,15 @@ FloatingWindow {
     /// One entry per share plugin, with its own icon. A plugin that names no targets is sent to
     /// at once — Mail opens a composer with the files attached, and a form in front of that only
     /// asks for what the composer is about to ask for.
-    function shareItems() {
-        const uris = selectedUris()
+    /// `of` names what is to be sent when it is not the selection — the row a columns menu was
+    /// raised over.
+    function shareItems(of) {
+        const uris = of || selectedUris()
+        // Each way of sending is a row of the menu itself — "Send via Tailscale ▸" — rather than
+        // all of them behind one "Share ▸": it is one level less to the device, and a plugin's
+        // targets fit in the one submenu the menu has. They are asked for when the row is opened.
         // One that cannot work here — its program is not installed — stays in the menu, dimmed,
         // saying what is missing: it tells the user the thing exists and what it would take.
-        // Each way of sending is a row of the menu itself — "Send via LocalSend ▸" — rather than
-        // all of them behind one "Share ▸": it is one level less to the device, and a plugin's
-        // targets fit in the one submenu the menu has. They are asked for when the row is opened
-        // (LocalSend looks for two seconds). One that cannot work here stays, dimmed, saying why.
         const items = sharePlugins.map(p => {
             const it = { label: "Send via " + p.name, icon: p.icon || "share", enabled: uris.length > 0 && !p.unavailable, key: p.unavailable ? "not installed" : "" }
             if (p.unavailable) return it
@@ -366,14 +463,25 @@ FloatingWindow {
         onFolderNeeded: (spec, reply) => portal.pick(
             { mode: "open", directory: true, title: spec.title, currentFolder: (spec.start || "").replace(/^file:\/\//, "") || win.home },
             uris => reply(uris && uris.length ? uris[0].replace(/\/+$/, "") : ""))
+        // Which view will show a folder being made, so its new row can be named where the user is
+        // looking. Columns answers for the column that folder is in; everywhere else nobody does,
+        // and Ops falls back to the pane's own listing and list view's editor.
+        onListingNeeded: (spec, reply) => { const c = win.columnsPane(); reply(c ? c.listingFor(spec.dest) : null) }
         onCopyText: text => Quickshell.execDetached(["wl-copy", text])
     }
     property alias clipboard: ops.clipboard
     function copySelection(cut) { ops.copySelection(cut, win.selectedUris()) }
     function paste() { ops.paste() }
     function trashSelection() { if (win.galleryPane()) win.galleryPane().keepPlace(); ops.trashSelection(win.selectedUris()) }
-    function newFolder() { ops.newFolder() }
-    function renameSelected() { ops.renameSelected() }
+    /// Ctrl+Shift+N. The folder is made in the folder being worked in, which in columns is the key
+    /// column's — not the one the pane is standing in, several columns back.
+    function newFolder() { const c = win.columnsPane(); ops.newFolder(c ? c.newFolderUri() : "") }
+    /// F2. Columns has an editor of its own, on the row the key column highlights: the pane's
+    /// selection is not what that view shows, and switching to list view to rename would both
+    /// leave the view and rename the wrong file.
+    function renameSelected() { const c = win.columnsPane(); if (c) c.beginRename(); else ops.renameSelected() }
+    /// Which row has the inline editor open, for scripts and tests; -1 when none.
+    function renamingRow() { const c = win.columnsPane(); return c ? c.renamingIndex : pane.renamingIndex }
     function copyPath() { ops.copyPath(win.selectedUris()) }
     // View menu (plan 02): one toolbar button, the three views, then hidden files.
     // A menu hung under the toolbar item that opened it, in window coordinates.
@@ -434,13 +542,13 @@ FloatingWindow {
     function openWithItems() { return [{ label: "Looking…", enabled: false, action: () => {} }] }
     function loadOpenWith(uris, apply) {
         apply(win.openWithItems())
-        if (uris.length !== 1) { apply([{ label: "Select one file", enabled: false, action: () => {} }]); return }
-        Kiki.Daemon.request("OpenWith", { uri: uris[0] }, (ok, err) => {
+        // A selection is offered what opens all of it, and the app is handed the lot.
+        Kiki.Daemon.request("OpenWith", { uris: uris }, (ok, err) => {
             if (!ok) { apply([{ label: err ? err.message : "Nothing offered", enabled: false, action: () => {} }]); return }
             const apps = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), icon: "open",
                                              action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: uris },
                                                  (r, e) => { if (e) Kiki.Jobs.showToast({ text: e.message, undoable: false }) }) }))
-            apply(apps.length ? apps : [{ label: "No application for this kind", enabled: false, action: () => {} }])
+            apply(apps.length ? apps : [{ label: uris.length > 1 && !ok.mime ? "No application opens all of these" : "No application for this kind", enabled: false, action: () => {} }])
         })
     }
     function openWithMenu(pos) {
@@ -477,9 +585,20 @@ FloatingWindow {
             { label: "Get info", key: "Ctrl+I", action: () => { win.inspectedUri = uri; win.inspectedRow = row; win.inspectorRequested = true } },
             { label: "Copy", key: "Super+C", sep: true, action: () => ops.copySelection(false, uris) },
             { label: "Cut", key: "Super+X", action: () => ops.copySelection(true, uris) },
-            { label: "Compress…", sep: true, action: () => compressDialog.open(uris, folder) },
+            // The same rows, in the same order, as list view's menu (`contextItems`) — this one
+            // had fallen behind it: no Paste, no New folder, no "Extract to…" and none of the
+            // ways of sending. Paste goes into the folder the row is in; New folder goes where
+            // Ctrl+Shift+N does, inside the row when the row is a folder.
+            { label: "Paste", key: "Super+V", enabled: win.clipboard.uris.length > 0, action: () => ops.paste(folder) },
+            // On the row the menu was raised over: the right click made that row the column's
+            // highlighted one, as a right click does in a list.
+            { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
+            { label: "Rename", key: "F2", action: () => win.renameSelected() },
+            { label: "Compress…", action: () => compressDialog.open(uris, folder) },
             { label: "Extract here", enabled: !!row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
+            { label: "Extract to…", enabled: !!row && row.kind === "archive", action: () => ops.extractTo(row.name, uri) },
             { label: "Copy path", action: () => ops.copyPath(uris) },
+            ...win.shareItems(uris),
             ...win.hereItems(row && row.isDir ? uri : folder, row && row.isDir ? [] : uris),
             { label: "Move to Trash", key: "Del", danger: true, sep: true, action: () => ops.trashSelection(uris) },
         ]
@@ -491,7 +610,10 @@ FloatingWindow {
     function folderItems(folderUri) {
         pane.selection.clear()
         const items = win.contextItems(-1)
-        if (folderUri && folderUri !== pane.uri) {
+        // Named even when it IS the folder the pane is on: `New folder` untouched goes where the
+        // KEY COLUMN is, which in columns is another folder entirely once one has been drilled
+        // into — and the menu belongs to the column it was raised over, not to that one.
+        if (folderUri) {
             for (const it of items) {
                 if (it.label === "Paste") it.action = () => ops.paste(folderUri)
                 else if (it.label === "New folder") it.action = () => ops.newFolder(folderUri)
@@ -546,6 +668,21 @@ FloatingWindow {
     /// the key column, in a folder the pane need not be standing in — so while it is showing, it
     /// is asked instead of the pane. Everything destructive comes through here.
     function selectedUris() { const c = win.columnsPane(); return c ? c.selectedUris() : ops.selectedUris() }
+    /// The row that goes with it, for the callers that need to know what KIND of thing is chosen.
+    /// Asked of the same place as the URIs: a URI from the columns paired with a row from the
+    /// pane's own selection is two different files.
+    function selectedRow() { const c = win.columnsPane(); return c ? c.selectedRow() : pane.listing.row(pane.selection.current) }
+    /// The context menu for what is chosen now — the Menu key's list, and the one the IPC acts
+    /// through. In columns the chosen row can live in a folder the pane is not standing in, so it
+    /// is asked for by URI, exactly as the right click on that row is; with nothing highlighted
+    /// there, the menu is the key column's folder's, as a right click on its empty space gives.
+    function contextItemsNow() {
+        const c = win.columnsPane()
+        if (!c) return win.contextItems(pane.selection.current)
+        const uris = c.selectedUris(), r = c.selectedRow()
+        if (uris.length && r) return win.contextItemsForUri(uris[0], r)
+        return win.folderItems(c.columns.length ? c.columns[c.focusCol].uri : pane.uri)
+    }
     /// An item's rectangle in window coordinates, as the geometry queries report it.
     function rectOf(it) {
         const p = it.mapToItem(null, 0, 0)
@@ -657,7 +794,7 @@ FloatingWindow {
         case "ai": win.openAiHere(win.pane.uri, win.selectedUris()); return true
         case "mirror": win.toggleMirror(); return true
         case "transfer": if (!win.split) return false; win.transfer(true); return true
-        case "project": if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(); win.enterProject(u.length && win.pane.listing.row(win.pane.selection.current).isDir ? u[0] : win.pane.uri) } return true
+        case "project": if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(), r = win.selectedRow(); win.enterProject(u.length && r && r.isDir ? u[0] : win.pane.uri) } return true
         case "eject": { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (!d) return false; Kiki.Daemon.request("Eject", { uri: d.uri }); return true }
         }
         return false
@@ -667,13 +804,13 @@ FloatingWindow {
         const cur = pane.selection.current < 0 ? (delta > 0 ? -1 : n) : pane.selection.current
         const next = Math.max(0, Math.min(n - 1, cur + delta))
         if (extend) pane.selection.range(next); else pane.selection.set(next)
-        viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(next)
+        const v = win.currentView(); if (v && v.ensureVisible) v.ensureVisible(next)
     }
     function selectAt(index, extend) {
         const n = pane.listing.count; if (!n) return
         const i = Math.max(0, Math.min(n - 1, index))
         if (extend) pane.selection.range(i); else pane.selection.set(i)
-        viewLoader.item && viewLoader.item.ensureVisible && viewLoader.item.ensureVisible(i)
+        const v = win.currentView(); if (v && v.ensureVisible) v.ensureVisible(i)
     }
     /// Jobs a person would call running: not the machinery (an undo's inverse ops, a preflight).
     property int runningShown: 0
@@ -700,9 +837,21 @@ FloatingWindow {
         const v = (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
         return v && v.focusLeft ? v : null
     }
+    /// The focused pane's view item when it is the list, else null.
+    // By `columnWidths`, which only the list has: columns view resizes its columns too, and has a
+    // `setColumnWidth` of its own.
+    function listPane() { const v = currentView(); return v && v.columnWidths ? v : null }
+    /// The list's column widths, by role, or nothing when the focused pane is not showing a list.
+    /// The widths themselves are global (settings.toml), so both panes always agree on them.
+    function listColumnWidths() { const l = listPane(); return l ? l.columnWidths() : ({}) }
     // Up/Down step one row: in the icon grid that is one row of tiles, elsewhere one entry.
-    readonly property int rowStep: viewLoader.item && viewLoader.item.perRow ? viewLoader.item.perRow : 1
-    readonly property int pageStep: viewLoader.item && viewLoader.item.pageSize ? viewLoader.item.pageSize : 20
+    // The view of the pane that has the focus — as a property, so what hangs from it follows a
+    // change of pane. The keys scrolled, and took their step from, the LEFT view whichever pane
+    // they were typed into: side by side, the right pane's selection walked out of sight and
+    // its list never followed (owner: "on the remote side, I can't scroll to top/bottom items").
+    readonly property var activeView: (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
+    readonly property int rowStep: activeView && activeView.perRow ? activeView.perRow : 1
+    readonly property int pageStep: activeView && activeView.pageSize ? activeView.pageSize : 20
 
     Connections {
         target: Kiki.Daemon
@@ -720,7 +869,7 @@ FloatingWindow {
     Item {
         id: keys
         anchors.fill: parent
-        focus: !win.filterOpen && !searchOverlay.visible && !shortcuts_.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
+        focus: !win.filterOpen && !searchOverlay.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
             && !shareSheet.visible && !compressDialog.visible && !win.projectMode
             && !keysWin.visible && !aboutDlg.visible && !jobLog.visible
@@ -760,8 +909,10 @@ FloatingWindow {
             case Qt.Key_Left: if (alt) pane.back(); else if (win.galleryPane()) { if (!win.galleryPane().step(-1)) pane.up() } else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else pane.up(); break
             case Qt.Key_Right: if (alt) pane.forward(); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().focusRight(); else win.enterSelected(); break
             case Qt.Key_E: if (win.vimKeys) win.editSelected(); else return; break
-            case Qt.Key_Menu: menu.open(win.contextItems(pane.selection.current), Qt.point(400, 200)); break
-            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
+            case Qt.Key_Menu: menu.open(win.contextItemsNow(), Qt.point(400, 200)); break
+            // The mirror workspace answers Escape itself where it has something to stop — the
+            // compare on its Preflight screen — and leaves it alone on its other screens.
+            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (win.mirrorOpen && mirrorWs.escapeKey()) { /* the workspace stopped its compare */ } else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
             case Qt.Key_I: if (win.vimKeys) win.inspectorRequested = !win.inspectorRequested; else return; break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             default:
@@ -806,35 +957,17 @@ FloatingWindow {
         /// A drop, without a pointer: `uris` is one or more URIs separated by newlines — the very
         /// shape of a `text/uri-list`, and not JSON, because Quickshell's IPC eats square brackets
         /// out of an argument. `dest` is the folder it lands in — `trash:///` is the sidebar's
-        /// Trash — and `modifiers` any of ctrl/shift/alt. It goes through the same `Pane.dropInto`
-        /// a real drag does — the object below is shaped like the `DragEvent` Qt would hand it — so
-        /// a flow drives the code a hand drives, less the press and the pointer. Answers what the
-        /// drop decided.
-        function drop(uris: string, dest: string, modifiers: string): string {
-            const list = (uris || "").split(/[\r\n]+/).filter(u => u && !u.startsWith("#"))
-            if (dest.startsWith("trash:")) {
-                if (list.length) ops.trashSelection(list)
-                return JSON.stringify({ accepted: list.length > 0, action: list.length ? "move" : "none", items: list.length })
-            }
-            const named = { ctrl: Qt.ControlModifier, control: Qt.ControlModifier, shift: Qt.ShiftModifier, alt: Qt.AltModifier }
-            const words = (modifiers || "").split(/[+,\s]+/).map(m => m.toLowerCase())
-            let mods = Qt.NoModifier
-            for (const m of words) if (m && named[m] !== undefined) mods |= named[m]
-            let took = Qt.IgnoreAction
-            const ev = {
-                accepted: false,
-                hasUrls: list.length > 0,
-                urls: list.map(u => ({ toString: () => u })),
-                hasText: false, text: "",
-                // `right` stands in for a drag the right button started, which arrives as a mark
-                // in the payload rather than as a button — there is no pointer here to press.
-                formats: words.indexOf("right") >= 0 ? ["text/uri-list", win.pane.askKey] : ["text/uri-list"],
-                modifiers: mods,
-                accept: a => { ev.accepted = true; took = a === undefined ? Qt.MoveAction : a }
-            }
-            win.pane.dropInto(dest, ev)
-            return JSON.stringify({ accepted: ev.accepted, action: took === Qt.CopyAction ? "copy" : took === Qt.MoveAction ? "move" : "none",
-                                    items: list.length, asked: menu.visible })
+        /// Trash — and `modifiers` any of ctrl/shift/alt. It goes through the same
+        /// `Pane.dropInto` a real drag does, with an event shaped as Qt shapes one (`fakeDrop`: the
+        /// keys folded into `proposedAction`), so a flow drives the code a hand drives, less the
+        /// press and the pointer. Answers what the drop decided.
+        function drop(uris: string, dest: string, modifiers: string): string { return win.fakeDrop(win.pane, uris, dest, modifiers) }
+        /// The same, into a pane named `left` or `right` rather than the focused one — the pane a
+        /// drop lands in takes the focus, and this is how a flow sees that happen. Naming a pane
+        /// is also how a flow drops on the trash VIEW's folder rather than on the sidebar's
+        /// Trash: the same `trash:///`, two different targets, and this one is refused.
+        function dropOn(side: string, uris: string, dest: string, modifiers: string): string {
+            return win.fakeDrop(side === "right" ? win.right : win.left, uris, dest, modifiers, true)
         }
         /// The yes/no question, for scripts and tests: `yes` or `no` answers it, anything else
         /// leaves it up. Either way, answers what it was asking.
@@ -877,20 +1010,79 @@ FloatingWindow {
             else win.shareTargets(p, uris)
         }
         function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else { settingsWin.close(); keys.forceActiveFocus() } }
-        function mirror(on: string): void { if (on === "open") win.startMirror(true); else win.mirrorOpen = false }
+        /// The mirror workspace (plan 08's four screens) without a pointer. One word and its
+        /// arguments, space-separated, because Quickshell's IPC hands a function strings:
+        ///   `open` / `download`   start a run from the local or the remote side
+        ///   `set <option> <value>`  direction, detector, deletes, filters, window, windowValue,
+        ///                           windowUnit, `offset auto` | `offset <hours>` — what the
+        ///                           Configure screen's controls set
+        ///   `preflight`           the Preflight button: scan, then Review
+        ///   `tab <all|new|changed|equal|delete>`  a Review tab
+        ///   `check <row> <on|off>`  a click on a row's box
+        ///   `report`              what "Save report…" saves, into `report` below
+        ///   `run`                 the Mirror button; `confirm yes|no` answers the large-delete
+        ///                         question it may ask
+        ///   `cancel`              the Cancel button: the compare on Preflight, the run on Running
+        ///   `escape`              what the Escape key does — Cancel on Preflight, nothing else
+        ///   `back` / `close`      Back, and the button that leaves
+        ///   `rules`               read the filter rules, into `rules` below
+        ///   `rules-edit`          the Edit rules… button
+        ///   `rules-set <lines>`   the rules dialog's Done: one `<kind> <value>` per LINE, because
+        ///                         IPC eats the quotes out of an argument; nothing at all is "no
+        ///                         rules", which is not the same as the defaults
+        ///   `rules-defaults`      Restore defaults, and Done
+        ///   `rules-cancel`        the rules dialog's Cancel
+        /// Each of them calls the function the click calls, so there is no second path to drift.
+        /// Answers what the workspace is showing: screen, options, plan counts and rows, the
+        /// question if it is up, the Done summary and the filter rules.
+        function mirror(action: string): string {
+            const a = (action || "").trim().split(/\s+/)
+            switch (a[0]) {
+            case "open": win.startMirror(true); break
+            case "download": win.startMirror(false); break
+            case "close": mirrorWs.leave(); break
+            case "set": mirrorWs.setOption(a[1], a[2]); break
+            case "preflight": mirrorWs.preflight(); break
+            case "tab": mirrorWs.setTab(a[1] || "all"); break
+            case "check": mirrorWs.toggleRow(parseInt(a[1]) || 0, a[2] !== "off"); break
+            case "report": mirrorWs.fetchReport(); break
+            // The button itself: the chooser comes up; `save <uri>` is what choosing that file does.
+            case "saveReport": mirrorWs.saveReport(); break
+            case "save": if (portal.visible) portal.finish([a[1]]); break
+            case "run": mirrorWs.mirror(false); break
+            case "confirm": mirrorWs.answerLargeDelete(a[1] === "yes"); break
+            case "cancel": mirrorWs.stop(); break
+            case "escape": mirrorWs.escapeKey(); break
+            case "back": mirrorWs.back(); break
+            // The filter rules: `rules` reads them, `rules-edit` is the Edit rules… button, and
+            // `rules-set` is the dialog's Done. The rules come one per line rather than as JSON,
+            // because IPC strips the quotes out of an argument — the same reason `drop` takes its
+            // URIs newline-separated.
+            case "rules": mirrorWs.loadRules(); break
+            case "rules-edit": mirrorWs.editRules(); break
+            case "rules-set": mirrorWs.setRules(action.replace(/^[ \t]*rules-set[ \t]*/, "")); break
+            case "rules-defaults": mirrorWs.restoreRules(); break
+            case "rules-cancel": mirrorWs.cancelRules(); break
+            }
+            return JSON.stringify(mirrorWs.info())
+        }
         function mirrorScreen(): string { return win.mirrorOpen ? mirrorWs.screen : "" }
         function focusPane(side: string): void { win.focusPane(side === "right" ? win.right : win.left) }
         function transfer(kind: string): void { win.transfer(kind === "move") }
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
+        /// The sidebar menu's Disconnect, by name; `locationDots` is which locations wear the green dot.
+        function disconnectLocation(name: string): void { win.disconnectLocation(name) }
+        function locationDots(): string { return JSON.stringify(win.locations.filter(l => l.connected).map(l => l.name)) }
         function state(): string {
-            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.pane.renamingIndex,
+            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.renamingRow(),
                 daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
-                dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, shortcuts: shortcuts_.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
+                dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
+                listColumns: win.listColumnWidths() })
         }
         /// Side by side, for scripts and tests: `toggle`; `drag <px>` is what dragging the line
         /// between the panes to that x does, `end` lets go, `reset` is the double click.
         function sideBySide(action: string): string {
-            if (action === "toggle") win.toggleMirrorView()
+            if (action === "toggle") win.toggleMirrorView(true)
             else if (action.indexOf("drag ") === 0) win.dragDivider(paneRow.width, parseInt(action.slice(5)) || 0)
             else if (action === "end") win.endDividerDrag()
             else if (action === "reset") win.resetDivider()
@@ -902,17 +1094,9 @@ FloatingWindow {
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
         /// What the open menu says, for scripts and tests: each row's label, tick and whether it is live.
         function menuItems(): string { return JSON.stringify(menu.visible ? menu.items.map(i => ({ label: i.label, checked: i.checked === true, enabled: !menu.off(i) })) : []) }
-        /// Click an item in the menu that is open, by label — what the pointer does to it.
-        function menuClick(label: string): void {
-            const it = menu.visible ? menu.items.find(i => i.label === label) : null
-            if (!it || menu.off(it) || !it.action) return
-            menu.close()
-            it.action()
-        }
         function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
         function toggleSearch(): void { win.toggleSearch() }
         function inspector(on: string): void { win.inspectorRequested = on === "" ? !win.inspectorRequested : on === "on" }
-        function shortcuts(): void { if (shortcuts_.visible) shortcuts_.close(); else shortcuts_.open() }
         function openWith(): void { if (menu.visible) menu.close(); else win.openWithMenu() }
         function columns(action: string): string {
             const c = win.columnsPane(); if (!c) return ""
@@ -925,6 +1109,19 @@ FloatingWindow {
                                     inspected: c.inspectedUri, scrollX: Math.round(c.scrollX), width: Math.round(c.stripWidth),
                                     columnWidth: c.columnWidth, infoWidth: c.inspectedUri !== "" ? c.inspectorWidth : 0 })
         }
+        /// A list column's width, for scripts and tests, following `columns info <px>`:
+        /// `listColumn <role> <px>` is what dragging that column's edge to that width does — the
+        /// same function, clamped the same way — `listColumn <role> reset` is the double click on
+        /// it, and `listColumn` alone only reads. Answers the widths the list is drawing, name
+        /// included; `shell state` carries them too.
+        function listColumn(role: string, px: string): string {
+            const l = win.listPane()
+            if (l && role) {
+                if (px === "reset") l.resetColumnWidth(role)
+                else if (px !== "") { l.setColumnWidth(role, parseInt(px) || 0); l.endColumnResize() }
+            }
+            return JSON.stringify(win.listColumnWidths())
+        }
         function sidebar(on: string): void { win.sidebarShown = on === "" ? !win.sidebarShown : on === "on" }
         function undo(): void { Kiki.Jobs.undo() }
         function redo(): void { Kiki.Jobs.redo() }
@@ -934,7 +1131,7 @@ FloatingWindow {
             if (action === "open") activity.open(); else if (action === "close") activity.close(); else if (action === "toggle") activity.toggle(); else if (action === "clear") Kiki.Jobs.clear()
             return JSON.stringify({ open: activity.visible, orb: Kiki.Jobs.orbState(), tip: Kiki.Jobs.orbTip(), entries: Kiki.Jobs.shown().map(j => ({ id: j.id, headline: Kiki.Jobs.headline(j), state: j.state, line: Kiki.Jobs.live(j) ? Kiki.Jobs.statusLine(j) : Kiki.Jobs.completion(j) })) })
         }
-        function contextMenu(action: string): void { const it = win.contextItems(win.pane.selection.current).find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
+        function contextMenu(action: string): void { const it = win.contextItemsNow().find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
         /// The Add-location form, for scripts and tests: pick a kind by scheme, a page or a
         /// credentials tab by name.
@@ -970,8 +1167,8 @@ FloatingWindow {
         /// What Escape does, for a script that cannot be sure what the last step left behind.
         function dismiss(): void {
             win.pane.renamingIndex = -1
+            const cols = win.columnsPane(); if (cols) cols.cancelRename()
             menu.close()
-            if (shortcuts_.visible) shortcuts_.close()
             if (searchOverlay.visible) searchOverlay.close()
             win.filterOpen = false
             win.pane.selection.clear()
@@ -1016,6 +1213,10 @@ FloatingWindow {
             onToggleMirror: win.toggleMirror()
             onNavigate: uri => win.navigateFromTitle(uri)
             split: win.split; mirror: win.mirrorOpen
+            remoteHost: win.split ? win.remoteHost() : ""
+            remoteOpen: win.remoteOpen
+            crumbUri: !win.split && win.activeView && win.activeView.shownUri ? win.activeView.shownUri : ""
+            onDisconnect: win.disconnectRemote()
             locations: win.locations
             repo: win.repo
             onViewMenu: win.viewMenu()
@@ -1038,6 +1239,8 @@ FloatingWindow {
                 width: parent.width; height: parent.height
                 localUri: win.localUri(); remoteUri: win.remoteUri(); home: win.home
                 onClosed: win.mirrorOpen = false
+                onSaveWanted: (name, reply) => portal.pick({ mode: "save", title: "Save the mirror report", currentFolder: win.home, currentName: name },
+                                                           uris => reply(uris && uris.length ? uris[0] : ""))
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
             }
             // Off for now: the strip above the two panes is gone, and "Mirror to …", Swap and
@@ -1066,7 +1269,7 @@ FloatingWindow {
                     id: leftCol
                     objectName: "pane-left"
                     width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0)); height: parent.height
-                    UI.PaneHeader { objectName: "pane-header-left"; visible: win.split; width: parent.width; pane: win.left; home: win.home; id: leftHeader; onClicked: win.focusPane(win.left); onPathMenu: c => win.paneHeaderPathMenu(win.left, c) }
+                    UI.PaneHeader { objectName: "pane-header-left"; visible: win.split; width: parent.width; pane: win.left; view: viewLoader.item; home: win.home; id: leftHeader; onClicked: win.focusPane(win.left); onPathMenu: c => win.paneHeaderPathMenu(win.left, c) }
                     UI.FilterBar {
                         id: leftFilter
                         visible: win.filterOpen && win.pane === win.left
@@ -1091,6 +1294,7 @@ FloatingWindow {
                         // handler was never asked: a press outside the holder's own 0×0 is not
                         // offered to what the holder contains.)
                         UI.PaneFocus { objectName: "pane-focus-left"; anchors.fill: parent; z: 100; active: win.split; onWanted: if (win.pane !== win.left) win.focusPane(win.left) }
+                        UI.PaneConnecting { anchors.fill: parent; z: 49; pane: win.left }
                         UI.PaneError { anchors.fill: parent; z: 50; pane: win.left; onRetry: win.left.listing.open(win.left.uri) }
                     }
                 }
@@ -1118,7 +1322,7 @@ FloatingWindow {
                     objectName: "pane-right"
                     visible: win.split
                     width: win.split ? parent.width - win.leftPaneWidth(parent.width) - 1 : 0; height: parent.height
-                    UI.PaneHeader { objectName: "pane-header-right"; width: parent.width; pane: win.right; home: win.home; id: rightHeader; onClicked: win.focusPane(win.right); onPathMenu: c => win.paneHeaderPathMenu(win.right, c) }
+                    UI.PaneHeader { objectName: "pane-header-right"; width: parent.width; pane: win.right; view: rightLoader.item; home: win.home; id: rightHeader; onClicked: win.focusPane(win.right); onPathMenu: c => win.paneHeaderPathMenu(win.right, c) }
                     UI.FilterBar {
                         id: rightFilter
                         visible: win.filterOpen && win.pane === win.right
@@ -1141,6 +1345,7 @@ FloatingWindow {
                         // handler was never asked: a press outside the holder's own 0×0 is not
                         // offered to what the holder contains.)
                         UI.PaneFocus { objectName: "pane-focus-right"; anchors.fill: parent; z: 100; active: win.split; onWanted: if (win.pane !== win.right) win.focusPane(win.right) }
+                        UI.PaneConnecting { anchors.fill: parent; z: 49; pane: win.right }
                         UI.PaneError { anchors.fill: parent; z: 50; pane: win.right; onRetry: win.right.listing.open(win.right.uri) }
                     }
                 }
@@ -1169,7 +1374,7 @@ FloatingWindow {
                 { key: "Enter", label: "open" }, { key: "←", label: "up" }, { key: "→", label: "into" },
                 { key: "^I", label: "info" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" },
                 { key: "❖C", label: "copy" }, { key: "❖V", label: "paste" }, { key: "/", label: "filter" },
-                { key: "?", label: "keys" }])
+                { key: "^?", label: "keys" }])
             statusInset: 38      // the orb stands at the right end
             status: (win.runningShown ? win.runningShown + " running · " : "") + win.countText()
         }
@@ -1217,7 +1422,7 @@ FloatingWindow {
             { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
             { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
         ], Qt.point(40, 200))
-        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Connection Log…", sep: true, action: () => jobLog.openLocation(loc.name) }, { label: "Disconnect", action: () => Kiki.Daemon.request("Disconnect", { name: loc.name }) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
+        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Connection Log…", sep: true, action: () => jobLog.openLocation(loc.name) }, { label: "Disconnect", action: () => win.disconnectLocation(loc.name) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
     }
 
     // Mousing into the left edge brings the hidden favorites panel back.
@@ -1241,7 +1446,6 @@ FloatingWindow {
         onRevealUri: uri => { const r = uri.replace(/\/[^/]*$/, "") || uri; win.pane.open(r) }
         onClosed: keys.forceActiveFocus()
     }
-    UI.ShortcutsOverlay { id: shortcuts_; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.KeymapWindow { id: keysWin; parent: win.contentItem; keymap: keymap; onClosed: keys.forceActiveFocus() }
     UI.AboutDialog { id: aboutDlg; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.ContextMenu { id: menu; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
@@ -1278,10 +1482,10 @@ FloatingWindow {
         if (loc.image) items.push({ label: "Remove Image", action: () => set("") })
         return items
     }
-    UI.PortalDialog { id: portal; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
+    UI.PortalDialog { id: portal; objectName: "portal"; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
     UI.SettingsWindow { id: settingsWin; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
-    UI.ConfirmDialog { id: confirm; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
+    UI.ConfirmDialog { id: confirm; objectName: "confirm"; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.integration.asked === false) integrationDialog.open() } }
     UI.ShareSheet { id: shareSheet; anchors.fill: parent }
     UI.CompressDialog { id: compressDialog; anchors.fill: parent; onSubmit: (archive, format) => ops.compress(items, archive, format) }

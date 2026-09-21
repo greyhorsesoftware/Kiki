@@ -19,6 +19,8 @@ fn setup() -> std::path::PathBuf {
     std::env::set_var("KIKI_PLUGIN_DIR", dir.join("plugins"));
     assert_eq!(plugin::inventory().len(), 1);
     std::env::set_var("KIKI_CONFIG_DIR", dir.join("config"));
+    // The mirror it runs writes an audit log; not into the developer's own state directory.
+    std::env::set_var("KIKI_STATE_DIR", dir.join("state"));
     // No Secret Service in CI: a fake secret-tool that always succeeds and stores nothing.
     let fake = dir.join("secret-tool");
     std::fs::write(&fake, "#!/bin/sh\nif [ \"$1\" = lookup ]; then exit 1; fi\ncat >/dev/null; exit 0\n").unwrap();
@@ -135,7 +137,7 @@ fn stub_plugin_end_to_end() {
     // Two transfers at once on one plugin. Binary frames carry no id, so the only way the daemon
     // can tell whose bytes are whose is to serialise them; before it did, the second Read took the
     // first one's frames — in a mirror, one file's bytes written to another file's path.
-    // `slow.bin` streams over about 180 ms, so the second request certainly starts mid-stream.
+    // `slow.bin` streams over about half a second, so the second request certainly starts mid-stream.
     let read = |path: &str| {
         let mut got = Vec::new();
         let n = session
@@ -156,9 +158,9 @@ fn stub_plugin_end_to_end() {
         let b = sc.spawn(|| read("/docs/notes.txt"));
         (a.join().unwrap(), b.join().unwrap())
     });
-    assert_eq!(slow.0.len(), 3072, "the slow read kept its own frames");
+    assert_eq!(slow.0.len(), 8192, "the slow read kept its own frames");
     assert!(slow.0.iter().all(|&b| b == 7), "and they were its own bytes");
-    assert_eq!(slow.1, 3072);
+    assert_eq!(slow.1, 8192);
     assert_eq!(quick.0, b"hello", "the read that began mid-stream got what it asked for");
     assert_eq!(quick.1, 5);
 

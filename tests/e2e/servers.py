@@ -1,14 +1,15 @@
-"""Throwaway servers for the flows that need a real one — the real ones: OpenSSH's `sshd` and
-`vsftpd`, each run as the user running the tests, on a high port, with its own keys and config, no
-root. Both serve a folder of the fixture, so a transfer is checked where it matters — on disk.
+"""Throwaway servers for the flows that need a real one — the real ones: OpenSSH's `sshd`,
+`vsftpd` and Samba's `smbd`, each run as the user running the tests, on a high port, with its own
+keys and config, no root. Each serves a folder of the fixture, so a transfer is checked where it
+matters — on disk.
 
-    sudo pacman -S openssh vsftpd
+    sudo pacman -S openssh vsftpd samba
 
 A flow whose server is not installed skips those pairs by name. There is no stand-in: an FTP
 server written in Python was used here once, and under a few hundred files in quick succession it
 stopped answering — which looked for all the world like kiki hanging on a large upload.
 """
-import os, shutil, socket, subprocess
+import getpass, os, shutil, socket, subprocess
 from harness import wait_for
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,23 @@ def sshd_bin():
     return shutil.which("sshd") or next((p for p in ["/usr/bin/sshd", "/usr/sbin/sshd"] if os.path.exists(p)), None)
 
 
+def smbd_bin():
+    return shutil.which("smbd") or next((p for p in ["/usr/bin/smbd", "/usr/sbin/smbd"] if os.path.exists(p)), None)
+
+
+def pdbedit_bin():
+    return shutil.which("pdbedit") or next((p for p in ["/usr/bin/pdbedit", "/usr/sbin/pdbedit"] if os.path.exists(p)), None)
+
+
+def gvfsd_bin():
+    """GVfs's session daemon, which is what kiki's SMB really talks to (plan 25)."""
+    return next((p for p in ["/usr/lib/gvfsd", "/usr/libexec/gvfsd", "/usr/lib/gvfs/gvfsd"] if os.path.exists(p)), None)
+
+
+def gvfsd_smb_bin():
+    return next((p for p in ["/usr/lib/gvfsd-smb", "/usr/libexec/gvfsd-smb", "/usr/lib/gvfs/gvfsd-smb"] if os.path.exists(p)), None)
+
+
 def missing():
     """Why no server can be started here, or None when at least one can."""
     if not sshd_bin() and not vsftpd_bin():
@@ -42,6 +60,16 @@ def missing():
 # the run of the fixture's folder. kiki still sends a password — anonymous FTP takes any — so
 # "the password is in no log" is still a test of something.
 FTPS_USER, FTPS_PASSWORD = "anonymous", "s3cret"
+
+# And the SMB server. `smbd` without root cannot change uid, so every share is forced to the user
+# running the tests and the account is that user's name — but the password is Samba's own, kept in
+# a passdb of the run's, never the machine's, so a wrong one is really refused.
+SMB_PASSWORD = "kiki-e2e-smb"
+SMB_SHARE, SMB_GUEST_SHARE = "files", "pub"
+
+
+def smb_user():
+    return getpass.getuser()
 
 
 def remember(pid):
@@ -135,6 +163,109 @@ class Servers:
             raise RuntimeError("vsftpd did not listen: " + open(os.path.join(d, "vsftpd.out")).read())
         return port
 
+    def start_smb(self, root, guest_root, tag="smbd", protocol="SMB2"):
+        """Samba serving `root` (signed in to) and `guest_root` (open to all), as the launching
+        user, on a high port, with a passdb, a lock directory and a log of its own.
+
+        What a non-root `smbd` actually needs, learnt the hard way:
+
+        - **every** directory it keeps state in named in the config — private, lock, state, cache,
+          pid and ncalrpc — or it writes to `/var/lib/samba` and dies without a word;
+        - the account made with `pdbedit -s <conf> -a -u <user> -t`. `smbpasswd -a` wants root and
+          `smbpasswd -L` says so in as many words; `pdbedit` against a private passdb does not,
+          and the unix account has to exist, which is why it is this one;
+        - `-F -s <conf> --debug-stdout`: in the foreground, with its debug where it can be read,
+          and **without** `--no-process-group`. That flag is a trap here: `smbd` ends by sending
+          `SIGTERM` to its own process group to take its children with it, and the flag is what
+          stops it from making a group of its own first — so `stop()` terminated the server, the
+          server terminated the process group, and the whole test run died with status 143 at the
+          first tear-down;
+        - `force user`, because a server that cannot become anybody serves everything as itself;
+        - a **short** path. Samba's messaging socket is `<lock directory>/msg.lock/<pid>` and a
+          unix socket path is 107 bytes: under a deep temp directory `smbd` starts, prints two
+          lines and exits with `messaging_dgm_ref failed: File name too long`.
+
+        `protocol="NT1"` is the second server, which offers nothing but SMB1 (plan 25: kiki
+        refuses it by name).
+        """
+        if not smbd_bin() or not pdbedit_bin():
+            raise RuntimeError("no smbd/pdbedit")
+        d = os.path.join(self.base, tag)
+        for sub in ("private", "lock", "state", "cache", "run", "ncalrpc", "log"):
+            os.makedirs(os.path.join(d, sub))
+        os.chmod(os.path.join(d, "private"), 0o700)
+        sock = os.path.join(d, "lock", "msg.lock", "0" * 7)
+        if len(sock) > 100:
+            raise RuntimeError(f"the fixture path is too long for Samba's messaging socket ({len(sock)} bytes): {sock}")
+        port, me, conf = free_port(), smb_user(), os.path.join(d, "smb.conf")
+        protocols = f"server min protocol = {protocol}\n" + (f"   server max protocol = {protocol}\n" if protocol != "SMB2" else "")
+        with open(conf, "w") as f:
+            f.write(
+                f"""[global]
+   workgroup = WORKGROUP
+   server string = kiki e2e
+   smb ports = {port}
+   bind interfaces only = yes
+   interfaces = 127.0.0.1
+   {protocols}   security = user
+   # DOS attributes out of the unix mode instead of an xattr, so a flow can make a file Hidden
+   # with `chmod o+x` and no Samba tool at all (Samba's own mapping: owner x is Archive, group x
+   # System, other x Hidden). That is the attribute kiki carries to `Meta.hidden` (plan 25).
+   store dos attributes = no
+   map hidden = yes
+   map archive = no
+   map system = no
+   create mask = 0755
+   map to guest = Bad User
+   guest account = {me}
+   passdb backend = tdbsam:{d}/private/passdb.tdb
+   private dir = {d}/private
+   lock directory = {d}/lock
+   state directory = {d}/state
+   cache directory = {d}/cache
+   pid directory = {d}/run
+   ncalrpc dir = {d}/ncalrpc
+   log file = {d}/log/smbd.log
+   log level = 1
+   load printers = no
+   printing = bsd
+   printcap name = /dev/null
+   disable spoolss = yes
+   panic action = /bin/true
+
+[{SMB_SHARE}]
+   path = {root}
+   read only = no
+   guest ok = no
+   force user = {me}
+
+[{SMB_GUEST_SHARE}]
+   path = {guest_root}
+   read only = no
+   guest ok = yes
+   force user = {me}
+"""
+            )
+        made = subprocess.run([pdbedit_bin(), "-s", conf, "-a", "-u", me, "-t"], input=f"{SMB_PASSWORD}\n{SMB_PASSWORD}\n", text=True, capture_output=True)
+        if made.returncode != 0:
+            raise RuntimeError(f"pdbedit could not make the account: {made.stdout}{made.stderr}")
+        log = open(os.path.join(d, "smbd.out"), "w")
+        p = subprocess.Popen([smbd_bin(), "-F", "-s", conf, "--debug-stdout"], stdout=log, stderr=subprocess.STDOUT)
+        self.procs.append(p)
+        remember(p.pid)
+
+        def up():
+            if p.poll() is not None:
+                raise RuntimeError(f"smbd did not start (status {p.returncode}): " + open(os.path.join(d, "smbd.out")).read())
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+                return True
+            except OSError:
+                return None
+        if not wait_for(up, timeout=15, what="smbd up"):
+            raise RuntimeError("smbd did not listen: " + open(os.path.join(d, "smbd.out")).read())
+        return port
+
     def stop(self):
         for p in self.procs:
             p.terminate()
@@ -150,6 +281,39 @@ class Servers:
                 os.kill(self.sshd_pid, 15)
             except ProcessLookupError:
                 pass
+        # And whatever `smbd` started beside itself. It runs `samba-dcerpcd`, which runs a
+        # `rpcd_classic` and a `rpcd_winreg`, and those are not in its process group and do not go
+        # when it does: three processes per server left behind holding this run's config file
+        # open. They are known by that path, which no process outside this run has.
+        kill_by_cmdline(self.base)
+
+    # Every server here is meant to be gone by the end of the run; this is how a flow proves it.
+    def strays(self):
+        return by_cmdline(self.base)
+
+
+def by_cmdline(needle):
+    """Live processes whose command line mentions `needle` — this run's own, and nobody else's."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit() or int(d) == os.getpid():
+            continue
+        try:
+            with open(f"/proc/{d}/cmdline", "rb") as f:
+                cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        except OSError:
+            continue
+        if needle in cmd:
+            out.append((int(d), cmd.strip()))
+    return out
+
+
+def kill_by_cmdline(needle):
+    for pid, _ in by_cmdline(needle):
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
 
 
 def add_location(d, location, secrets):

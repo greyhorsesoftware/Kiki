@@ -118,6 +118,35 @@ TestCase {
         compare(pane.renamingIndex, at)
     }
 
+    // Which listing a new folder will show up in, and who names it, is the window's to answer:
+    // columns is showing several folders at once and names the row in the column it lands in.
+    // Ops asks rather than reaching into the pane — before this it made the folder in the folder
+    // the PANE was on and switched the view to list to find an editor.
+    function test_a_new_folder_is_named_where_the_view_answering_says() {
+        pane.view = "columns"
+        let named = -1
+        const rows = [fake.dir("New folder"), fake.file("deep.txt")]
+        const site = { count: () => rows.length, row: i => rows[i], rename: i => { named = i; return true } }
+        const onAsk = (spec, reply) => { if (spec.dest === "file:///home/t/Projects") reply(site) }
+        ops.listingNeeded.connect(onAsk)
+        ops.newFolder("file:///home/t/Projects")
+        compare(submitted().op, "mkdir")
+        compare(submitted().uri, "file:///home/t/Projects/New%20folder%202",
+                "the free name is found among THAT folder's rows, not the pane's")
+        rows.push(fake.dir("New folder 2"))
+        tryVerify(() => named === 2, 2000, "the row is named where it landed")
+        compare(pane.renamingIndex, -1, "the pane's own editor stays out of it")
+        compare(pane.view, "columns", "and the view is left as the user had it")
+        ops.listingNeeded.disconnect(onAsk)
+    }
+
+    // With nobody showing the folder there is no row to name, and nothing is left spinning.
+    function test_a_new_folder_made_out_of_sight_is_left_alone() {
+        ops.newFolder("file:///home/t/Projects")
+        compare(submitted().uri, "file:///home/t/Projects/New%20folder")
+        compare(ops.renameSoon, "")
+    }
+
     function test_rename_switches_to_the_view_that_has_an_editor() {
         pane.view = "icon"
         pane.selection.set(1)

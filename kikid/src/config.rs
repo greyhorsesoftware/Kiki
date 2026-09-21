@@ -113,6 +113,11 @@ pub fn settings() -> Value {
             .b("vimKeys", false)
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
+            // List column widths, by role, as the header's grips left them (plan 21). Empty is
+            // "every column at its default"; a width is kept for a column that is switched off.
+            .v("listColumnWidths", Value::obj().done())
+            // Columns view's widths, by the column's place in the strip ("c0", "c1", …).
+            .v("columnsWidths", Value::obj().done())
             .done(),
     );
     m.insert("timers".into(), Value::obj().u("toastMs", 8000).u("searchDebounceMs", 150).u("mirrorPollMs", 400).done());
@@ -131,6 +136,11 @@ fn merge(into: &mut BTreeMap<String, Value>, from: &Value) {
     if let Value::Obj(f) = from {
         for (k, v) in f {
             match (into.get_mut(k), v) {
+                // `null` forgets the key. Maps merge, so without this nothing could ever be taken
+                // OUT of one: a column width let go with a double click was back at the next start.
+                (_, Value::Null) => {
+                    into.remove(k);
+                }
                 (Some(Value::Obj(a)), Value::Obj(_)) => merge(a, v),
                 _ => {
                     into.insert(k.clone(), v.clone());
@@ -161,51 +171,6 @@ pub fn reset_all() -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// The keymap, served from one table so the cheat sheet and the Settings page agree.
-pub fn keymap() -> Value {
-    let rows: &[(&str, &str, &str)] = &[
-        ("/ or Ctrl+F", "search", "02"),
-        ("Ctrl+L", "edit path", "02"),
-        ("Ctrl+1 / 2 / 3 / 4", "icon / list / columns / mirror", "02"),
-        ("Up Down", "move selection (a row of tiles in icon view)", "02"),
-        ("Left Right", "columns: pop and push; icon view: previous and next tile", "02"),
-        ("letters", "type-ahead: jump to the next name starting with what you type (Vim keys off)", "23"),
-        ("h j k l, e", "with Vim keys on: move, pop/push columns, edit", "23"),
-        ("F4", "edit in the chosen editor; folder: project mode", "13"),
-        ("Shift+Del", "delete permanently (asks first)", "23"),
-        ("Ctrl+B", "focus the sidebar; Up/Down/Enter there, Esc back", "23"),
-        ("Home End, PgUp PgDn", "first, last, page up, page down (Shift extends)", "02"),
-        ("Alt+Up", "parent folder", "02"),
-        ("Ctrl+H", "show hidden files", "02"),
-        ("Ctrl+A, Esc", "select all, clear selection", "02"),
-        ("Super+Shift+C", "copy path", "04"),
-        ("Enter", "open", "02"),
-        ("Backspace, Alt+Left", "back", "02"),
-        ("F5", "refresh", "02"),
-        ("Ctrl+I", "inspector", "03"),
-        ("Super+C / X / V", "copy, cut, paste (Ctrl too)", "04"),
-        ("F2", "rename", "04"),
-        ("Del", "move to trash", "04"),
-        ("Ctrl+Z / Ctrl+Shift+Z", "undo, redo", "04"),
-        ("Ctrl+Shift+N", "new folder", "04"),
-        ("Ctrl+Shift+L", "add a location", "06"),
-        ("Ctrl+4", "mirror view (two panes)", "24"),
-        ("Tab", "switch pane (mirror view)", "24"),
-        ("F6", "move across (mirror view)", "24"),
-        ("Ctrl+M", "mirror to the remote (upload)", "08"),
-        ("Tab (in search)", "cycle scope", "12"),
-        ("e", "edit file / project mode on a folder", "13"),
-        ("Alt+Enter", "open in default tool", "14"),
-        ("Alt+Shift+Enter", "open in… list", "14"),
-        ("Ctrl+Shift+P", "project mode", "16"),
-        ("Alt+S", "share", "18"),
-        ("Alt+Q", "open AI here", "29"),
-        ("Ctrl+,", "settings", "20"),
-        ("?", "keybinding cheat sheet", "10"),
-    ];
-    Value::Arr(rows.iter().map(|(k, a, p)| Value::obj().s("key", *k).s("action", *a).s("plan", *p).done()).collect())
 }
 
 // ---------------------------------------------------------------- volumes
@@ -441,6 +406,45 @@ mod tests {
         assert_eq!(s.get("view").unwrap().str_field("default"), Some("icon"));
         assert_eq!(s.get("view").unwrap().str_field("sort"), Some("name")); // default kept
         assert!(volumes().as_arr().unwrap().iter().any(|v| v.u64_field("total").unwrap_or(0) > 0));
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::env::remove_var("KIKI_CONFIG_DIR");
+    }
+
+    /// A setting that is a map of its own — the list's column widths, the folders last mirrored —
+    /// is written as a table and read back as one. It used to go out as JSON on a single line,
+    /// and from then on settings.toml could not be read: every setting reverted to its default
+    /// and no later write was allowed to touch the file.
+    #[test]
+    fn a_map_setting_can_be_read_back() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("kiki-config-map-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("KIKI_CONFIG_DIR", &dir);
+
+        set_settings(&Value::obj().v("view", Value::obj().s("default", "icon").done()).done()).unwrap();
+        let widths = Value::obj().u("mtime", 240).u("kind", 90).done();
+        set_settings(&Value::obj().v("view", Value::obj().v("listColumnWidths", widths).done()).done()).unwrap();
+
+        let s = settings();
+        let w = s.get("view").unwrap().get("listColumnWidths").unwrap();
+        assert_eq!(w.u64_field("mtime"), Some(240));
+        assert_eq!(w.u64_field("kind"), Some(90));
+        // The rest of the section is untouched, which is only true if the file still parses.
+        assert_eq!(s.get("view").unwrap().str_field("default"), Some("icon"));
+        // And one width changed leaves the others alone.
+        set_settings(&Value::obj().v("view", Value::obj().v("listColumnWidths", Value::obj().u("mtime", 200).done()).done()).done()).unwrap();
+        let s = settings();
+        let w = s.get("view").unwrap().get("listColumnWidths").unwrap();
+        assert_eq!(w.u64_field("mtime"), Some(200));
+        assert_eq!(w.u64_field("kind"), Some(90));
+
+        // And `null` forgets one: the column goes back to its default, for good.
+        set_settings(&Value::obj().v("view", Value::obj().v("listColumnWidths", Value::obj().v("mtime", Value::Null).done()).done()).done()).unwrap();
+        let s = settings();
+        let w = s.get("view").unwrap().get("listColumnWidths").unwrap();
+        assert_eq!(w.u64_field("mtime"), None);
+        assert_eq!(w.u64_field("kind"), Some(90));
+
         std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }

@@ -25,4 +25,12 @@ TestCase {
         item.keyed = false
     }
     function test_height_matches_plan_02() { compare(item.height, 30) }
+    function test_a_dot_shows_only_when_given_a_colour() {
+        const dot = findChild(item, "sidebar-dot")
+        verify(!dot.visible)
+        item.dot = "green"
+        verify(dot.visible)
+        item.dot = "transparent"
+        verify(!dot.visible)
+    }
 }

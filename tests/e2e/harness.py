@@ -5,6 +5,7 @@ and a temp tree it can compare before and after. Everything waits on a condition
 sleeps in here, because a sleep is a flake waiting for a slower machine.
 """
 import json, os, socket, subprocess, sys, time
+from urllib.parse import unquote
 
 TIMEOUT = float(os.environ.get("KIKI_E2E_TIMEOUT", "8"))
 
@@ -134,7 +135,9 @@ class Shell:
         not be in the listing the moment we ask for it, and asking once selects nothing."""
         def try_once():
             self.call("select", name)
-            return any(u.endswith("/" + name) for u in self.state().get("selection", [])) or None
+            # Decoded: a URI on a server carries the name percent-encoded, so a folder with a
+            # space in it was selected and then reported as not selected.
+            return any(unquote(u).endswith("/" + name) for u in self.state().get("selection", [])) or None
         return wait_for(try_once, timeout, interval=0.15)
 
     def geometry(self, name):

@@ -59,15 +59,12 @@ fn get(id: &str) -> Result<Arc<Plugin>, VfsError> {
     Ok(p)
 }
 
-/// What the plugin says about itself when the user has said nothing: on, unless it ships off.
-fn default_enabled(id: &str) -> bool {
-    registry().lock().unwrap().described.get(id).and_then(|d| d.get("defaultEnabled")).and_then(Value::as_bool).unwrap_or(true)
-}
-
 pub fn config_for(id: &str) -> (Value, Value) {
     let all = crate::config::read_named("share.toml");
     let cfg = all.get(id).cloned().unwrap_or(Value::Obj(BTreeMap::new()));
-    let enabled = cfg.get("enabled").and_then(Value::as_bool).unwrap_or_else(|| default_enabled(id));
+    // A plugin that is installed is on until the user switches it off: an installed way of
+    // sending that the menu hides is a way of sending nobody finds.
+    let enabled = cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true);
     let mut secrets = BTreeMap::new();
     if let Some(d) = registry().lock().unwrap().described.get(id) {
         for k in d.get("secretFields").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default() {
@@ -100,7 +97,7 @@ pub fn list_json() -> Value {
         let (cfg, _) = config_for(&id);
         let mut o = d.clone();
         if let Value::Obj(m) = &mut o {
-            m.insert("enabled".into(), Value::Bool(cfg.get("enabled").and_then(Value::as_bool).unwrap_or_else(|| d.get("defaultEnabled").and_then(Value::as_bool).unwrap_or(true))));
+            m.insert("enabled".into(), Value::Bool(cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true)));
             m.insert("configured".into(), Value::Bool(true));
             // Looked for now, not when the plugin described itself: installing the program
             // brings the entry to life without restarting anything.

@@ -2,6 +2,26 @@
 
 Builds on: `02-shell-and-views.md` (toolbar, context menu, settings, IPC), `13-code-viewer-and-editor.md` (terminal spawning and Hyprland placement), `09-omarchy-integration.md`.
 
+## As built (amended 2026-09-21)
+
+The engine below is built as written — `open-in.toml`, the presets, detection, sessions and `reuse`, placement, the daemon's requests. **The UI took a simpler shape than the one generic list this plan drew**: each kind of tool has its own way in, and there is no picker.
+
+| Wanted | How it is done | Where in the code |
+|---|---|---|
+| An AI harness in this folder, told about the selected files | context menu **Open AI here…**, `Alt+Q` — the tool chosen in Settings → AI | `Shell.openAiHere` → `AiOpen` |
+| A terminal in this folder | context menu **Open Terminal here…** | `Shell.openTerminalHere` → `OpenTerminal` |
+| The editor on a file | **Edit**, `F4` (`e` with Vim keys) — the `role = "editor"` entry | `Shell.editAt` / `editSelected` → `OpenIn { role: "editor" }` |
+| Editor and agent side by side on a folder | **Project mode**, `Ctrl+Shift+P` (plan 16); the agent only when Settings → Project has it on | `Shell.enterProject` → `OpenIn { role: "editor" }`, `{ role: "agent" }` |
+| A file sent to the agent from the viewer | the viewer's send-to-agent | `OpenIn { role: "agent" }` |
+| The default tool on the selection, or on the folder when nothing is selected | `Alt+Enter` — the first enabled entry that is not the editor (an editor-only list falls back to it) | `Shell.openIn("")` → `OpenIn { tool }` |
+| An ordinary application for this kind of file | context menu **Open with ▸**, `Alt+Shift+Enter` — the desktop's applications for the MIME type (plans 02/03). Deliberately *not* mixed with the tools above: terminal tools and agents do not belong in a list of apps | `Shell.loadOpenWith` → `OpenWith`, `Launch` |
+
+An entry whose `detect` binary is absent is neither offered nor reachable by name, and `OpenInChanged` re-reads the list without a restart (`tst_OpenIn`).
+
+**Not in 0.1.0**: choosing a *particular* tool from the list — the toolbar "Open in" button with its dropdown, the "Open in ▸" context submenu, and `Alt+Shift+Enter` as the way to that dropdown (the key is Open with…). `Shell.openIn(id)` already takes a tool's id; nothing calls it with one. Also not built: the Settings "Open in" page and the shortcut bar's `Alt+Enter open in <name>` hint — the list is edited in `open-in.toml`. The lines for these under **UI** below are kept as the design, marked.
+
+**Fixed 2026-09-21**: `Alt+Enter` had never worked. The request named the tool `id`, which is the field every request carries its own number in; the number was overwritten, the daemon answered "missing id" to nobody, and the key did nothing. The field is **`tool`** on `OpenIn`, `OpenInTest` and `OpenInClose` (the table under **Daemon** is corrected).
+
 ## Goal
 
 Select a folder or files, press one button, and the selection opens in an editor (Neovim, Helix, VS Code, Zed), an AI coding harness (Claude Code, Codex, Gemini CLI, Aider, OpenCode, Hermes, Muse, anything else) or any other external tool. kiki knows nothing about the tools themselves: each is a command template with placeholders, run in a terminal or directly, placed beside kiki. Adding a new one is a few lines of TOML, no code. One list serves both `e` (the entry marked as the editor) and `Alt+Enter` (the default tool); plan 13's editor bridge is this mechanism plus a `reuse` channel.
@@ -118,12 +138,12 @@ Hermes, Muse and any harness kiki does not ship a preset for are added the same 
 
 ## UI
 
-- **Toolbar button** "Open in" with a dropdown of enabled tools, the default first. Clicking the button itself runs the default; the arrow opens the list. The default is the first entry in the user's file, or the most recently used.
-- **Context menu**: an "Open in ▸" submenu with the same list, on folders and files.
-- **Keys**: `e` runs the `role = "editor"` entry on a selected file (plan 13) and enters project mode on a selected folder (plan 16); `Alt+Enter` runs the default tool on the selection; `Alt+Shift+Enter` opens the dropdown. All added to the plan-02 keymap and the cheat sheet.
+- *(not in 0.1.0)* **Toolbar button** "Open in" with a dropdown of enabled tools, the default first. Clicking the button itself runs the default; the arrow opens the list. The default is the first entry in the user's file, or the most recently used.
+- *(not in 0.1.0 — the context menu has Open AI here…, Open Terminal here… and Open with ▸ instead)* **Context menu**: an "Open in ▸" submenu with the same list, on folders and files.
+- **Keys**: `e` runs the `role = "editor"` entry on a selected file (plan 13) and enters project mode on a selected folder (plan 16); `Alt+Enter` runs the default tool on the selection; `Alt+Shift+Enter` opens the dropdown *(as built: `F4` is Edit, `e` only with Vim keys; `Alt+Shift+Enter` is Open with…)*. All added to the plan-02 keymap and the cheat sheet.
 - **Placement** as in plan 13: Hyprland tiles the spawned terminal beside kiki. Each launch is a new terminal window unless `placement = "tab"` and the terminal supports opening a tab in its running instance (Ghostty, kitty and foot do through their IPC; the daemon uses it when available and falls back to a window).
-- **Settings page** "Open in": the merged list with detected state, drag to reorder (the first is the default), a radio marking which entry is the editor, edit fields inline, add from a preset picker or blank, a terminal picker (`terminal = "auto"` means Omarchy's default), and a "Test" button that shows the substituted command for the current selection.
-- **Shortcut bar** shows `Alt+Enter open in <default name>` whenever the selection allows it.
+- *(not in 0.1.0)* **Settings page** "Open in": the merged list with detected state, drag to reorder (the first is the default), a radio marking which entry is the editor, edit fields inline, add from a preset picker or blank, a terminal picker (`terminal = "auto"` means Omarchy's default), and a "Test" button that shows the substituted command for the current selection.
+- *(not in 0.1.0)* **Shortcut bar** shows `Alt+Enter open in <default name>` whenever the selection allows it.
 
 ## Daemon
 
@@ -132,10 +152,10 @@ The daemon does the spawning so a launched tool survives the kiki window and so 
 | Request | Fields | Reply |
 |---|---|---|
 | `OpenInList` | | `{ tools: [{ id, name, icon, accepts, enabled, reason? }] }` (detection resolved) |
-| `OpenIn` | `id`, `uris: [Uri]`, `line?` | `{ pid, reused: bool }` or error `Invalid` with the placeholder that could not be filled |
+| `OpenIn` | `tool` or `role`, `uris: [Uri]`, `line?` | `{ pid, reused: bool }` or error `Invalid` with the placeholder that could not be filled |
 | `OpenInSessions` | | `{ sessions: [{ id, pid, files: [Uri] }] }` |
-| `OpenInClose` | `id` | `{}` (graceful: the entry's `quit` command if set, else `SIGTERM`) |
-| `OpenInTest` | `id`, `uris` | same as `OpenIn` but returns the fully substituted command without running it |
+| `OpenInClose` | `tool` | `{}` (graceful: the entry's `quit` command if set, else `SIGTERM`) |
+| `OpenInTest` | `tool`, `uris` | same as `OpenIn` but returns the fully substituted command without running it |
 
 Events: `OpenInChanged {}` when either TOML file changes (the daemon watches both).
 

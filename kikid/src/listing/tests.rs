@@ -213,6 +213,61 @@ fn the_view_sorts_filters_and_seeks() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Plan 22's Accessed column: the atime sort. It reads a field nothing else does, so it is the
+/// one sort that can be wired to the wrong one and still look right — every file's access time
+/// here is set to the opposite of its modification time, so sorting by one gives the reverse of
+/// the other.
+#[test]
+fn the_view_sorts_by_access_time() {
+    let dir = std::env::temp_dir().join(format!("kiki-atime-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Zed")).unwrap();
+    // (name, accessed, modified) — in seconds since the epoch, a few years apart so no
+    // filesystem's granularity can blur them.
+    let files = [("oldest-read.txt", 1_100_000_000i64, 1_400_000_000i64), ("middle.txt", 1_200_000_000, 1_300_000_000), ("newest-read.txt", 1_300_000_000, 1_200_000_000)];
+    for (name, atime, mtime) in files {
+        std::fs::write(dir.join(name), b"x").unwrap();
+        set_times(&dir.join(name), atime, mtime);
+    }
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+
+    let names = |l: &Arc<Listing>| -> Vec<String> { l.window(1, 1, 0, 50, None).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect() };
+    let sorted = |l: &Arc<Listing>, role: SortRole, asc: bool| {
+        let (tx, rx) = mpsc::channel();
+        l.sort(role, asc, Some((tx, 1)));
+        rx.recv_timeout(Duration::from_secs(5)).expect("the sort is answered once every row has metadata");
+        names(l)
+    };
+
+    assert_eq!(sorted(&l, SortRole::Atime, true), vec!["Zed", "oldest-read.txt", "middle.txt", "newest-read.txt"]);
+    assert_eq!(sorted(&l, SortRole::Atime, false), vec!["Zed", "newest-read.txt", "middle.txt", "oldest-read.txt"], "folders stay first when it is reversed");
+    // The other way round entirely, which is what says it is reading the access time and not the
+    // modification time that is right beside it.
+    assert_eq!(sorted(&l, SortRole::Mtime, true), vec!["Zed", "newest-read.txt", "middle.txt", "oldest-read.txt"]);
+
+    // And the time itself reaches the client, in milliseconds, for the column to draw with.
+    let rows = l.window(1, 1, 0, 50, None);
+    let rows = rows.get("rows").unwrap().as_arr().unwrap();
+    for (name, atime, mtime) in files {
+        let m = rows.iter().find(|r| r.str_field("name") == Some(name)).unwrap().get("meta").unwrap();
+        assert_eq!(m.u64_field("atime"), Some(atime as u64 * 1000), "{name}");
+        assert_eq!(m.u64_field("mtime"), Some(mtime as u64 * 1000), "{name}");
+    }
+    assert_eq!(SortRole::parse("atime"), Some(SortRole::Atime), "and the client can ask for it by name");
+    assert_eq!(SortRole::parse("accessed"), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Sets a file's access and modification times, which is the only way to have an atime a test can
+/// say anything about: a `relatime` mount updates it at most once a day by itself.
+fn set_times(path: &std::path::Path, atime: i64, mtime: i64) {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let times = [libc::timespec { tv_sec: atime, tv_nsec: 0 }, libc::timespec { tv_sec: mtime, tv_nsec: 0 }];
+    assert_eq!(unsafe { libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0) }, 0, "utimensat {}: {}", path.display(), std::io::Error::last_os_error());
+}
+
 /// A window is answered from whatever the listing has; asking past the end is not an error,
 /// and a count above the cap is trimmed rather than refused.
 #[test]
@@ -317,10 +372,22 @@ fn a_rescan_keeps_the_thumbnails_it_had() {
     let dir = temp_tree(40);
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
+    // A thumbnail is kept only for the mtime it was made at, and the mtime comes with the meta,
+    // which arrives after the scan: waited for, or this read 0 half the time and the thumbnail
+    // planted below was "for another version of the file" by the time the rescan looked.
     let mtime = |l: &Arc<Listing>, name: &[u8]| {
-        let inner = l.inner.lock().unwrap();
-        let i = inner.pool.find(name).unwrap();
-        inner.meta[i as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)
+        let start = std::time::Instant::now();
+        loop {
+            {
+                let inner = l.inner.lock().unwrap();
+                let i = inner.pool.find(name).unwrap();
+                if let Some(m) = inner.meta[i as usize].as_ref() {
+                    return m.mtime_ms;
+                }
+            }
+            assert!(start.elapsed() < Duration::from_secs(5), "meta never arrived for {}", String::from_utf8_lossy(name));
+            std::thread::sleep(Duration::from_millis(2));
+        }
     };
     let (m3, m4) = (mtime(&l, b"file3.txt"), mtime(&l, b"file4.txt"));
     {
@@ -462,3 +529,202 @@ fn a_thumbnail_nobody_is_looking_at_any_more_is_dropped_unstarted() {
     assert!(l.inner.lock().unwrap().deco.wants_thumb(b"file7.txt", mtime));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// ---------------------------------------------------------------- repository-root rows (plan 15)
+
+/// `git`, for building the fixtures below. A repository made here must not answer to the
+/// developer's own `~/.gitconfig`: a `init.defaultBranch` or a `commit.gpgsign` there would
+/// change what the test sees.
+fn git_in(dir: &std::path::Path, args: &[&str]) {
+    let st = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@example.invalid")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@example.invalid")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "git {args:?}");
+}
+
+/// A small repository with one commit in it.
+fn make_repo(at: &std::path::Path, branch: &str) {
+    std::fs::create_dir_all(at).unwrap();
+    git_in(at, &["init", "-q", "-b", branch]);
+    std::fs::write(at.join("a.txt"), b"a").unwrap();
+    git_in(at, &["add", "-A"]);
+    git_in(at, &["commit", "-qm", "one"]);
+}
+
+fn row_named<'a>(rows: &'a [Value], name: &str) -> &'a Value {
+    rows.iter().find(|r| r.str_field("name") == Some(name)).unwrap_or_else(|| panic!("no row {name}"))
+}
+
+/// Waits until every row of the window satisfies `ok`, or gives up.
+fn rows_until(l: &Arc<Listing>, ok: impl Fn(&[Value]) -> bool) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let w = l.window(1, 1, 0, 64, None);
+        let rows = w.get("rows").unwrap().as_arr().unwrap().to_vec();
+        if ok(&rows) {
+            return rows;
+        }
+        assert!(Instant::now() < deadline, "rows never settled: {}", crate::json::to_string(&Value::Arr(rows)));
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// `~/Projects` is not a repository, so the folder's own status says nothing about anything in
+/// it. Each project in it is a repository of its own, and its row has to say so: the branch
+/// first, and then how that repository stands.
+#[test]
+fn a_folder_of_projects_gives_every_project_its_branch_and_its_state() {
+    if !crate::openin::on_path("git") {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("kiki-capsule-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("plain")).unwrap();
+    make_repo(&base.join("clean-one"), "main");
+    make_repo(&base.join("dirty-one"), "release/2");
+    std::fs::write(base.join("dirty-one/a.txt"), b"changed").unwrap();
+    std::fs::write(base.join("loose.txt"), b"x").unwrap();
+
+    let (l, _) = open(&Uri::from_path(&base)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let rows = rows_until(&l, |rows| {
+        rows.iter().filter(|r| r.get("git").and_then(|g| g.get("root")).is_some()).count() == 2
+            && row_named(rows, "dirty-one").get("git").unwrap().str_field("state") == Some("modified")
+    });
+
+    let g = row_named(&rows, "clean-one").get("git").unwrap();
+    assert_eq!(g.get("root").and_then(Value::as_bool), Some(true));
+    assert_eq!(g.str_field("branch"), Some("main"));
+    assert_eq!(g.get("detached").and_then(Value::as_bool), Some(false));
+    assert_eq!(g.str_field("state"), Some("clean"), "nothing against it");
+
+    let g = row_named(&rows, "dirty-one").get("git").unwrap();
+    assert_eq!(g.str_field("branch"), Some("release/2"), "a branch with a slash keeps it");
+    assert_eq!(g.str_field("state"), Some("modified"));
+
+    // Everything that is not a repository is left exactly as it was.
+    assert!(matches!(row_named(&rows, "plain").get("git"), Some(Value::Null)), "a folder that is not a repository says nothing");
+    assert!(matches!(row_named(&rows, "loose.txt").get("git"), Some(Value::Null)));
+
+    // A detached HEAD shows the short hash instead, and says it is detached.
+    let hash = std::process::Command::new("git").arg("-C").arg(base.join("clean-one")).args(["rev-parse", "HEAD"]).output().unwrap();
+    let hash = String::from_utf8_lossy(&hash.stdout).trim().to_string();
+    git_in(&base.join("clean-one"), &["checkout", "-q", &hash]);
+    l.repo_rows(None);
+    let rows = rows_until(&l, |rows| row_named(rows, "clean-one").get("git").unwrap().get("detached").and_then(Value::as_bool) == Some(true));
+    assert_eq!(row_named(&rows, "clean-one").get("git").unwrap().str_field("branch"), Some(&hash[..8]));
+
+    forget(&Uri::from_path(&base));
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// The one real cost of the capsule is a `git` per project, and it must never be on the way to
+/// the rows. The same folder is listed twice — once with the projects in it, once with their
+/// `.git` moved aside so there is nothing to work out — and the two must take the same time.
+#[test]
+fn a_folder_of_projects_lists_no_slower_than_a_folder_of_folders() {
+    if !crate::openin::on_path("git") {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("kiki-capsule-cost-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let n = 12;
+    for i in 0..n {
+        make_repo(&base.join(format!("p{i}")), "main");
+    }
+    let uri = Uri::from_path(&base);
+
+    let with = {
+        forget(&uri);
+        crate::git::invalidate(&base);
+        let start = Instant::now();
+        let (l, _) = open(&uri).unwrap();
+        assert!(wait_scan(&l, Duration::from_secs(10)));
+        let t = start.elapsed();
+        // The rows are there at once, whether or not a single `git` has run yet.
+        assert_eq!(l.window(1, 1, 0, 64, None).u64_field("n"), Some(n as u64));
+        t
+    };
+    // Every capsule does land, a moment later.
+    let (l, _) = open(&uri).unwrap();
+    rows_until(&l, |rows| rows.iter().all(|r| r.get("git").and_then(|g| g.get("root")).is_some()));
+
+    for i in 0..n {
+        std::fs::rename(base.join(format!("p{i}/.git")), base.join(format!("p{i}/notgit"))).unwrap();
+    }
+    let without = {
+        forget(&uri);
+        crate::git::invalidate(&base);
+        let start = Instant::now();
+        let (l, _) = open(&uri).unwrap();
+        assert!(wait_scan(&l, Duration::from_secs(10)));
+        start.elapsed()
+    };
+    // Twelve gits in a row would be a tenth of a second and more; the listing must not have
+    // waited for one of them.
+    assert!(
+        with < without + Duration::from_millis(60),
+        "listing {n} projects took {with:?} against {without:?} for the same folders without a .git in them: git is on the listing's path"
+    );
+    forget(&uri);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+
+/// A worker picks its rows with the listing locked and pushes them once it has let go. If the
+/// folder shrank in between — a rescan deals the indexes again, into a shorter table — the push
+/// used to index past the end and take the daemon down with the listing's lock held.
+#[test]
+fn pushing_a_row_that_a_rescan_has_taken_away_is_not_a_crash() {
+    let dir = temp_tree(3);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    l.push_rows(&[0, 9999, 1]);
+    // The rows that are still there are sent; the one that is not is passed over.
+    let sent: Vec<Value> = drain(&rx).into_iter().filter(|e| e.str_field("event") == Some("Rows")).collect();
+    assert!(!sent.is_empty(), "the rows that do exist are still pushed");
+    forget(&Uri::from_path(&dir));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// An edit inside a project moves neither its `HEAD` nor its index, so the stat that stands in
+/// for a watch cannot see it. Showing the folder again is the other moment it is asked about —
+/// without which a project stayed the colour it was when the folder was first opened.
+#[test]
+fn opening_a_folder_of_projects_again_asks_them_again() {
+    if !crate::openin::on_path("git") {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("kiki-capsule-reopen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    make_repo(&base.join("one"), "main");
+    let uri = Uri::from_path(&base);
+    let (l, _) = open(&uri).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    rows_until(&l, |rows| row_named(rows, "one").get("git").unwrap().str_field("state") == Some("clean"));
+
+    // An edit in the working tree, which nothing watches and nothing stats.
+    std::fs::write(base.join("one/new.txt"), b"n").unwrap();
+    thread::sleep(Duration::from_millis(1600)); // past the moment an aggregate is believed for
+    let (l2, cached) = open(&uri).unwrap();
+    assert!(cached, "the same listing, served from memory");
+    rows_until(&l2, |rows| row_named(rows, "one").get("git").unwrap().str_field("state") == Some("untracked"));
+    forget(&uri);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+

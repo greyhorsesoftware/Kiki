@@ -80,6 +80,9 @@ fn local_end_to_end_is_idempotent() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let d = std::env::temp_dir().join(format!("kiki-mirror-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
+    // A run writes the audit log, and without this it wrote it in the developer's own
+    // `~/.local/state/kiki` — two thousand lines of `mirror-delete keep.txt` by the time it was seen.
+    std::env::set_var("KIKI_STATE_DIR", d.join("state"));
     std::fs::create_dir_all(d.join("m/sub")).unwrap();
     std::fs::create_dir_all(d.join("r")).unwrap();
     std::fs::write(d.join("m/a.txt"), b"aaa").unwrap();
@@ -152,8 +155,13 @@ fn filters_come_from_the_config_file_or_the_defaults() {
     std::env::set_var("KIKI_CONFIG_DIR", &dir);
 
     let defaults = load_filters();
-    assert!(filtered(".git", &defaults) && filtered("node_modules", &defaults) && filtered(".DS_Store", &defaults));
+    assert!(filtered(".git", &defaults) && filtered(".gitignore", &defaults) && filtered("node_modules", &defaults) && filtered(".DS_Store", &defaults) && filtered(".env", &defaults));
     assert!(!filtered("src", &defaults));
+    // A dotted name the defaults do not name is mirrored like anything else: the rules are names
+    // now, not the pattern that used to swallow every one of these.
+    for name in [".htaccess", ".htpasswd", ".user.ini", ".nojekyll", ".well-known"] {
+        assert!(!filtered(name, &defaults), "{name} is not one of the built-in names");
+    }
 
     std::fs::write(dir.join("filters.toml"), "[[rule]]\nkind = \"endsWith\"\nvalue = \".bak\"\n\n[[rule]]\nkind = \"contains\"\nvalue = \"secret\"\n").unwrap();
     let mine = load_filters();
@@ -167,6 +175,206 @@ fn filters_come_from_the_config_file_or_the_defaults() {
 
     std::fs::remove_dir_all(&dir).unwrap();
     std::env::remove_var("KIKI_CONFIG_DIR");
+}
+
+/// The "K filtered out" on the Review screen has to be the same number for the same tree however
+/// it was read. A local walk stops at a skipped folder and counts it once; a plugin's recursive
+/// `Scan` hands back every descendant of it, and counted them all — the same site read "6 filtered
+/// out" over SFTP and "1 filtered out" locally. Both sides now ask this.
+#[test]
+fn a_skipped_subtree_is_counted_once_however_it_was_scanned() {
+    let rules = vec![Rule::StartsWith(".".into()), Rule::Matches("node_modules".into())];
+    assert_eq!(filtered_rel("visible.txt", &rules), None);
+    assert_eq!(filtered_rel("src/main.rs", &rules), None);
+    assert_eq!(filtered_rel(".hidden", &rules), Some(true));
+    assert_eq!(filtered_rel(".git", &rules), Some(true), "the folder itself is the one counted");
+    assert_eq!(filtered_rel(".git/HEAD", &rules), Some(false), "and nothing under it is counted again");
+    assert_eq!(filtered_rel(".git/refs/heads/main", &rules), Some(false));
+    assert_eq!(filtered_rel("src/node_modules", &rules), Some(true), "wherever it is in the tree");
+    assert_eq!(filtered_rel("src/node_modules/left-pad/index.js", &rules), Some(false));
+    // A whole recursive answer, as a plugin streams it: three names skipped, not eight.
+    let deep = [".hidden", ".git", ".git/HEAD", ".git/refs", ".git/refs/heads/main", "node_modules", "node_modules/left-pad/index.js", "src/main.rs", "visible.txt"];
+    assert_eq!(deep.iter().filter(|r| filtered_rel(r, &rules) == Some(true)).count(), 3);
+    assert_eq!(deep.iter().filter(|r| filtered_rel(r, &rules).is_none()).count(), 2, "and two names survive");
+}
+
+/// What the Edit rules… dialog reads and writes: `MirrorFilters` and `SetMirrorFilters`, which
+/// are these four functions. The one that matters is the empty list — an empty FILE means the
+/// defaults, so "the user deleted every rule" has to be written down as something else, or the
+/// next scan quietly brings `.git` and the dotfiles back.
+#[test]
+fn the_rules_round_trip_and_no_rules_is_not_the_same_as_the_defaults() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("kiki-mirror-rules-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("KIKI_CONFIG_DIR", &dir);
+    let file = dir.join("filters.toml");
+    let kinds = |v: &Value| v.get("rules").and_then(Value::as_arr).unwrap().iter().map(|r| format!("{} {}", r.str_field("kind").unwrap(), r.str_field("value").unwrap())).collect::<Vec<_>>();
+
+    // The built-in set, in the words the reply uses, so the list below is the list on screen.
+    let built_in = ["matches .git", "matches .gitignore", "matches .DS_Store", "matches .env", "matches .idea", "matches .vscode", "matches Thumbs.db", "matches node_modules", "matches __pycache__"];
+    // What the dialog's "Restore defaults" shows: the daemon's own list, sent with every answer
+    // rather than kept a second time in the shell.
+    let default_kinds = |v: &Value| {
+        v.get("defaultRules").and_then(Value::as_arr).unwrap().iter().map(|r| format!("{} {}", r.str_field("kind").unwrap(), r.str_field("value").unwrap())).collect::<Vec<_>>()
+    };
+
+    // Nothing written down: the defaults, and the answer says they are the defaults.
+    let (rules, defaults) = filters();
+    assert_eq!(rules, default_rules());
+    assert!(defaults);
+    assert_eq!(kinds(&filters_json()), built_in);
+    assert_eq!(default_kinds(&filters_json()), built_in);
+    assert_eq!(filters_json().get("defaults").and_then(Value::as_bool), Some(true));
+
+    // The user's own rules go out and come back the same, no longer the defaults.
+    let mine = vec![Rule::EndsWith(".tmp".into()), Rule::Contains("draft".into()), Rule::StartsWith(".".into()), Rule::Matches("target".into())];
+    set_filters(&mine).unwrap();
+    assert_eq!(filters(), (mine.clone(), false));
+    assert_eq!(kinds(&filters_json()), ["endsWith .tmp", "contains draft", "startsWith .", "matches target"]);
+    assert_eq!(filters_json().get("defaults").and_then(Value::as_bool), Some(false));
+    assert_eq!(default_kinds(&filters_json()), built_in, "the built-in set goes out whether or not it is the one in use");
+    assert!(filtered("notes.tmp", &filters().0) && !filtered("notes.txt", &filters().0));
+
+    // Every rule deleted is not "no file": it is no rules at all, and it survives the next read.
+    set_filters(&[]).unwrap();
+    assert_eq!(filters(), (Vec::new(), false));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("defaults = false"));
+    assert!(!filtered(".git", &filters().0), "with the rules deleted, nothing is skipped");
+    assert_eq!(default_kinds(&filters_json()), built_in, "and the dialog can still offer to put them back");
+
+    // Restore defaults takes the file away, which is what puts the built-in rules back. Doing it
+    // twice is not an error — there is nothing left to remove the second time.
+    restore_default_filters().unwrap();
+    assert!(!file.exists());
+    assert_eq!(filters(), (default_rules(), true));
+    restore_default_filters().unwrap();
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::env::remove_var("KIKI_CONFIG_DIR");
+}
+
+/// A rule the shell sends is checked before any of it is written, so a refusal leaves the file
+/// exactly as it was rather than half saved.
+#[test]
+fn a_rule_that_could_never_match_is_refused_by_name() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = std::env::temp_dir().join(format!("kiki-mirror-badrules-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("KIKI_CONFIG_DIR", &dir);
+    let rule = |kind: &str, value: &str| Value::obj().s("kind", kind).s("value", value).done();
+
+    let good = vec![rule("matches", ".git"), rule("startsWith", "."), rule("endsWith", ".tmp"), rule("contains", "cache")];
+    assert_eq!(check_rules(&good).unwrap().len(), 4);
+    set_filters(&check_rules(&good).unwrap()).unwrap();
+    let before = std::fs::read_to_string(dir.join("filters.toml")).unwrap();
+
+    for (rules, says) in [
+        (vec![rule("matches", ".git"), rule("regex", "^\\.")], "rule 2: kind must be contains, startsWith, endsWith or matches"),
+        (vec![rule("matches", "")], "rule 1: value must not be empty"),
+        (vec![rule("matches", ".git"), rule("matches", "x"), rule("endsWith", "build/out")], "rule 3: value must not contain a slash — a rule matches a name, not a path"),
+    ] {
+        assert_eq!(check_rules(&rules).unwrap_err(), says);
+    }
+    // A missing field is the same refusal as a wrong one, not a rule that quietly becomes `matches`.
+    assert_eq!(check_rules(&[Value::obj().s("value", "x").done()]).unwrap_err(), "rule 1: kind must be contains, startsWith, endsWith or matches");
+    assert_eq!(check_rules(&[rule("matches", ".git"), Value::obj().s("kind", "contains").done()]).unwrap_err(), "rule 2: value must not be empty");
+    assert_eq!(std::fs::read_to_string(dir.join("filters.toml")).unwrap(), before, "a refused save leaves the file alone");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::env::remove_var("KIKI_CONFIG_DIR");
+}
+
+/// The default rules against a real tree: each of the eight names goes, a named FOLDER takes its
+/// whole subtree with it, and every other name is mirrored — dotted or not. The dotted ones here
+/// are the reason the defaults are names rather than `startsWith "."`: a website that loses its
+/// `.htaccess` and its `.well-known/acme-challenge/` stops redirecting and stops renewing its
+/// certificate, and the only sign of it is "N filtered out".
+#[test]
+fn the_default_rules_skip_the_eight_names_and_mirror_the_rest() {
+    let cancel = AtomicBool::new(false);
+    let d = std::env::temp_dir().join(format!("kiki-mirror-hidden-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    for dir in [".git/refs", ".idea", ".vscode", "node_modules/left-pad", "__pycache__", ".well-known/acme-challenge", "src"] {
+        std::fs::create_dir_all(d.join(dir)).unwrap();
+    }
+    // Skipped, every one of them named in `default_rules`.
+    std::fs::write(d.join(".git/HEAD"), b"ref").unwrap();
+    std::fs::write(d.join(".git/refs/main"), b"sha").unwrap();
+    std::fs::write(d.join(".env"), b"SECRET=1").unwrap();
+    std::fs::write(d.join(".DS_Store"), b"\0").unwrap();
+    std::fs::write(d.join(".idea/workspace.xml"), b"<x/>").unwrap();
+    std::fs::write(d.join(".vscode/settings.json"), b"{}").unwrap();
+    std::fs::write(d.join("Thumbs.db"), b"\0").unwrap();
+    std::fs::write(d.join("node_modules/left-pad/index.js"), b"//").unwrap();
+    std::fs::write(d.join("__pycache__/mod.pyc"), b"\0").unwrap();
+    // Mirrored: the four dotted names a server needs, the challenge directory, and the ordinary.
+    std::fs::write(d.join(".htaccess"), b"Redirect /").unwrap();
+    std::fs::write(d.join(".user.ini"), b"x=1").unwrap();
+    std::fs::write(d.join(".nojekyll"), b"").unwrap();
+    std::fs::write(d.join(".well-known/acme-challenge/token"), b"tok").unwrap();
+    std::fs::write(d.join("visible.txt"), b"v").unwrap();
+    std::fs::write(d.join("src/main.rs"), b"fn main(){}").unwrap();
+
+    let side = side_for(&Uri::from_path(&d)).unwrap();
+    let mut n = 0;
+    let map = scan_side(&side, &default_rules(), &mut n, &cancel).unwrap();
+    let mut got: Vec<&str> = map.iter().map(|(rel, _)| rel).collect();
+    got.sort();
+    assert_eq!(
+        got,
+        [".htaccess", ".nojekyll", ".user.ini", ".well-known", ".well-known/acme-challenge", ".well-known/acme-challenge/token", "src", "src/main.rs", "visible.txt"]
+    );
+    assert_eq!(n, 8, "the eight names — a skipped folder is counted once, not per file");
+
+    // And the pattern that used to be the default is still there for whoever wants it: adding it
+    // by hand takes the same dotted names away again.
+    let mut hidden_too = default_rules();
+    hidden_too.push(Rule::StartsWith(".".into()));
+    let mut n2 = 0;
+    let map2 = scan_side(&side, &hidden_too, &mut n2, &cancel).unwrap();
+    let mut got2: Vec<&str> = map2.iter().map(|(rel, _)| rel).collect();
+    got2.sort();
+    assert_eq!(got2, ["src", "src/main.rs", "visible.txt"]);
+
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The guard that matters on the destination: a name the rules skip is not an "extra", so it is
+/// never planned for deletion however emphatically deletes are on.
+#[test]
+fn a_filtered_name_on_the_destination_is_never_an_extra() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let d = std::env::temp_dir().join(format!("kiki-mirror-extra-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::env::set_var("KIKI_CONFIG_DIR", d.join("config"));
+    std::fs::create_dir_all(d.join("config")).unwrap();
+    std::fs::create_dir_all(d.join("r/node_modules")).unwrap();
+    std::fs::create_dir_all(d.join("m")).unwrap();
+    std::fs::write(d.join("m/page.html"), b"<p>").unwrap();
+    std::fs::write(d.join("r/page.html"), b"<p>").unwrap();
+    std::fs::write(d.join("r/.env"), b"SECRET=1").unwrap();
+    std::fs::write(d.join("r/node_modules/left.js"), b"//").unwrap();
+
+    let mut s = spec(true);
+    s.apply_filters = true;
+    s.master = Uri::from_path(&d.join("m"));
+    s.replica = Uri::from_path(&d.join("r"));
+    let cancel = AtomicBool::new(false);
+    let plan = scan(&mut s, &cancel).unwrap();
+    assert_eq!(plan.delete_count(), 0, "{:?}", kinds(&plan));
+    assert_eq!(plan.filtered_count, 2, ".env and node_modules");
+    assert_eq!(plan.replica_entry_count, 1, "and they are not counted as items on the destination either");
+
+    // With the rules off, they are extras like anything else — the guard is the rules, not luck.
+    s.apply_filters = false;
+    let plan = scan(&mut s, &cancel).unwrap();
+    assert_eq!(plan.delete_count(), 3);
+
+    std::env::remove_var("KIKI_CONFIG_DIR");
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 // ---------------------------------------------------------------- detectors
@@ -229,6 +437,70 @@ fn the_clock_offset_is_the_median_of_matching_pairs() {
         dirs_r.insert(rel, e(rel, true, 0, 1_000).1);
     }
     assert_eq!(auto_offset(&dirs, &dirs_r), 0);
+}
+
+/// The manual offset, end to end through `scan` — the path the Configure screen's hours box
+/// drives. The comparison is `master.mtime − offset − replica.mtime`, so the offset is what the
+/// SOURCE reads more than the destination for one and the same file: a destination whose clock is
+/// three hours behind is reconciled by **+3 h**, and by −3 h it is twice as wrong. A sign the
+/// wrong way about copies the whole tree on every run, or skips all of it; hence both directions
+/// here, and the wrong sign asserted as well as the right one.
+#[test]
+fn a_manual_clock_offset_is_used_as_given_and_auto_measures_the_same_one() {
+    const HOUR: i64 = 3_600_000;
+    let d = std::env::temp_dir().join(format!("kiki-mirror-offset-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("m")).unwrap();
+    std::fs::create_dir_all(d.join("r")).unwrap();
+    // The same four files on both sides, byte for byte: only the clocks disagree.
+    let stamp = |side: &str, n: i64, ms: i64| {
+        let p = d.join(side).join(format!("f{n}.txt"));
+        std::fs::write(&p, format!("file {n}")).unwrap();
+        crate::ops::set_mtime(&p, std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms as u64)).unwrap();
+    };
+    let base: i64 = 1_700_000_000_000;
+    let both = |replica_shift: i64| {
+        for n in 0..4 {
+            stamp("m", n, base + n * 1_000);
+            stamp("r", n, base + n * 1_000 + replica_shift);
+        }
+    };
+    let cancel = AtomicBool::new(false);
+    let mut s = spec(false);
+    s.master = Uri::from_path(&d.join("m"));
+    s.replica = Uri::from_path(&d.join("r"));
+    s.clock_offset_auto = false;
+    let copies = |s: &mut Spec| {
+        let p = scan(s, &cancel).unwrap();
+        assert_eq!(p.clock_offset_ms, s.clock_offset_ms, "the plan carries the offset it was diffed with — the report prints this one");
+        p.actions.iter().filter(|a| a.kind == ActionKind::Copy).count()
+    };
+
+    // A destination three hours BEHIND the source: +3 h is the offset that reconciles it.
+    both(-3 * HOUR);
+    s.clock_offset_ms = 0;
+    assert_eq!(copies(&mut s), 4, "with no offset every file looks three hours out of date");
+    s.clock_offset_ms = 3 * HOUR;
+    assert_eq!(copies(&mut s), 0, "with the offset given by hand there is nothing to do");
+    s.clock_offset_ms = -3 * HOUR;
+    assert_eq!(copies(&mut s), 4, "the wrong sign is six hours out, not none");
+    s.clock_offset_auto = true;
+    s.clock_offset_ms = 0;
+    assert_eq!(copies(&mut s), 0, "measured for itself, the same answer as the hand-set one");
+    assert_eq!(s.clock_offset_ms, 3 * HOUR, "and the scan writes what it measured back into the spec");
+
+    // And the other way about: a destination three hours AHEAD is −3 h.
+    both(3 * HOUR);
+    s.clock_offset_auto = false;
+    s.clock_offset_ms = -3 * HOUR;
+    assert_eq!(copies(&mut s), 0);
+    s.clock_offset_ms = 3 * HOUR;
+    assert_eq!(copies(&mut s), 4, "the wrong sign again");
+    s.clock_offset_auto = true;
+    assert_eq!(copies(&mut s), 0);
+    assert_eq!(s.clock_offset_ms, -3 * HOUR);
+
+    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -318,10 +590,12 @@ fn a_scanned_plan_is_kept_for_the_run_that_follows() {
 /// carrying a path that would reach outside the replica.
 #[test]
 fn the_guards_refuse_before_anything_is_deleted() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cancel = AtomicBool::new(false);
     let ctx = ExecCtx { cancel: &cancel, workers: 1, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
     let d = std::env::temp_dir().join(format!("kiki-mirror-guards-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
+    std::env::set_var("KIKI_STATE_DIR", d.join("state")); // the audit log: see above
     std::fs::create_dir_all(d.join("r")).unwrap();
     for n in ["one", "two", "three", "four"] {
         std::fs::write(d.join("r").join(n), b"x").unwrap();
@@ -427,4 +701,96 @@ fn the_report_says_what_the_run_would_do() {
     assert_eq!(j.u64_field("bytes"), Some(5));
     assert_eq!(j.get("master").unwrap().u64_field("size"), Some(5));
     assert!(matches!(j.get("replica"), Some(Value::Null)), "no replica side for a new file");
+}
+
+/// What the workspace refuses, the daemon refuses too: a client that skips the form cannot mirror
+/// a folder into itself.
+#[test]
+fn a_folder_is_not_mirrored_into_itself() {
+    let u = |s: &str| Uri::parse(s).unwrap();
+    let cancel = AtomicBool::new(false);
+    for (m, r) in [("file:///a/b", "file:///a/b"), ("file:///a/b", "file:///a/b/c"), ("file:///a/b/c", "file:///a/b"), ("file:///", "file:///a"), ("sftp://lab/srv", "sftp://lab/srv/site")] {
+        assert!(scan::overlap(&u(m), &u(r)).is_err(), "{m} → {r}");
+    }
+    // A name that only begins the same is another folder; so is the same path on another machine.
+    for (m, r) in [("file:///a/b", "file:///a/bc"), ("file:///a/b", "sftp://lab/a/b"), ("sftp://lab/srv", "sftp://nas/srv/site")] {
+        assert!(scan::overlap(&u(m), &u(r)).is_ok(), "{m} → {r}");
+    }
+    // And it is asked before either side is touched: neither of these folders exists.
+    let mut s = spec(true);
+    s.master = u("file:///kiki-no-such/a");
+    s.replica = u("file:///kiki-no-such/a/b");
+    let err = format!("{:?}", scan(&mut s, &cancel).err());
+    assert!(err.contains("inside the source"), "{err}");
+}
+
+// ---------------------------------------------------------------- cancelling a compare
+
+/// A compare of a big tree, stopped half way: it must come back at once, say it was cancelled,
+/// and stop WHERE IT WAS rather than walking the rest of the tree "just to finish". The count it
+/// reports as it goes is both what the Preflight screen shows and what says where it stopped.
+#[test]
+fn a_big_local_compare_stops_where_it_was_cancelled() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let d = std::env::temp_dir().join(format!("kiki-mirror-cancel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+    let entries: u64 = 10_000;
+    for dir in 0..100 {
+        let p = d.join("m").join(format!("d{dir:03}"));
+        std::fs::create_dir_all(&p).unwrap();
+        for f in 0..(entries / 100 - 1) {
+            std::fs::write(p.join(format!("f{f:04}.txt")), b"x").unwrap();
+        }
+    }
+    std::fs::create_dir_all(d.join("r")).unwrap();
+    let mut s = spec(false);
+    s.master = Uri::from_path(&d.join("m"));
+    s.replica = Uri::from_path(&d.join("r"));
+
+    // Cancelled the moment the walk first says where it has got to — which is a few hundred
+    // entries in, wherever this machine happens to be by then.
+    let cancel = AtomicBool::new(false);
+    let seen = std::sync::atomic::AtomicU64::new(0);
+    let at = Mutex::new(None);
+    let started = std::time::Instant::now();
+    let out = scan_counting(&mut s, &cancel, &|n| {
+        seen.store(n, Ordering::Relaxed);
+        if !cancel.swap(true, Ordering::Relaxed) {
+            *at.lock().unwrap() = Some(std::time::Instant::now());
+        }
+    });
+    let at = at.lock().unwrap().expect("the walk said where it had got to");
+    assert!(out.is_err(), "a compare that was cancelled has no plan to show (it ran to the end in {:?})", started.elapsed());
+    assert_eq!(out.err().map(|e| e.message()), Some("cancelled".to_string()));
+    assert!(at.elapsed() < std::time::Duration::from_millis(500), "it took {:?} to stop", at.elapsed());
+    let stopped_at = seen.load(Ordering::Relaxed);
+    assert!(stopped_at < entries / 4, "it walked on to {stopped_at} of {entries} entries after being cancelled");
+    std::fs::remove_dir_all(&d).unwrap();
+}
+
+/// The Digest detector hashes whole files on the local side. A cancel is looked at INSIDE each
+/// file, not only between them — a mirror of disc images would otherwise ignore Cancel until the
+/// one being hashed was done.
+#[test]
+fn a_cancelled_compare_gives_up_on_the_file_it_is_hashing() {
+    let d = std::env::temp_dir().join(format!("kiki-mirror-digest-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("a.bin"), vec![b'a'; 4096]).unwrap();
+    let side = Side::Local(d.clone());
+    // The other side is a backend that hands out content hashes (an object store's ETag).
+    let other: SideMap = [("a.bin".to_string(), Entry { path: 0, is_dir: false, size: 4096, mtime_ms: 0, digest: Some(crate::md5::hex(&vec![b'a'; 4096])) })].into_iter().collect();
+
+    let mut mine: SideMap = [e("a.bin", false, 4096, 0)].into_iter().collect();
+    let cancel = AtomicBool::new(false);
+    scan::fill_local_digests(&side, &mut mine, &other, &cancel);
+    assert_eq!(mine.get("a.bin").unwrap().digest, other.get("a.bin").unwrap().digest, "the local side is hashed to compare with the digest");
+    assert!(!is_changed(Detector::Digest, mine.get("a.bin").unwrap(), other.get("a.bin").unwrap(), 0));
+
+    let mut mine: SideMap = [e("a.bin", false, 4096, 0)].into_iter().collect();
+    cancel.store(true, Ordering::Relaxed);
+    scan::fill_local_digests(&side, &mut mine, &other, &cancel);
+    assert_eq!(mine.get("a.bin").unwrap().digest, None, "a cancelled compare hashes nothing");
+    std::fs::remove_dir_all(&d).unwrap();
 }

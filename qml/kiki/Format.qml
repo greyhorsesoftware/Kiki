@@ -63,8 +63,24 @@ QtObject {
         const g = row ? row.git : null
         if (!g || g.state === "clean" || g.state === "ignored") return null
         if (row.isDir && Kiki.Settings.git.folders === "off") return null
+        // A folder that is a repository of its own wears the capsule instead, in the same place:
+        // it says which branch as well as how it stands, and two marks would be one too many.
+        if (g.root) return null
         return g
     }
+    /// A folder that is itself a repository — the folder above it may be in no repository at all,
+    /// so this is the only thing that can speak for it (plan 15). The capsule goes where the
+    /// letter badge goes and is coloured by `gitColor` like everything else. It is a folder mark,
+    /// so `[git] folders = "off"` takes it away with the rest of them.
+    function gitCapsule(row) {
+        const g = row ? row.git : null
+        if (!g || !g.root || !g.branch) return null
+        if (Kiki.Settings.git.folders === "off") return null
+        return g
+    }
+    /// What an icon tile's dot is coloured by: the row's own mark, or — a tile has no room for a
+    /// branch, and gets no new elements — a repository root's aggregate on its own.
+    function gitDotMark(row) { return gitMark(row) || gitCapsule(row) }
     /// Ignored rows are dimmed unless `[git] showIgnored = "normal"`. ("hide" never gets here: the
     /// daemon leaves those rows out of the listing.)
     function gitDimmed(row) {
@@ -102,24 +118,38 @@ QtObject {
         return h > 0 ? h + ":" + two(m) + ":" + two(s) : m + ":" + two(s)
     }
     function gitBadge(g) { if (!g) return ""; return { modified: "M", added: "A", deleted: "D", renamed: "R", conflicted: "!", untracked: "?", ignored: "", clean: "" }[g.state] || "" }
+    /// Plan 15's colours, taken from the theme rather than written down: a badge is part of the
+    /// window and changes with it, like everything else drawn beside it. Gone and conflicted are
+    /// `danger` rather than `red` — a meaning, not a palette slot, so a theme whose red is green
+    /// does not paint a lost file in it. Untracked is the theme's green most of the way to muted:
+    /// there, but not yours yet.
     function gitColor(g) {
-        const t = Qt.resolvedUrl("") // no-op to keep this a plain function
-        if (!g) return "#565f89"
-        return { modified: "#e0af68", added: "#9ece6a", deleted: "#f7768e", renamed: "#e0af68", conflicted: "#f7768e", untracked: "#7f9e6a", ignored: "#565f89", clean: "#565f89" }[g.state] || "#565f89"
+        if (!g) return Kiki.Theme.muted
+        switch (g.state) {
+        case "modified": case "renamed": return Kiki.Theme.changed
+        case "added": return Kiki.Theme.green
+        case "deleted": case "conflicted": return Kiki.Theme.danger
+        case "untracked": return mix(Kiki.Theme.green, Kiki.Theme.muted, 0.45)
+        default: return Kiki.Theme.muted
+        }
     }
+    /// `a` moved `t` of the way towards `b`.
+    function mix(a, b, t) { return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1) }
     function kindLabel(kind) {
         return { folder: "Folder", image: "Image", video: "Video", audio: "Audio", code: "Code", text: "Text", document: "Document", pdf: "PDF document", archive: "Archive", link: "Link", file: "File", other: "Other" }[kind] || "File"
     }
-    // ~-shortened display of a URI, as the daemon's Uri::display does.
+    // ~-shortened display of a URI, as the daemon's Uri::display does. A bare filesystem path —
+    // the trash's record of where a file came from is one — is shortened the same way; it used to
+    // fall through to the scheme branch, which cut its first two characters off ("ome/t").
     function display(uri, home) {
         if (!uri) return ""
-        if (uri.startsWith("file://")) {
-            let p = decodeURIComponent(uri.slice(7))
+        const i = uri.indexOf("://")
+        if (uri.startsWith("file://") || i < 0) {
+            let p = i < 0 ? uri : decodeURIComponent(uri.slice(7))
             if (home && p === home) return "~"
             if (home && p.startsWith(home + "/")) return "~/" + p.slice(home.length + 1)
             return p
         }
-        const i = uri.indexOf("://")
         return decodeURIComponent(uri.slice(i + 3))
     }
     // Host part of a remote uri ("sftp://homelab/srv" -> "homelab"); empty for local or bare paths.

@@ -37,6 +37,11 @@ Singleton {
     /// green there, and "Move to Trash" in green reads as the safe choice. A palette slot is a
     /// colour; danger is a meaning, and it does not get to be green.
     readonly property color danger: isReddish(red) ? red : "#f7768e"
+    /// What "this has been changed" is drawn in — a modified file's badge, a dirty repository's
+    /// capsule. The theme's yellow, unless the theme's yellow is red (matte-black: `yellow =
+    /// "#b91c1c"`): then changed and conflicted would be one colour, and the difference between
+    /// "you edited this" and "this is broken" is the whole point of having two.
+    readonly property color changed: isReddish(yellow) ? "#e0af68" : yellow
     function isReddish(c) {
         // Within ~30° of pure red on the wheel, and saturated enough to have a hue at all.
         const h = c.hslHue

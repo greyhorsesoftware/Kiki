@@ -34,7 +34,7 @@ Error codes: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `Unsupported`, `Cancell
 - **Kind**: `"folder" | "file" | "link" | "image" | "video" | "audio" | "document" | "pdf" | "text" | "code" | "archive" | "other"`. Folders and links come from `d_type`; the rest from the extension in phase 1 and the mime type once phase 2 has run.
 - **Meta**: `{ "size": u64, "mtime": u64 (ms since epoch, 0 = unknown), "atime": u64 (last access, ms, 0 = unknown; local files only, as fresh as the mount's atime policy), "mode": u32 | null, "owner": string | null, "group": string | null, "digest": { "kind": "md5", "hex": string } | null }`
 - **Row**: `{ "name": string, "kind": Kind, "isDir": bool, "isLink": bool, "meta": Meta | null, "thumb": string | null, "git": Git | null }`. `thumb` is an absolute path into the thumbnail cache; `null` until generated, `""` if generation failed. `git` is `null` outside a repository or before status has run.
-- **Git**: `{ "state": "modified" | "added" | "deleted" | "renamed" | "conflicted" | "untracked" | "ignored" | "clean", "staged": bool }`
+- **Git**: `{ "state": "modified" | "added" | "deleted" | "renamed" | "conflicted" | "untracked" | "ignored" | "clean", "staged": bool }` On a folder that is itself a repository it also carries `{ "root": true, "branch": string, "detached": bool }` — the branch (or, detached, the short hash), with `state` the aggregate of that repository rather than of the folder above it; the branch arrives with the listing and the `state` a moment later as a `Rows` update. `root` is absent on every other row.
 - **Job**: `{ "id": u64, "op": string, "state": "queued" | "running" | "done" | "failed" | "cancelled", "done": u64, "total": u64, "bytes": u64, "bytesTotal": u64, "title": string, "error": string | null, "undoable": bool }`
 - **Location**: `{ "name": string, "plugin": string, "remoteUri": Uri, "localUri": Uri, "config": { key: string } }` (never secrets)
 - **Field** (form description from a plugin): `{ "key": string, "label": string, "kind": "text" | "password" | "path" | "port" | "select" | "file", "required": bool, "default": string | null, "options": [string] | null, "group": string | null }`
@@ -46,6 +46,8 @@ Error codes: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `Unsupported`, `Cancell
 | `Hello` | `version: u32`, `client: string` | `{ version, daemon: string, plugins: [string] }` |
 | `Ping` | | `{}` |
 | `Version` | | `{ version: string }` |
+
+`client: "kiki"` says the connection is a kiki window, and that has a consequence: the jobs a window starts (`Submit`, `Share`, `Undo`, `Redo`) are stopped when the last window has disconnected and none has come back within a short grace (4 s; `KIKI_SHELL_GRACE_MS`). Nothing runs on behind a kiki that is gone. Any other client name — a script, the portal, a test — owns its jobs outright and they are never cancelled for it.
 
 ## Listings
 
@@ -214,10 +216,10 @@ Events:
 | `AccessLog` | `uris` | `{ opened: { <uri>: ms }, entries, path }` kiki's own open times (plan 22); rows also carry `opened` when known |
 | `ClearAccessLog` | | `{}` |
 | `TrashInfo` | | `{ items: [{ name, path, deleted }] }` from `info/*.trashinfo` (plan 04 Trash view) |
-| `OpenWith` | `uri` | `{ mime, apps: [{ id, name, icon, default: bool }] }` desktop entries for the file's MIME type |
-| `Launch` | `app`, `uris` | `{}` runs the desktop entry with its `Exec` expanded |
+| `OpenWith` | `uris: [string]` (or `uri`, one file) | `{ mime, mimes: [string], apps: [{ id, name, icon, default: bool }] }` — the desktop entries that open **every** file asked about, in the order the first file's kind has them; `default` only when it is the default for them all; `mime` is `""` when the kinds differ |
+| `Launch` | `app`, `uris` | `{}` runs the desktop entry with its `Exec` expanded: once with all the files when it takes a list (`%F`, `%U`), once for each when it takes one (`%f`, `%u`) |
 | `Plugins` | | `{ plugins: [{ scheme, displayName, form: [Field], defaults: {…}, secretFields: [string] }] }` |
-| `Locations` | | `{ locations: [Location] }` |
+| `Locations` | | `{ locations: [Location] }`, each with `connected: bool` — a browse session to it is alive; `LocationsChanged` is sent when one comes or goes |
 | `TestLocation` | `location: Location`, `secrets: { key: string }` | `{}` or error with `field` |
 | `AddLocation` | `location`, `secrets`, `trust`? | `{}` when saved (validates, connects, writes keyring then file), or `{ verify, host }` when the server offered a key nobody has accepted — nothing is saved, and the shell asks again with `trust` set to the fingerprint it showed, which is stored as `config.trustedFingerprint` |
 | `UpdateLocation` | `location`, `secrets` (only changed keys), `trust`? | as `AddLocation` |
@@ -260,7 +262,7 @@ Events: `DeviceAdded { device }`, `DeviceRemoved { uri }`. A device URI resolves
 | `MirrorPlan` | `job` (a finished `mirrorScan`), `lid` | opens the plan as a listing under `lid`: `{ counts: { new, changed, equal, extra, deletes, copyBytes, replicaEntries, filtered }, clockOffsetMs }` |
 | `MirrorFilter` | `lid`, `reason: "all" \| "new" \| "changed" \| "equal" \| "delete"` | `{ n }` then `Reset` |
 | `MirrorCheck` | `lid`, `first`, `count`, `checked: bool` | `{}` |
-| `MirrorReport` | `job` | `{ text: string }` |
+| `MirrorReport` | `job`, `saveTo?: Uri` | `{ text: string }`; with `saveTo`, the text is written to that local file too |
 | `Filters` / `SetFilters` | — / `rules: [{ kind: "contains" \| "startsWith" \| "endsWith" \| "matches", value }]` | `{ rules }` / `{}` |
 
 Plan rows come through `Window` on the plan `lid` as `{ "rel": string, "action": "copy" | "mkdir" | "delete" | "rmdir" | "skip", "reason": "new" | "changed" | "extra" | "equal", "bytes": u64, "checked": bool, "master": Meta | null, "replica": Meta | null, "state": "pending" | "running" | "done" | "skipped" | null, "progress": u8 | null }`. During `mirrorRun` the same `lid` receives `Rows` events as actions change state.

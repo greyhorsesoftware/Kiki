@@ -1,4 +1,6 @@
-"""What the view shows: hidden files, the filter, and switching views keeps the selection."""
+"""What the view shows: hidden files, the filter, switching views keeps the selection, and the
+list's column widths outlive the folder they were set in."""
+import json, os
 from harness import wait_for
 
 NEEDS = {"shell", "keyboard"}
@@ -37,3 +39,30 @@ def run(ctx):
     sh.keys(("ctrl", "2"))
     c.check("Ctrl+2 switches back to list", sh.wait_state(lambda st: st.get("view") == "list") is not None)
     c.check("and the selection is still there", any(u.endswith("/b.txt") for u in sh.state().get("selection", [])))
+
+    # A list column is resized by dragging the edge it begins at; `listColumn` is that drag. The
+    # width belongs to list view rather than to the folder, so it holds wherever the list goes.
+    settings = os.path.join(os.environ["KIKI_CONFIG_DIR"], "settings.toml")
+    before = sh.state().get("listColumns", {})
+    c.check("the list says what its columns are drawn at", before.get("mtime") == 160, before)
+    w = json.loads(sh.call("listColumn", "mtime", 240) or "{}")
+    c.check("a resize widens the column", w.get("mtime") == 240, w)
+    c.check("and Name gives up exactly what it took", w.get("name") == before.get("name", 0) - 80, (before, w))
+    c.check("shell state carries the widths", sh.state().get("listColumns", {}).get("mtime") == 240, sh.state().get("listColumns"))
+    c.check("the width is written to settings.toml",
+            wait_for(lambda: ("listColumnWidths" in open(settings).read()) or None, what="listColumnWidths in settings.toml") is not None)
+    c.check("under the view section, by role", "[view.listColumnWidths]" in open(settings).read() and "mtime = 240" in open(settings).read(),
+            open(settings).read())
+
+    # Another folder, opened from scratch, and then this one again: one set of widths, not one
+    # per folder. Reopening rebuilds the listing and the rows with it.
+    ctx.fixture({"x.txt": "x"})
+    sh.open("file://" + ctx.root)
+    c.check("a different folder is drawn with the same widths", sh.state().get("listColumns", {}).get("mtime") == 240, sh.state().get("listColumns"))
+    sh.open("file://" + root)
+    c.check("and so is this one, listed again", sh.state().get("listColumns", {}).get("mtime") == 240, sh.state().get("listColumns"))
+
+    # A double click on the edge puts the column back, which is also how this flow leaves the
+    # run's settings as it found them.
+    w = json.loads(sh.call("listColumn", "mtime", "reset") or "{}")
+    c.check("resetting puts the column back to its default", w.get("mtime") == 160, w)

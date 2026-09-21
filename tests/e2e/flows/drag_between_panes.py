@@ -1,9 +1,11 @@
 """Dragging between the panes, without a pointer.
 
-`shell drop <uris> <dest> <modifiers>` (the URIs newline-separated, as a `text/uri-list`) hands `Pane.dropInto` an object shaped like the
-`DragEvent` Qt would give it, so everything a real drag does after the button goes down is what
-runs here: which operation the modifiers choose, which drops are refused, and the job that comes
-of it. The press, the move and the release are the compositor's and stay on the phase 10 checklist.
+`shell drop <uris> <dest> <modifiers>` (the URIs newline-separated, as a `text/uri-list`) hands `Pane.dropInto` an event shaped as Qt
+shapes a real one — which has no modifiers, only the keys folded into `proposedAction` — so
+everything a real drag does after the button goes down is what runs here: what the keys choose,
+which drops are refused, and the job that comes of it. Real drags, keys and all, are driven in
+`tests/qml-drag` under Qt's `minimal` platform; only the compositor's part stays on the phase 10
+checklist.
 
 Every pair of ends is covered — local, SFTP and FTPS, in both directions and each to itself — so
 that "move within one place, copy between places" is asserted where it actually differs. A server
@@ -12,8 +14,6 @@ that is not installed skips its own pairs by name and the rest still run.
 import getpass
 import json
 import os
-import shutil
-import subprocess
 
 from harness import wait_for
 from servers import FTPS_PASSWORD, FTPS_USER, Servers, add_location, sshd_bin, vsftpd_bin
@@ -120,13 +120,17 @@ def run(ctx):
                 c.check(f"{pair}: …the copy arrives and the original stays",
                         got is not None and os.path.exists(os.path.join(sdir, "ctrl.txt")), os.listdir(sdir))
 
-                # ---------------------------------------------------- Shift moves, always
+                # ---------------------------------------------------- Shift reads as no key
+                # A real drag carries no modifiers, only `proposedAction`, and Qt reports Shift
+                # exactly as it reports no key at all: so Shift follows the rule by place, and
+                # cannot force a move between machines (cut and paste does that).
                 open(os.path.join(sdir, "shift.txt"), "w").write("shift")
                 r = drop(sh, [suri(f"from-{n}/shift.txt")], duri(f"into-{n}"), "shift")
-                c.check(f"{pair}: Shift moves", r.get("action") == "move", r)
-                moved = wait_for(lambda: (os.path.exists(os.path.join(ddir, "shift.txt"))
-                                          and not os.path.exists(os.path.join(sdir, "shift.txt"))) or None, timeout=60)
-                c.check(f"{pair}: …the original is taken away with it", moved is not None,
+                c.check(f"{pair}: Shift {want}s, as no key does", r.get("action") == want, r)
+                arrived = wait_for(lambda: os.path.exists(os.path.join(ddir, "shift.txt")) or None, timeout=60)
+                kept = os.path.exists(os.path.join(sdir, "shift.txt"))
+                c.check(f"{pair}: …and the original is {'taken away' if want == 'move' else 'kept'}",
+                        arrived is not None and (kept if want == "copy" else wait_for(lambda: (not os.path.exists(os.path.join(sdir, "shift.txt"))) or None, timeout=60) is not None),
                         (os.listdir(sdir), os.listdir(ddir)))
 
                 # ---------------------------------------------------- several at once
@@ -187,44 +191,25 @@ def run(ctx):
                     failures(d) or os.listdir(here))
         sh.open("file://" + local_root)
 
-        # -------------------------------------------------------------- the drop that asks
-        # Alt, or a drag the right button started, puts a menu at the pointer instead of deciding.
-        # Only local ends here: what the menu does is the window's, and it is the same menu
-        # whatever the files are.
-        asking = os.path.join(local_root, "asking")
-        os.makedirs(os.path.join(asking, "into"))
-        for name in ("alt.txt", "right.txt", "cancel.txt"):
-            open(os.path.join(asking, name), "w").write(name)
-        into = os.path.join(asking, "into")
-        auri = "file://" + asking
-
-        r = drop(sh, [auri + "/alt.txt"], auri + "/into", "alt")
-        c.check("Alt: the drop asks and takes nothing yet",
-                r.get("asked") is True and r.get("accepted") is False, r)
-        c.check("…the menu offers Copy here, Move here and Cancel",
-                [i["label"] for i in json.loads(sh.call("menuItems") or "[]")][:2] == ["Copy here", "Move here"]
-                and "Cancel" in [i["label"] for i in json.loads(sh.call("menuItems") or "[]")], sh.call("menuItems"))
-        c.check("…and nothing has moved while it stands", os.path.exists(os.path.join(asking, "alt.txt")))
-        if shutil.which("grim"):
-            subprocess.run(["grim", os.path.join(os.environ.get("KIKI_E2E_OUT", "/tmp"), "drop-menu.png")], capture_output=True)
-        sh.call("menuClick", "Copy here")
-        c.check("Copy here copies", wait_for(lambda: os.path.exists(os.path.join(into, "alt.txt")) or None) is not None, failures(d))
-        c.check("…and leaves the original", os.path.exists(os.path.join(asking, "alt.txt")))
-
-        # A right-button drag asks by the mark it carries: no modifier is held at all.
-        r = drop(sh, [auri + "/right.txt"], auri + "/into", "right")
-        c.check("a right-button drag asks too", r.get("asked") is True, r)
-        sh.call("menuClick", "Move here")
-        moved = wait_for(lambda: (os.path.exists(os.path.join(into, "right.txt"))
-                                  and not os.path.exists(os.path.join(asking, "right.txt"))) or None, timeout=30)
-        c.check("Move here moves", moved is not None, (os.listdir(asking), os.listdir(into)))
-
-        drop(sh, [auri + "/cancel.txt"], auri + "/into", "alt")
-        sh.call("menuClick", "Cancel")
-        c.check("Cancel leaves everything where it was",
-                os.path.exists(os.path.join(asking, "cancel.txt")) and not os.path.exists(os.path.join(into, "cancel.txt")),
-                (os.listdir(asking), os.listdir(into)))
-        c.check("…and the menu is gone", sh.state().get("menuVisible") is False, sh.state().get("menuVisible"))
+        # -------------------------------------------------------------- focus follows the drop
+        # Side by side, a drop into the pane that does not have the focus hands it the focus:
+        # that is where the files now are.
+        was_split = sh.state().get("split") is True
+        if not was_split:
+            sh.call("sideBySide", "toggle")
+        if c.check("side by side for the focus check", sh.wait_state(lambda st: st.get("split") is True) is not None, sh.state().get("split")):
+            sh.call("focusPane", "left")
+            here = os.path.join(local_root, "focus")
+            os.makedirs(os.path.join(here, "into"))
+            open(os.path.join(here, "f.txt"), "w").write("f")
+            try:
+                r = json.loads(sh.call("dropOn", "right", "file://" + here + "/f.txt", "file://" + here + "/into", "") or "{}")
+            except json.JSONDecodeError:
+                r = {}
+            c.check("the pane a drop lands in takes the focus", r.get("accepted") is True and r.get("focused") == "right", r)
+            sh.call("focusPane", "left")
+        if not was_split:
+            sh.call("sideBySide", "toggle")
 
         # -------------------------------------------------------------- what is refused
         # These need no server: they are `Pane.dropAction` saying no, and nothing is submitted.

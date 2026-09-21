@@ -48,9 +48,23 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             let mut inner = l.inner.lock().unwrap();
             inner.last_used = Instant::now();
             let stale = inner.stale;
+            // A folder of projects, opened again: an edit inside one of them moved neither its
+            // `HEAD` nor its index, so the poll below cannot have seen it. Showing the folder is
+            // the moment to ask again — and for a folder with no projects in it, nothing at all.
+            let projects = !inner.deco.repo_names().is_empty();
             drop(inner);
+            if projects && !stale {
+                l.repo_rows(None);
+            }
             if stale {
                 l.rescan();
+                // Stale is what an evicted watch leaves behind (`watch::watch` marks it so), and
+                // a folder that is opened again wants one again: without this it was re-listed
+                // once and then left dead, showing whatever it had at that moment for as long as
+                // the window stayed on it.
+                if l.dir.watchable() {
+                    crate::watch::watch(&l);
+                }
             }
             return Ok((l, !stale));
         }
@@ -140,8 +154,19 @@ pub(super) fn key_of(path: &std::path::Path) -> String {
     Uri::from_path(path).to_string()
 }
 
+/// The listing showing `path`. The cache is keyed by URI, so the `file://` key answers for every
+/// ordinary folder; the trash is the one listing whose URI is not its path — `trash:///` over
+/// `<trash>/files` — and without the second look no watch event ever reached it. That was worth
+/// a user's whole session: empty the trash, or trash another file with the trash view open, and
+/// it went on showing what it held when it was first opened, for as long as the daemon lived,
+/// because nothing marked it stale either.
+fn at_path(path: &std::path::Path) -> Option<Arc<Listing>> {
+    let c = cache().lock().unwrap();
+    c.map.get(&key_of(path)).cloned().or_else(|| c.map.values().find(|l| l.path == path).cloned())
+}
+
 pub fn mark_stale(path: &std::path::Path) {
-    if let Some(l) = cache().lock().unwrap().map.get(&key_of(path)).cloned() {
+    if let Some(l) = at_path(path) {
         l.inner.lock().unwrap().stale = true;
     }
 }
@@ -152,13 +177,15 @@ pub fn gone(path: &std::path::Path) {
     mark_stale(path);
     // The windows still showing it are told, so they can say the folder is gone rather than go
     // on showing rows for files that are not there (`WindowCache` has always listened for this).
-    if let Some(l) = find(path) {
+    let hit = find(path);
+    if let Some(l) = &hit {
         let subs = l.inner.lock().unwrap().subscribers.clone();
         for s in subs {
             let _ = s.tx.send(crate::proto::event("Gone").u("lid", s.lid).done());
         }
     }
-    forget(&Uri::from_path(path));
+    // Forgotten under its own URI, which for the trash is not the path's.
+    forget(&hit.map(|l| l.uri.clone()).unwrap_or_else(|| Uri::from_path(path)));
 }
 
 /// Does `path` still lead to the folder this listing was opened on? False once it has been
@@ -177,7 +204,30 @@ pub fn under(root: &std::path::Path) -> Vec<Arc<Listing>> {
 }
 
 pub fn find(path: &std::path::Path) -> Option<Arc<Listing>> {
-    cache().lock().unwrap().map.get(&key_of(path)).cloned()
+    at_path(path)
+}
+
+/// Repository-root rows have no watch of their own (plan 15). A folder of forty projects would
+/// be forty watches and there are sixty-four for everything (`watch::MAX_WATCHES`), so their
+/// `.git` is stat'd instead: two files apiece, once a second, and only for folders somebody is
+/// looking at. A project whose `HEAD` or index has moved — a commit, a checkout, a `git add`
+/// made in a terminal — has its row worked out again. Called from the watcher's sweep.
+pub fn poll_repo_rows() {
+    let live: Vec<Arc<Listing>> = cache().lock().unwrap().map.values().filter(|l| l.uri.is_local()).cloned().collect();
+    for l in live {
+        let names = {
+            let inner = l.inner.lock().unwrap();
+            if inner.subscribers.is_empty() {
+                continue;
+            }
+            inner.deco.repo_names()
+        };
+        // Stat'd with nothing held: a repository on a slow filesystem must not hold the listing.
+        let moved: Vec<Vec<u8>> = names.into_iter().filter(|n| crate::git::moved(&l.path.join(OsStr::from_bytes(n)))).collect();
+        if !moved.is_empty() {
+            l.repo_rows(Some(moved));
+        }
+    }
 }
 
 /// A job changed what is in `dir`. A local folder is watched and finds out by itself; a server

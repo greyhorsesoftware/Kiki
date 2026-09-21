@@ -19,6 +19,10 @@ pub const SMALL_DIR: usize = 2_000; // fully enriched right after phase 1
 pub const WINDOW_MAX: u32 = 512;
 pub const CACHE_ENTRIES: usize = 500_000;
 pub const PARALLEL_SORT_ABOVE: usize = 50_000;
+/// Workers that work out the state of one folder's repository-root rows (plan 15). The cost is
+/// a `git` apiece, so a folder of forty projects walks the list a few at a time rather than
+/// spawning forty of them; `git::AGGREGATE_AT_ONCE` bounds it again across folders.
+pub const AGGREGATE_WORKERS: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortRole {
@@ -176,5 +180,5 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub use cache::{changed, find, forget, gone, invalidate_authority, mark_stale, open, still_there, under};
+pub use cache::{changed, find, forget, gone, invalidate_authority, mark_stale, open, poll_repo_rows, still_there, under};
 pub use rows::{iso, meta_json};

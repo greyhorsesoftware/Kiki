@@ -47,6 +47,7 @@ TestCase {
         bar.pane = remote                 // focus is on the remote pane…
         bar.crumbPane = local             // …and the title bar's path is still the local one
         bar.split = true
+        bar.remoteOpen = true
         header.pane = remote
         header.showPath = true
         wait(30)
@@ -63,11 +64,35 @@ TestCase {
         verify(!b.active)
     }
 
+    // Side by side is a server and the folder kept beside it (owner, 2026-09-21): the button is
+    // there only while a server is open — and while the layout is on, so there is a way out.
+    function test_it_is_offered_only_with_a_server_open() {
+        const b = bar.sideBySideButton
+        bar.split = false; bar.remoteOpen = false
+        verify(!b.visible, "two folders on this machine, one pane: nothing to put side by side")
+        bar.remoteOpen = true
+        verify(b.visible)
+        bar.remoteOpen = false; bar.split = true
+        verify(b.visible, "on, it stays: the way back to one pane")
+        bar.remoteOpen = true
+    }
+    // On, it stands with Mirror over the line between the panes; off, where the path ends — and
+    // the path gives it the room rather than running under it.
+    function test_it_stands_with_mirror_when_on_and_after_the_path_when_off() {
+        const b = bar.sideBySideButton, m = bar.mirrorButton, crumb = bar.breadcrumb
+        bar.remoteOpen = true
+        verify(m.visible)
+        compare(b.x + b.width + 4, m.x)
+        bar.split = false
+        wait(20)
+        const end = crumb.mapToItem(bar, crumb.width, 0).x
+        verify(b.x >= end, "on top of the path: " + b.x + " < " + end)
+        bar.split = true
+    }
+
     // Two panes, two paths, each over its own listing — so the one in the title bar steps aside.
-    // It keeps its room, or the buttons would slide about every time the layout is toggled.
     function test_the_title_bar_path_steps_aside_side_by_side() {
         const crumb = bar.breadcrumb
-        const x = bar.sideBySideButton.mapToItem(bar, 0, 0).x
         verify(!bar.pathShown)
         compare(crumb.opacity, 0)
         verify(!crumb.enabled)                 // and cannot be clicked while it cannot be seen
@@ -75,7 +100,6 @@ TestCase {
         verify(bar.pathShown)
         compare(crumb.opacity, 1)
         verify(crumb.enabled)
-        compare(bar.sideBySideButton.mapToItem(bar, 0, 0).x, x)
     }
 
     function test_with_one_pane_the_title_bar_path_is_that_panes() {

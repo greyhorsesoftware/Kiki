@@ -5,7 +5,7 @@ import "." as Kiki
 // settings.toml as served by the daemon, with the same defaults it applies.
 QtObject {
     id: settings
-    property var view: ({ "default": "list", icons: "kiki", sort: "name", order: "asc", inspector: false, sidebar: true, sidebarStyle: "rail", railHover: true, rememberPerFolder: true, slideshowDelay: 4, slideshowLoop: true, columns: ["mtime", "size", "kind"] })
+    property var view: ({ "default": "list", icons: "kiki", sort: "name", order: "asc", inspector: false, sidebar: true, sidebarStyle: "rail", railHover: true, rememberPerFolder: true, slideshowDelay: 4, slideshowLoop: true, columns: ["mtime", "size", "kind"], listColumnWidths: ({}) })
     // Per-folder view memory (plan 02): uri -> { view, sort, order }
     property var viewPrefs: ({})
     function viewPref(uri) { return view.rememberPerFolder ? viewPrefs[uri] || null : null }
@@ -34,6 +34,18 @@ QtObject {
             loaded = true
         })
         loadViewPrefs()
+    }
+    /// Take one entry out of a map setting (`[view.listColumnWidths]`, `[view.columnsWidths]`).
+    /// `set` cannot: the daemon merges maps, so a map sent without the entry leaves it in the
+    /// file. `null` is how it is told to forget.
+    function forget(section, key, entry) {
+        const map = Object.assign({}, (settings[section] || ({}))[key] || ({}))
+        delete map[entry]
+        const local = {}; local[key] = map
+        settings[section] = Object.assign({}, settings[section], local)
+        const gone = {}; gone[entry] = null
+        const patch = {}; patch[section] = {}; patch[section][key] = gone
+        Kiki.Daemon.request("SetSettings", { patch: patch })
     }
     function set(section, key, value) {
         const patch = {}; patch[section] = {}; patch[section][key] = value

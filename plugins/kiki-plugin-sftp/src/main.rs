@@ -57,6 +57,8 @@ struct Session {
     fingerprint: Option<String>,
     /// `~/.ssh/known_hosts` already vouches for this server's key.
     known: bool,
+    /// The server and sign-in this session was made for (`identity`).
+    identity: String,
 }
 
 impl Session {
@@ -190,6 +192,27 @@ fn auth_failure(tried: &[String], unusable: &[String], password_tried: bool) -> 
 
 fn key(location: &str, role: &str) -> String {
     format!("{location}\u{0}{role}")
+}
+
+/// What makes a cached session **this** location's: the machine it is connected to, and the
+/// sign-in it was made with. Sessions are kept by location name and role, and a name can be given
+/// away — remove a location and add another under the same name, and without this the new one
+/// inherits the connection to the machine that was removed, with nothing on screen to say so.
+/// The daemon disconnects on remove; this is the same guard on the plugin's own side, and it
+/// costs one string comparison per `Connect`.
+///
+/// Spelled as what `connect` below will actually do with these fields — the port it will dial,
+/// and which secret it will offer for the tab the location was saved from — so that a cosmetic
+/// edit is not a needless reconnect. Pure, so it is tested without a server.
+fn identity(config: &Value, secrets: &Value) -> String {
+    let port = cfg(config, "port").parse::<u16>().unwrap_or(22);
+    let auth = cfg(config, "auth").to_lowercase();
+    let password = if auth == "key" { "" } else { secrets.str_field("password").unwrap_or("") };
+    let passphrase = if auth == "password" { "" } else { secrets.str_field("passphrase").unwrap_or("") };
+    let keys = if auth == "password" { String::new() } else { keys_to_try(cfg(config, "identityFile")).join(",") };
+    // Joined on NUL, which none of these can contain, so no two different sign-ins can spell the
+    // same identity.
+    [cfg(config, "host"), &port.to_string(), cfg(config, "username"), &auth, &keys, cfg(config, "trustedFingerprint"), password, passphrase].join("\u{0}")
 }
 
 // ---------------------------------------------------------------- keys on this machine
@@ -611,8 +634,15 @@ impl Handler for Sftp {
 
     fn connect(&self, location: &str, role: &str, config: &Value, secrets: &Value) -> Result<Value> {
         let k = key(location, role);
-        if let Some(s) = self.sessions.lock().unwrap().get(&k) {
-            return Ok(Value::obj().opt_s("fingerprint", s.fingerprint.as_deref()).b("knownHost", s.known).v("banner", Value::Null).done());
+        let want = identity(config, secrets);
+        let cached = self.sessions.lock().unwrap().get(&k).cloned();
+        if let Some(s) = cached {
+            if s.identity == want {
+                return Ok(Value::obj().opt_s("fingerprint", s.fingerprint.as_deref()).b("knownHost", s.known).v("banner", Value::Null).done());
+            }
+            // The name is the same and the server is not: let the old connection go rather than
+            // hand it back for somewhere else's files.
+            self.disconnect(location, role);
         }
         let host = cfg(config, "host").to_string();
         let port: u16 = cfg(config, "port").parse().unwrap_or(22);
@@ -706,7 +736,7 @@ impl Handler for Sftp {
         };
         let fingerprint = seen.lock().unwrap().clone();
         let vouched = *known.lock().unwrap();
-        let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone(), known: vouched };
+        let sess = Session { handle, sftp, raw, fast: Mutex::new(FastScan::None), fingerprint: fingerprint.clone(), known: vouched, identity: want };
         // A job scans too — a mirror, a folder being copied — so its session is probed as well.
         let f = self.probe(&sess);
         *sess.fast.lock().unwrap() = f;
@@ -941,6 +971,45 @@ mod key_tests {
             auth_failure(&["id_ed25519".into(), "id_rsa".into()], &["work: needs its passphrase".into()], true),
             "the server refused 2 keys (id_ed25519, id_rsa) and the password — could not use work: needs its passphrase"
         );
+    }
+
+    /// A cached session is handed back only for the server and sign-in it was made with. Sessions
+    /// are kept per location name and role, and a name outlives the location that had it.
+    #[test]
+    fn a_cached_session_is_only_this_server_and_this_sign_in() {
+        let _g = ENV.lock().unwrap_or_else(|p| p.into_inner());
+        let server = |fields: &[(&str, &str)]| {
+            let mut o = Value::obj().s("host", "nas.example").s("port", "22").s("username", "dave").s("auth", "password");
+            for (k, v) in fields {
+                o = o.s(k, *v);
+            }
+            o.done()
+        };
+        let pw = |p: &str| Value::obj().s("password", p).done();
+        let base = server(&[]);
+        assert_eq!(identity(&base, &pw("hunter2")), identity(&server(&[]), &pw("hunter2")), "the same details are the same session");
+
+        for (field, other) in [("host", "other.example"), ("port", "2222"), ("username", "root"), ("auth", "key"), ("trustedFingerprint", "SHA256:someone-else")] {
+            assert_ne!(identity(&server(&[(field, other)]), &pw("hunter2")), identity(&base, &pw("hunter2")), "a different {field} is a different server or sign-in");
+        }
+        assert_ne!(identity(&base, &pw("hunter3")), identity(&base, &pw("hunter2")), "a different password is a different sign-in");
+
+        // Which key is offered is part of it, and which secret counts follows the tab the
+        // location was saved from — exactly as `connect` decides it, so that the identity cannot
+        // say "the same" where the sign-in would differ, nor the other way about.
+        let key_auth = |file: &str| server(&[("auth", "key"), ("identityFile", file)]);
+        assert_ne!(identity(&key_auth("~/.ssh/work"), &Value::obj().done()), identity(&key_auth("~/.ssh/home"), &Value::obj().done()));
+        assert_eq!(identity(&key_auth("~/.ssh/work"), &pw("hunter2")), identity(&key_auth("~/.ssh/work"), &pw("something-else")), "signing in by key: the password is not offered, so it is not part of it");
+        assert_ne!(identity(&key_auth("~/.ssh/work"), &Value::obj().s("passphrase", "a").done()), identity(&key_auth("~/.ssh/work"), &Value::obj().s("passphrase", "b").done()));
+        let with = |pw: &str, phrase: &str| identity(&base, &Value::obj().s("password", pw).s("passphrase", phrase).done());
+        assert_eq!(with("p", "x"), with("p", "y"), "signing in by password: the passphrase is not used, so it is not part of it");
+
+        // What does not change the connection does not force one.
+        assert_eq!(identity(&server(&[("port", "0022")]), &pw("hunter2")), identity(&base, &pw("hunter2")));
+        assert_eq!(identity(&server(&[("port", "")]), &pw("hunter2")), identity(&base, &pw("hunter2")), "no port is 22");
+        assert_eq!(identity(&server(&[("remotePath", "/srv/backup")]), &pw("hunter2")), identity(&base, &pw("hunter2")), "which folder is being looked at is not which server it is");
+        // Two fields cannot be run together into one identity by moving a character between them.
+        assert_ne!(identity(&server(&[("host", "nas.example2222"), ("port", "")]), &pw("x")), identity(&server(&[("host", "nas.example"), ("port", "2222")]), &pw("x")));
     }
 
     #[test]

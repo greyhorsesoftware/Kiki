@@ -13,6 +13,15 @@ use std::time::Duration;
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How long a plugin is given to answer a `Cancel` before the request is abandoned. A JSON
+/// request (`Connect`, `Scan`) can be dropped the moment the plugin has been told, because every
+/// JSON frame carries its own id and a late one is simply thrown away — and the person who
+/// pressed Cancel is waiting. A binary stream cannot: its frames carry no id, so the next
+/// transfer would take the abandoned one's bytes (see `binary` below), and it is worth some
+/// seconds to end it in order.
+pub const JSON_GRACE: Duration = Duration::from_millis(700);
+pub const BINARY_GRACE: Duration = Duration::from_secs(5);
+
 pub fn plugin_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
     if let Ok(d) = std::env::var("KIKI_PLUGIN_DIR") {
@@ -35,13 +44,24 @@ const SERVICES: &[&str] = &["dbus"];
 /// together the whole answer to "which protocols does this kiki speak". The stub is the contract
 /// test's plugin, so it counts only under the `stub` feature.
 ///
-/// `dav` and `smb` are one binary, `kiki-plugin-gio`, installed under both names (plan 25): a kind
-/// is the suffix of the name a plugin is run by, so `gio` itself is never listed.
-pub const LOCATION_KINDS: &[&str] = if cfg!(feature = "stub") { &["dav", "ftps", "sftp", "smb", "stub"] } else { &["dav", "ftps", "sftp", "smb"] };
+/// `smb` is `kiki-plugin-gio` installed under that name (plan 25): a kind is the suffix of the
+/// name a plugin is run by, so `gio` itself is never listed. The same binary can speak WebDAV and
+/// AFP, and 0.1.0 installs neither.
+pub const LOCATION_KINDS: &[&str] = if cfg!(feature = "stub") { &["ftps", "sftp", "smb", "stub"] } else { &["ftps", "sftp", "smb"] };
 
 /// Whether this build can connect to a location kind at all.
 pub fn ships(scheme: &str) -> bool {
     LOCATION_KINDS.contains(&scheme)
+}
+
+/// Why a kind is not here, in the words the user would use for it. A location saved by an earlier
+/// build keeps the kind it was saved with, so opening it has to say something better than `dav`.
+pub fn no_such_kind(scheme: &str) -> String {
+    match scheme {
+        "dav" => "WebDAV is not in this version".into(),
+        "" | "?" => "this location does not say what kind it is".into(),
+        other => format!("{other} locations are not part of this build"),
+    }
 }
 
 /// Whether a directory entry is something we could actually run. A development plugin directory
@@ -155,7 +175,7 @@ pub const IDLE_EXIT: Duration = Duration::from_secs(300);
 impl Plugin {
     pub fn spawn(scheme: &str) -> Result<Arc<Plugin>, VfsError> {
         if !ships(scheme) {
-            return Err(VfsError::Io(format!("{scheme} locations are not part of this build")));
+            return Err(VfsError::Io(no_such_kind(scheme)));
         }
         let bin = find_binary(scheme).ok_or_else(|| VfsError::Io(format!("no plugin for scheme {scheme}")))?;
         let p = Self::spawn_path(&bin, scheme)?;
@@ -272,7 +292,7 @@ impl Plugin {
     /// A request that is given up on after `patience` rather than after `REQUEST_TIMEOUT`.
     pub fn request_within(&self, req: Value, patience: Duration) -> Result<Value, VfsError> {
         let (id, rx) = self.begin(req, false)?;
-        self.wait_reply_within(id, &rx, None, None, patience)
+        self.wait_reply_within(id, &rx, None, None, patience, JSON_GRACE)
     }
 
     fn begin(&self, mut req: Value, streaming: bool) -> Result<(u64, Receiver<Msg>), VfsError> {
@@ -300,7 +320,7 @@ impl Plugin {
             let msg = e.str_field("message").unwrap_or("").to_string();
             return Err(match code {
                 "NotFound" => VfsError::NotFound,
-                "Denied" | "Auth" => VfsError::Denied,
+                "Denied" | "Auth" => VfsError::Denied(msg),
                 "Exists" => VfsError::Exists,
                 "NotEmpty" => VfsError::NotEmpty,
                 "Unsupported" => VfsError::Unsupported,
@@ -314,48 +334,53 @@ impl Plugin {
         Ok(v.get("ok").cloned().unwrap_or(Value::Null))
     }
 
-    fn wait_reply(&self, id: u64, rx: &Receiver<Msg>, on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
-        self.wait_reply_with(id, rx, None, on_frame)
-    }
-
     /// Waits for the reply; while waiting, `cancel` is polled and, once set, a `Cancel` is sent
     /// to the plugin and the request ends with an error as soon as the plugin acknowledges it.
-    fn wait_reply_with(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>) -> Result<Value, VfsError> {
-        self.wait_reply_within(id, rx, cancel, on_frame.take(), REQUEST_TIMEOUT)
+    fn wait_reply_with(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>, grace: Duration) -> Result<Value, VfsError> {
+        self.wait_reply_within(id, rx, cancel, on_frame.take(), REQUEST_TIMEOUT, grace)
     }
 
     /// The same, with a caller's own patience. A transfer may fairly take `REQUEST_TIMEOUT`; a
     /// thumbnail that has not come back in twenty seconds means a decoder stuck on one file.
-    fn wait_reply_within(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>, patience: Duration) -> Result<Value, VfsError> {
+    /// `grace` is how long the plugin is given to acknowledge a `Cancel` before the request is
+    /// abandoned: long where abandoning it would leave binary frames belonging to nobody
+    /// (`BINARY_GRACE`), short where the frames carry their own id and can simply be dropped.
+    fn wait_reply_within(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>, patience: Duration, grace: Duration) -> Result<Value, VfsError> {
         let started = std::time::Instant::now();
         let mut last_frame = std::time::Instant::now();
-        let mut sent_cancel = false;
+        // When the `Cancel` went out — and so how long the plugin has had to answer it. The wait
+        // after a cancel is counted from the cancel, not from the last frame: a plugin that keeps
+        // streaming is exactly the one nobody must be stuck behind.
+        let mut cancelled_at: Option<std::time::Instant> = None;
         loop {
-            match rx.recv_timeout(Duration::from_millis(100)) {
+            // Polled every time round, not only when a frame fails to arrive. A plugin walking a
+            // 200,000-file tree fast enough to keep the pipe full used to be told nothing at all,
+            // and went on walking it while the daemon quietly stopped listening.
+            if cancelled_at.is_none() && cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                self.cancel(id);
+                cancelled_at = Some(std::time::Instant::now());
+            }
+            if cancelled_at.is_some_and(|at| at.elapsed() > grace) {
+                self.pending.lock().unwrap().remove(&id);
+                return Err(VfsError::Io("cancelled".into()));
+            }
+            match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(Msg::Json(v)) if v.get("ok").is_some() || v.get("err").is_some() => {
                     let r = self.finish(id, v);
-                    return if sent_cancel { Err(VfsError::Io("cancelled".into())) } else { r };
+                    return if cancelled_at.is_some() { Err(VfsError::Io("cancelled".into())) } else { r };
                 }
                 Ok(m) => {
                     last_frame = std::time::Instant::now();
-                    if !sent_cancel {
+                    if cancelled_at.is_none() {
                         if let Some(f) = on_frame.as_mut() {
                             f(m);
                         }
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Some(c) = cancel {
-                        if c.load(Ordering::Relaxed) && !sent_cancel {
-                            sent_cancel = true;
-                            self.cancel(id);
-                            last_frame = std::time::Instant::now();
-                        }
-                    }
-                    let limit = if sent_cancel { Duration::from_secs(5) } else { patience };
-                    if last_frame.elapsed() > limit && started.elapsed() > limit {
+                    if last_frame.elapsed() > patience && started.elapsed() > patience {
                         self.pending.lock().unwrap().remove(&id);
-                        return Err(VfsError::Io(if sent_cancel { "cancelled".into() } else { "plugin request timed out or plugin exited".into() }));
+                        return Err(VfsError::Io("plugin request timed out or plugin exited".into()));
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -373,8 +398,14 @@ impl Plugin {
 
     /// A plain request: one reply.
     pub fn request(&self, req: Value) -> Result<Value, VfsError> {
+        self.request_cancellable(req, None)
+    }
+
+    /// The same, given up on when `cancel` is set — `Connect` to a server that is slow to answer,
+    /// or not there at all, which otherwise holds its caller for the whole request timeout.
+    pub fn request_cancellable(&self, req: Value, cancel: Option<&AtomicBool>) -> Result<Value, VfsError> {
         let (id, rx) = self.begin(req, false)?;
-        self.wait_reply(id, &rx, None)
+        self.wait_reply_with(id, &rx, cancel, None, JSON_GRACE)
     }
 
     /// A streaming request whose frames are JSON — `Scan`. Every frame carries its own id, so any
@@ -386,7 +417,7 @@ impl Plugin {
     /// The same, stopping early when `cancel` is set (a closed listing, a cancelled job).
     pub fn request_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
         let (id, rx) = self.begin(req, false)?;
-        self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame))
+        self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame), JSON_GRACE)
     }
 
     /// A request whose reply streams binary frames — `Read`, `Thumb`. One at a time per plugin.
@@ -397,7 +428,7 @@ impl Plugin {
     pub fn read_stream_with(&self, req: Value, cancel: Option<&AtomicBool>, mut on_frame: impl FnMut(Msg)) -> Result<Value, VfsError> {
         let _gate = self.binary.lock().unwrap_or_else(|e| e.into_inner());
         let (id, rx) = self.begin(req, true)?;
-        let r = self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame));
+        let r = self.wait_reply_with(id, &rx, cancel, Some(&mut on_frame), BINARY_GRACE);
         *self.stream.lock().unwrap() = None;
         r
     }
@@ -418,7 +449,7 @@ impl Plugin {
             self.send_binary(&c)?;
         }
         self.send_binary(&[])?;
-        self.wait_reply_with(id, &rx, cancel, None)
+        self.wait_reply_with(id, &rx, cancel, None, BINARY_GRACE)
     }
 
     pub fn shutdown(&self) {

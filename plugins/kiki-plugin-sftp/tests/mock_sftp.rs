@@ -121,6 +121,8 @@ struct Counters {
     inflight: AtomicUsize,
     max_inflight: AtomicUsize,
     execs: AtomicUsize,
+    /// Successful sign-ins: how many connections this server has really been given.
+    auths: AtomicUsize,
 }
 
 struct MockCfg {
@@ -264,6 +266,9 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         let ok = !self.cfg.auth.no_password_method && user == "kiki" && password == "secret";
+        if ok {
+            self.counters.auths.fetch_add(1, Ordering::SeqCst);
+        }
         Ok(if ok { Auth::Accept } else { Auth::Reject { proceed_with_methods: None, partial_success: false } })
     }
 
@@ -1147,4 +1152,41 @@ fn the_password_tab_offers_no_key_and_the_key_tab_sends_no_password() {
     let err = r.get("err").unwrap_or_else(|| panic!("the Key tab must not fall back to the password: {}", json::to_string(&r)));
     assert!(!err.str_field("message").unwrap_or("").contains("password"), "{}", json::to_string(&r));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A location's name can be given away: remove one and add another under the same name. The
+/// plugin keeps a session per name and role, so unless it compares the config it hands the new
+/// location the connection — and the SFTP channel — of the machine that was removed. (The daemon
+/// disconnects on remove; this is the plugin's own guard, and it holds even if something else
+/// ever forgets to.)
+#[test]
+fn a_name_reused_for_another_server_does_not_inherit_the_old_connection() {
+    let old = start(ExecMode::Gnu, ExecFail::None, 100);
+    let new = start(ExecMode::Gnu, ExecFail::None, 100);
+    new.fs.lock().unwrap().insert("/only-on-the-new-one.txt".into(), Node { kind: NodeKind::File(b"new".to_vec()), mode: 0o644, mtime: 1_700_000_009 });
+    let mut p = Plugin::spawn();
+
+    let first_reply = p.connect(old.port, "secret");
+    assert!(first_reply.get("ok").is_some(), "{}", json::to_string(&first_reply));
+    let first = normalise(&p.scan("/", false));
+    assert_eq!(old.counters.auths.load(Ordering::SeqCst), 1);
+
+    // The same details again: the session stands, and nobody signs in twice for nothing.
+    assert!(p.connect(old.port, "secret").get("ok").is_some());
+    assert_eq!(old.counters.auths.load(Ordering::SeqCst), 1, "the same server and sign-in reuses the session it has");
+    assert_eq!(normalise(&p.scan("/", false)), first);
+
+    // The same location name and role, another machine behind it — and another host key, which
+    // is the other half of the answer: a session handed back would report the old server's.
+    let reply = p.connect(new.port, "secret");
+    assert!(reply.get("ok").is_some(), "{}", json::to_string(&reply));
+    assert_eq!(new.counters.auths.load(Ordering::SeqCst), 1, "the new server was really connected to");
+    assert_ne!(reply.get("ok").unwrap().str_field("fingerprint"), first_reply.get("ok").unwrap().str_field("fingerprint"), "the key reported is the key of the server now being talked to");
+    let second = normalise(&p.scan("/", false));
+    assert!(second.iter().any(|e| e.0 == "only-on-the-new-one.txt"), "the listing is the new server's: {second:?}");
+    assert_ne!(first, second);
+
+    // A changed password on the same server is a new sign-in too, not the old connection.
+    let r = p.connect(new.port, "wrong");
+    assert_eq!(r.get("err").unwrap().str_field("code"), Some("Auth"), "{}", json::to_string(&r));
 }

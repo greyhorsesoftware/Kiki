@@ -184,6 +184,11 @@ mod imp {
                         gone(&p);
                     }
                 }
+                // And the same sweep asks the projects inside the folders on screen whether git
+                // has been at them. They have no watch — a folder of forty would want forty,
+                // against sixty-four for the whole daemon — so two `stat`s a second each stand
+                // in for one (plan 15).
+                crate::listing::poll_repo_rows();
             }
             let settled: Vec<PathBuf> = repos_pending.iter().filter(|(_, at)| now.duration_since(**at) >= REPO_DEBOUNCE).map(|(r, _)| r.clone()).collect();
             for root in settled {
@@ -199,6 +204,9 @@ mod imp {
                     if !crate::git::is_slow(&l.path) {
                         l.git_status();
                     }
+                    // A repository inside this one — a submodule — carries its own capsule, and
+                    // what just changed may have been a step into or out of it.
+                    l.repo_rows(None);
                 }
             }
             let due: Vec<PathBuf> = pending.iter().filter(|(_, b)| now.duration_since(b.at) >= Duration::from_millis(50)).map(|(p, _)| p.clone()).collect();

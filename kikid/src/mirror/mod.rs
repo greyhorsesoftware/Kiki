@@ -302,10 +302,15 @@ pub enum Side {
 }
 
 pub fn side_for(uri: &Uri) -> Result<Side, VfsError> {
+    side_for_cancellable(uri, &AtomicBool::new(false))
+}
+
+/// The same, where connecting to the server is part of what a cancel has to be able to stop.
+pub fn side_for_cancellable(uri: &Uri, cancel: &AtomicBool) -> Result<Side, VfsError> {
     if uri.is_local() {
         Ok(Side::Local(uri.to_path()))
     } else {
-        let (s, p) = locations::resolve(uri)?;
+        let (s, p) = locations::resolve_cancellable(uri, Some(cancel))?;
         Ok(Side::Remote(s, p))
     }
 }
@@ -331,8 +336,8 @@ mod tests;
 pub use detect::{auto_offset, is_changed, pick_detector};
 pub use diff::diff;
 pub use execute::{execute, ExecCtx, Outcome, part_name};
-pub use filters::{filtered, load_filters, Rule};
+pub use filters::{check_rules, default_rules, filtered, filtered_rel, filters, filters_json, load_filters, restore_default_filters, set_filters, Rule};
 pub use report::{action_json, report};
-pub use scan::{scan, scan_side};
+pub use scan::{scan, scan_counting, scan_side};
 pub use execute::copy_file;
 pub use store::{run_finished, store, stored, unview, view, Stored, KEEP};

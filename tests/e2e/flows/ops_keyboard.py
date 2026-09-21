@@ -64,3 +64,12 @@ def run(ctx):
     sh.keys(("ctrl", "z"))
     wait_for(lambda: "renamed.txt" in snapshot(dst))
     c.same_tree("Ctrl+Z puts it back", before, snapshot(dst))
+
+    # Redo: Ctrl+Shift+Z runs what was undone again, and the journal takes it as an operation of
+    # its own — so Ctrl+Z after it still works, and the pair can be pressed all day.
+    sh.keys(("ctrl", "shift", "z"))
+    wait_for(lambda: ("renamed.txt" not in snapshot(dst)) or None, timeout=30)
+    c.check("Ctrl+Shift+Z does it again", "renamed.txt" not in snapshot(dst), list(snapshot(dst)))
+    sh.keys(("ctrl", "z"))
+    wait_for(lambda: ("renamed.txt" in snapshot(dst)) or None, timeout=30)
+    c.same_tree("and Ctrl+Z takes it back once more", before, snapshot(dst))

@@ -94,7 +94,6 @@ impl ShareHandler for Mail {
             secret_fields: vec!["password"],
             compose: vec![sdk::field("to", "To", "text", false, None), sdk::field("subject", "Subject", "text", false, None), sdk::field("body", "Message", "text", false, None)],
             requires: vec![],
-            off_by_default: false,
         }
     }
 

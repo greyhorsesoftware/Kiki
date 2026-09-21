@@ -10,6 +10,9 @@ Rectangle {
     property var location: null      // the sidebar location when the pane is remote
     signal clicked()
     property bool showPath: true
+    /// Columns view's deepest open folder, when that is what the pane is showing: the path
+    /// follows it, and a pill that is one of the columns brings the columns back to it.
+    property var view: null
     /// Right click on the path: the window builds the menu of folders above, under `crumb`.
     signal pathMenu(var crumb)
     property alias breadcrumb: crumb
@@ -37,8 +40,8 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(0, parent.width - badgeBox.width - parent.spacing)
             height: 26
-            uri: h.pane ? h.pane.uri : ""; home: h.home
-            onNavigate: uri => { h.clicked(); h.pane.open(uri) }
+            uri: h.view && h.view.shownUri ? h.view.shownUri : (h.pane ? h.pane.uri : ""); home: h.home
+            onNavigate: uri => { h.clicked(); if (!(h.view && h.view.backTo && h.view.backTo(uri))) h.pane.open(uri) }
             onPathMenu: h.pathMenu(crumb)
         }
     }

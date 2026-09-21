@@ -15,7 +15,9 @@ pub fn report(spec: &Spec, plan: &Plan) -> String {
             _ => "size+mtime",
         }
     ));
-    s.push_str(&format!("Clock offset:      {} ms ({})\n", plan.clock_offset_ms, if spec.clock_offset_auto { "auto, subtracted from master mtime" } else { "manual" }));
+    // Where it came from, and which way it goes: the number alone tells neither, and the sign is
+    // what makes a run copy everything or nothing.
+    s.push_str(&format!("Clock offset:      {} ms ({}, subtracted from master mtime)\n", plan.clock_offset_ms, if spec.clock_offset_auto { "auto" } else { "manual" }));
     s.push_str(&format!(
         "Delete extras:     {}\nModified within:   {}\nFilters:           {} ({} filtered)\n\n",
         spec.delete_extras,

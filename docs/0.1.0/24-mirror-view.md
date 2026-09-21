@@ -37,7 +37,7 @@ No daemon messages change. Keys: `Ctrl+4` Mirror view; `Ctrl+M` mirror to the re
 ## Verification
 
 - Clicking a location shows Mirror view with the mirror bar; the toolbar has no split or mirror buttons.
-- `Ctrl+4` on `~/Projects` opens the last location on the right; with none, home.
+- ~~`Ctrl+4` on `~/Projects` opens the last location on the right; with none, home.~~ **Struck 2026-09-21** (owner): Side by Side is offered only while a server is open in a pane, or while it is on; with no server open the key and the button do nothing. See plan 31, 2026-09-21 evening.
 - Opening `sftp://homelab/srv/kiki` from the breadcrumb pairs it with `~/Projects/kiki` on the left.
 - Swap moves local to the right; "Mirror to homelab" still uploads from the local side.
 - A folder of 40 photos with no memory opens in Icon view; after switching it to List, it reopens in List.

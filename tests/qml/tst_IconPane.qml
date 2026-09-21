@@ -101,4 +101,76 @@ TestCase {
         pane.iconZoom = 1
         compare(icons.iconSize, 96)
     }
+
+    // ---------------------------------------------------------------- the lasso
+    // Coordinates are the pane's; the grid sits 18 px in. Three tiles in one row, so everything
+    // under that row is empty space.
+    function at(col, row, dx, dy) { return Qt.point(18 + col * icons.cellW + (dx || 0), 18 + row * icons.cellH + (dy || 0)) }
+    function drag(from, to, modifiers) {
+        mousePress(icons, from.x, from.y, Qt.LeftButton, modifiers || Qt.NoModifier)
+        const steps = 6
+        for (let k = 1; k <= steps; k++) mouseMove(icons, from.x + (to.x - from.x) * k / steps, from.y + (to.y - from.y) * k / steps, -1, Qt.LeftButton)
+    }
+    function drop(to) { mouseRelease(icons, to.x, to.y, Qt.LeftButton) }
+
+    function test_a_band_from_empty_space_selects_what_it_touches() {
+        const from = at(0, 1, 6, 40), to = at(1, 0, icons.cellW / 2, icons.cellH / 2)
+        drag(from, to)
+        verify(icons.lassoing)
+        verify(findChild(icons, "icon-lasso-band").visible)
+        compare(pane.selection.positions(), [0, 1])
+        // Wider, and the third comes in; back again, and it goes out: the band is live.
+        const wide = at(2, 0, icons.cellW / 2, icons.cellH / 2)
+        mouseMove(icons, wide.x, wide.y, -1, Qt.LeftButton)
+        compare(pane.selection.positions(), [0, 1, 2])
+        mouseMove(icons, to.x, to.y, -1, Qt.LeftButton)
+        compare(pane.selection.positions(), [0, 1])
+        drop(to)
+        verify(!icons.lassoing)
+        verify(!findChild(icons, "icon-lasso-band").visible)
+        compare(pane.selection.positions(), [0, 1], "letting go keeps what the band held")
+    }
+    function test_ctrl_adds_to_the_selection_and_toggles_what_was_in_it() {
+        pane.selection.set(0)
+        const from = at(0, 1, 6, 40), to = at(1, 0, icons.cellW / 2, icons.cellH / 2)
+        drag(from, to, Qt.ControlModifier)
+        compare(pane.selection.positions(), [1], "0 was selected and is touched again: out; 1 comes in")
+        drop(to)
+        pane.selection.set(2)
+        drag(from, at(0, 0, icons.cellW / 2, icons.cellH / 2), Qt.ControlModifier)
+        compare(pane.selection.positions(), [0, 2])
+        drop(to)
+    }
+    function test_a_click_on_empty_space_lets_go_of_the_selection() {
+        pane.selection.set(1)
+        const p = at(0, 1, 30, 60)
+        mouseClick(icons, p.x, p.y)
+        compare(pane.selection.count(), 0)
+    }
+    function test_a_press_on_a_picture_is_the_files_not_the_bands() {
+        const p = at(1, 0, icons.cellW / 2, 14 + 4 + icons.iconSize / 2)
+        mousePress(icons, p.x, p.y)
+        mouseMove(icons, p.x + 3, p.y + 3, -1, Qt.LeftButton)
+        verify(!icons.lassoing)
+        mouseRelease(icons, p.x + 3, p.y + 3)
+        compare(pane.selection.positions(), [1])
+    }
+    function test_the_gutter_between_two_tiles_selects_neither() {
+        const x = icons.cellW                                   // the line between columns 0 and 1
+        compare(icons.tilesIn(Qt.rect(x - 4, 0, 8, icons.cellH)), [])
+        compare(icons.tilesIn(Qt.rect(x - 4, 0, 40, icons.cellH)), [1])
+    }
+    function test_rows_far_off_screen_are_in_the_band_too() {
+        const rows = []
+        for (let i = 0; i < 500; i++) rows.push(fake.file("f" + i + ".txt"))
+        fake.tree = { "file:///home/many": rows }
+        pane.open("file:///home/many")
+        wait(80)
+        const per = icons.perRow
+        const hit = icons.tilesIn(Qt.rect(0, 0, icons.cellW * per, icons.cellH * 40))
+        compare(hit.length, per * 40)
+        compare(hit[hit.length - 1], per * 40 - 1)
+        // …and never past the end of the folder.
+        compare(icons.tilesIn(Qt.rect(0, 0, icons.cellW * per, icons.cellH * 4000)).length, 500)
+    }
 }

@@ -49,7 +49,9 @@ Rectangle {
     Connections { target: dlg.pane; function onNavigated(uri) { dlg.pane.setFilter("") } }
     MouseArea { anchors.fill: parent }
     Rectangle {
-        anchors.centerIn: parent; width: 860; height: 560; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        // As big as 860 × 560, and no bigger than the window less a margin: a fixed box was cut
+        // off in a window shorter than it, its buttons out of reach.
+        anchors.centerIn: parent; width: Math.min(860, dlg.width - 24); height: Math.min(560, dlg.height - 24); color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             anchors.fill: parent
             Rectangle {
@@ -84,10 +86,17 @@ Rectangle {
                 width: parent.width; height: 52; color: Kiki.Theme.bg
                 Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Kiki.Theme.line }
                 Row {
-                    anchors.fill: parent; anchors.leftMargin: 14; anchors.rightMargin: 14; spacing: 8
+                    id: chooserRight
+                    anchors.right: parent.right; anchors.rightMargin: 14; height: parent.height; spacing: 8
+                    Button { anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; onClicked: dlg.finish(null) }
+                    Button { anchors.verticalCenter: parent.verticalCenter; text: dlg.req && dlg.req.mode === "open" ? (dlg.req.directory ? "Choose" : "Open") : (dlg.req && dlg.req.mode === "saveFiles" ? "Save here" : "Save"); primary: true; onClicked: dlg.accept() }
+                }
+                Row {
+                    anchors.left: parent.left; anchors.leftMargin: 14; height: parent.height; spacing: 8
+                    readonly property int room: chooserRight.x - 14 - 8
                     Text { visible: dlg.req && dlg.req.mode === "saveFiles"; anchors.verticalCenter: parent.verticalCenter; text: (dlg.req ? (dlg.req.files || []).length : 0) + " files will be saved here"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                     Rectangle {
-                        visible: dlg.req && dlg.req.mode === "save"; anchors.verticalCenter: parent.verticalCenter; width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
+                        visible: dlg.req && dlg.req.mode === "save"; anchors.verticalCenter: parent.verticalCenter; width: Math.max(120, Math.min(320, parent.room - 8)); height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
                         TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }
                     }
                     Rectangle {
@@ -97,9 +106,6 @@ Rectangle {
                             Icon { name: "chev-d"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter } }
                         MouseArea { anchors.fill: parent; onClicked: dlg.filterIndex = (dlg.filterIndex + 1) % dlg.req.filters.length }
                     }
-                    Item { width: parent.width - 700; height: 1 }
-                    Button { anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; onClicked: dlg.finish(null) }
-                    Button { anchors.verticalCenter: parent.verticalCenter; text: dlg.req && dlg.req.mode === "open" ? (dlg.req.directory ? "Choose" : "Open") : (dlg.req && dlg.req.mode === "saveFiles" ? "Save here" : "Save"); primary: true; onClicked: dlg.accept() }
                 }
             }
         }

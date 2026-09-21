@@ -66,7 +66,10 @@ pub struct Capabilities {
 #[derive(Debug)]
 pub enum VfsError {
     NotFound,
-    Denied,
+    /// Refused, and why — a server's own account of it where there is one. Empty is "no reason
+    /// given"; a plugin that has words for it (SMB: "The server refused this username and
+    /// password.") had them thrown away here, and the dialog said only "Denied".
+    Denied(String),
     Exists,
     NotEmpty,
     Unsupported,
@@ -79,7 +82,7 @@ impl VfsError {
     pub fn code(&self) -> &'static str {
         match self {
             VfsError::NotFound => "NotFound",
-            VfsError::Denied => "Denied",
+            VfsError::Denied(_) => "Denied",
             VfsError::Exists => "Exists",
             VfsError::NotEmpty => "NotEmpty",
             VfsError::Unsupported => "Unsupported",
@@ -90,6 +93,7 @@ impl VfsError {
     pub fn message(&self) -> String {
         match self {
             VfsError::Io(m) | VfsError::Unsafe(m) => m.clone(),
+            VfsError::Denied(m) if !m.is_empty() => m.clone(),
             other => other.code().to_string(),
         }
     }
@@ -99,7 +103,7 @@ impl From<io::Error> for VfsError {
     fn from(e: io::Error) -> Self {
         match e.kind() {
             io::ErrorKind::NotFound => VfsError::NotFound,
-            io::ErrorKind::PermissionDenied => VfsError::Denied,
+            io::ErrorKind::PermissionDenied => VfsError::Denied(e.to_string()),
             io::ErrorKind::AlreadyExists => VfsError::Exists,
             _ => {
                 #[cfg(unix)]

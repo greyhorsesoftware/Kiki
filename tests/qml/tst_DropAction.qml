@@ -19,8 +19,11 @@ TestCase {
     readonly property string ftps: "ftps://host/www"
     readonly property string ftps2: "ftps://host/www/old"
 
-    function drop(urls, modifiers) {
-        return { accepted: false, action: 0, hasUrls: true, hasText: false, urls: urls, modifiers: modifiers || 0, proposedAction: Qt.MoveAction,
+    /// A drop as Qt delivers it. There is no `modifiers` on a real DragEvent: the keys held
+    /// arrive folded into `proposedAction` — no key or Shift → Move (the source's proposal),
+    /// Ctrl → Copy (see `Pane.wantsCopy`).
+    function drop(urls, proposed) {
+        return { accepted: false, action: 0, hasUrls: true, hasText: false, urls: urls, proposedAction: proposed || Qt.MoveAction,
                  accept: function (a) { this.accepted = true; this.action = a } }
     }
     function submitted() { const r = Wire.last("Submit"); return r ? r.op : null }
@@ -54,19 +57,20 @@ TestCase {
         compare(ev.action, d.op === "copy" ? Qt.CopyAction : Qt.MoveAction, "and the drag is told the same")
     }
 
-    // ---- Ctrl copies and Shift moves, whatever the ends
-    function test_modifiers_data() {
-        const pairs = [["local -> local", local, local2], ["local -> sftp", local, sftp], ["sftp -> local", sftp, local], ["local -> ftps", local, ftps],
-                       ["ftps -> local", ftps, local], ["sftp -> sftp", sftp, sftp2], ["ftps -> ftps", ftps, ftps2], ["sftp -> ftps", sftp, ftps], ["ftps -> sftp", ftps, sftp]]
+    // ---- Ctrl copies, whatever the ends. Shift arrives as no key does — Qt reports both as
+    // Move — so it follows the rule by place: it cannot force a move between machines.
+    function test_keys_data() {
+        const pairs = [["local -> local", local, local2, true], ["local -> sftp", local, sftp, false], ["sftp -> local", sftp, local, false], ["local -> ftps", local, ftps, false],
+                       ["ftps -> local", ftps, local, false], ["sftp -> sftp", sftp, sftp2, true], ["ftps -> ftps", ftps, ftps2, true], ["sftp -> ftps", sftp, ftps, false], ["ftps -> sftp", ftps, sftp, false]]
         const rows = []
         for (const p of pairs) {
-            rows.push({ tag: "Ctrl, " + p[0], from: p[1], to: p[2], mod: Qt.ControlModifier, op: "copy" })
-            rows.push({ tag: "Shift, " + p[0], from: p[1], to: p[2], mod: Qt.ShiftModifier, op: "move" })
+            rows.push({ tag: "Ctrl, " + p[0], from: p[1], to: p[2], proposed: Qt.CopyAction, op: "copy" })
+            rows.push({ tag: "Shift, " + p[0], from: p[1], to: p[2], proposed: Qt.MoveAction, op: p[3] ? "move" : "copy" })
         }
         return rows
     }
-    function test_modifiers(d) {
-        pane.dropInto(d.to, drop([d.from + "/a.txt"], d.mod))
+    function test_keys(d) {
+        pane.dropInto(d.to, drop([d.from + "/a.txt"], d.proposed))
         compare(submitted().op, d.op)
     }
 
@@ -85,7 +89,8 @@ TestCase {
         const ev = drop(d.urls)
         pane.dropInto(d.to, ev)
         compare(submitted(), null)
-        verify(!ev.accepted, "so the drag springs back")
+        compare(ev.action, Qt.IgnoreAction, "so the drag springs back")
+        verify(ev.accepted, "and the folder behind is not handed what was just refused")
     }
     function test_a_folder_whose_name_begins_the_same_is_another_folder() {
         pane.dropInto(local + "/images-old", drop([local + "/images"]))

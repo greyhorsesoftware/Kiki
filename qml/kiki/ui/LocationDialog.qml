@@ -169,7 +169,7 @@ Rectangle {
     function kindIcon(scheme) {
         switch (scheme) {
         case "sftp": case "ftps": return "server"
-        case "smb": case "dav": case "afp": return "cloud"
+        case "smb": return "cloud"
         case "mtp": case "ptp": case "afc": return "usb"
         }
         return "hdd"

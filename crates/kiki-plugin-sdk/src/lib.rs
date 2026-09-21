@@ -758,9 +758,6 @@ pub struct ShareDescribe {
     /// rather than offer something that fails — and it comes alive when the program is installed,
     /// without a restart.
     pub requires: Vec<&'static str>,
-    /// Off until the user switches it on in Settings → Share. For a plugin that ships but is
-    /// not yet vouched for.
-    pub off_by_default: bool,
 }
 
 impl ShareDescribe {
@@ -779,7 +776,6 @@ impl ShareDescribe {
             .v("form", Value::Arr(self.form.clone()))
             .v("secretFields", Value::Arr(self.secret_fields.iter().map(|s| Value::Str(s.to_string())).collect()))
             .v("compose", Value::Arr(self.compose.clone()))
-            .b("defaultEnabled", !self.off_by_default)
             .v("requires", Value::Arr(self.requires.iter().map(|s| Value::Str(s.to_string())).collect()))
             .done()
     }

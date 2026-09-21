@@ -11,7 +11,7 @@ starts the AI you use in Omarchy in a terminal beside your files.
 |---|---|
 | `kikid/` | the daemon: string-pool listings, windows, jobs and undo, archives, mirror, index, git, plugin and helper hosts |
 | `crates/kiki-json`, `crates/kiki-plugin-sdk` | the shared JSON reader/writer and the SDK for location and share plugins |
-| `plugins/` | every plugin, one process each: locations (`sftp`, `ftps`), services (`dbus`, `highlight`), share (`share-mail`, `share-tailscale`, `share-localsend`); the stub lives in `kikid/src/bin/` |
+| `plugins/` | every plugin, one process each: locations (`sftp`, `ftps`, `gio`), services (`dbus`, `highlight`), share (`share-mail`, `share-tailscale`); the stubs live in `kikid/src/bin/` |
 | `qml/` | the Quickshell shell |
 | `tests/` | QML component tests and the e2e harness (`tests/e2e/run.sh`) |
 | `docs/0.1.0/` | the core plan, feature plans and the two API documents |
@@ -26,7 +26,7 @@ KIKI_PLUGIN_DIR=target/release target/release/kikid &
 qs -p qml/shell.qml
 ```
 
-The default build ships the `sftp` and `ftps` location plugins. Which protocols a build speaks is `plugin::LOCATION_KINDS` in `kikid/src/plugin.rs` plus the workspace's `default-members`; the device (`mtp`, `ptp`, `afc`) and GIO (`smb`, `dav`, `afp`) plugins stay in the tree and build with `cargo build --release -p kiki-plugin-<name>` once both lists name them. See `docs/0.1.0/06-remote-locations.md`.
+The default build ships the `sftp` and `ftps` location plugins and the GIO one, installed as `smb`. Which protocols a build speaks is `plugin::LOCATION_KINDS` in `kikid/src/plugin.rs` plus the workspace's `default-members`; the device plugins (`mtp`, `ptp`, `afc`) stay in the tree and build with `cargo build --release -p kiki-plugin-<name>` once both lists name them, and the GIO plugin's other kinds (`dav`, `afp`) are the same binary installed under a second name. WebDAV and LocalSend were removed from 0.1.0 on 2026-09-21. See `docs/0.1.0/06-remote-locations.md`.
 
 Benchmarks: `kikid bench gen all /tmp/kb && kikid bench run /tmp/kb --json out.json`, then `kikid bench compare bench/baseline-<os>-<arch>.json out.json` (plan 26).
 

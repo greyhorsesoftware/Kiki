@@ -21,6 +21,14 @@ path = "src/bin/kiki-thumber.rs"
 name = "kiki-plugin-stub"
 path = "src/bin/kiki-plugin-stub.rs"
 
+# The share host's own stub, built only for the test build (the dev-dependency below turns `stub`
+# on): `share.rs` fetches, zips and hands over local paths, and something has to be there to
+# receive them. A shipped kiki never builds it.
+[[bin]]
+name = "kiki-plugin-share-stub"
+path = "src/bin/kiki-plugin-share-stub.rs"
+required-features = ["stub"]
+
 [features]
 # The contract test drives the stub plugin, which is a location kind like any other, so the test
 # build turns it on through the dev-dependency below. Shipped builds never have it.

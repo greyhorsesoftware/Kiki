@@ -43,6 +43,12 @@ TestCase {
         compare(Kiki.Format.display("file:///home/david/Projects/kiki", "/home/david"), "~/Projects/kiki")
         compare(Kiki.Format.display("file:///home/david", "/home/david"), "~")
         compare(Kiki.Format.display("sftp://homelab/srv/kiki", "/home/david"), "homelab/srv/kiki")
+        // A bare path, which is what the trash records where a file came from as: shortened the
+        // same way, and never mistaken for a URI (it used to come back as "ome/david/Projects").
+        compare(Kiki.Format.display("/home/david/Projects", "/home/david"), "~/Projects")
+        compare(Kiki.Format.display("/home/david", "/home/david"), "~")
+        compare(Kiki.Format.display("/etc/hosts", "/home/david"), "/etc/hosts")
+        compare(Kiki.Format.display("/home/david/Projects", ""), "/home/david/Projects")
         compare(Kiki.Format.crumbs("file:///home/david/Projects/kiki", "/home/david"), ["~", "Projects", "kiki"])
         compare(Kiki.Format.crumbs("file:///", "/home/david"), ["/"])
     }

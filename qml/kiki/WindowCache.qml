@@ -253,6 +253,10 @@ QtObject {
         switch (msg.event) {
         case "Count":
             count = msg.n; done = msg.done
+            // The scan that has just ended says how it went. Only the reply to `Open` used to,
+            // so a folder that failed to list a SECOND time — a share whose server had gone
+            // away, a disk unplugged mid-browse — came back as nought items with nothing wrong.
+            if (msg.done) error = msg.error || ""
             break
         case "Rows":
             _apply(msg.first, msg.rows)

@@ -223,6 +223,13 @@ pub const UNVERIFIED_PREFIX: &str = "this server's key has not been verified yet
 
 /// Connects (or reuses) the plugin session for a saved location and role.
 pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<Arc<Session>, VfsError> {
+    connect_cancellable(location, role, secrets, None)
+}
+
+/// The same, given up on when `cancel` is set. A server that is slow to answer — or not there at
+/// all — otherwise holds the caller for the whole request timeout, and a job cancelled while it
+/// was connecting sat there "running" for two minutes with nothing to show for it.
+pub fn connect_cancellable(location: &Value, role: &str, secrets: Option<Value>, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<Arc<Session>, VfsError> {
     let name = location.str_field("name").ok_or(VfsError::Io("location without name".into()))?.to_string();
     let scheme = location.str_field("plugin").ok_or(VfsError::Io("location without plugin".into()))?.to_string();
     let key = format!("{name}\u{0}{role}");
@@ -235,7 +242,7 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     let secrets = secrets.unwrap_or_else(|| secrets_for(location));
     let pinned = config.str_field("trustedFingerprint").map(str::to_string);
-    let reply = plugin.request(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done()).map_err(|e| match unaccepted_fingerprint(&e) {
+    let reply = plugin.request_cancellable(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done(), cancel).map_err(|e| match unaccepted_fingerprint(&e) {
         Some(fp) => VfsError::Io(format!("{UNVERIFIED_PREFIX}{fp}")),
         None => e,
     })?;
@@ -258,6 +265,9 @@ pub fn connect(location: &Value, role: &str, secrets: Option<Value>) -> Result<A
     }
     let s = Arc::new(Session { plugin, location: name, role: role.to_string() });
     sessions().lock().unwrap().insert(key, Arc::clone(&s));
+    if role == "browse" {
+        announce_sessions();
+    }
     Ok(s)
 }
 
@@ -276,16 +286,25 @@ pub fn disconnect(name: &str) {
         let keys: Vec<String> = s.keys().filter(|k| k.starts_with(&format!("{name}\u{0}"))).cloned().collect();
         keys.into_iter().filter_map(|k| s.remove(&k)).collect()
     };
+    let any = !dropped.is_empty();
     for sess in dropped {
         let _ = sess.plugin.request(sess.req("Disconnect").done());
+    }
+    if any {
+        announce_sessions();
     }
 }
 
 /// Resolves a remote URI to a session plus the path inside the location: the browsing session,
 /// or — on the thread of a job that has entered `JobSessions` — that job's own.
 pub fn resolve(uri: &Uri) -> Result<(Arc<Session>, String), VfsError> {
+    resolve_cancellable(uri, None)
+}
+
+/// The same, given up on when `cancel` is set (see `connect_cancellable`).
+pub fn resolve_cancellable(uri: &Uri, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<(Arc<Session>, String), VfsError> {
     let loc = resolve_authority(&uri.scheme, &uri.authority).ok_or_else(|| VfsError::Io(format!("no location for {}://{}", uri.scheme, uri.authority)))?;
-    let s = connect(&loc, &role_here(), None)?;
+    let s = connect_cancellable(&loc, &role_here(), None, cancel)?;
     Ok((s, uri.path.clone()))
 }
 
@@ -407,8 +426,25 @@ pub(crate) fn key_verdict(pinned: Option<&str>, offered: Option<&str>, known_hos
     }
 }
 
+/// Every location, each with `connected`: whether a browse session to it is alive right now —
+/// the green dot on the sidebar's row.
 pub fn json_list() -> Value {
-    Value::Arr(all())
+    let live = connected_names();
+    Value::Arr(all().into_iter().map(|l| {
+        let on = l.str_field("name").map(|n| live.iter().any(|c| c == n)).unwrap_or(false);
+        match l {
+            Value::Obj(mut m) => {
+                m.insert("connected".into(), Value::Bool(on));
+                Value::Obj(m)
+            }
+            other => other,
+        }
+    }).collect())
+}
+
+/// A browse session came or went: the sidebar's dots follow.
+fn announce_sessions() {
+    crate::jobs::broadcast(crate::proto::event("LocationsChanged").done());
 }
 
 pub fn scheme_set() -> HashSet<String> {
@@ -427,7 +463,7 @@ mod key_verdict_tests {
         assert_eq!(unaccepted_fingerprint(&VfsError::Io(format!("Invalid/fingerprint: {fp}"))), Some(fp.to_string()));
         assert_eq!(unaccepted_fingerprint(&VfsError::Io("Invalid/host: no such host".into())), None);
         assert_eq!(unaccepted_fingerprint(&VfsError::Io("Invalid/fingerprint: ".into())), None, "nothing seen is nothing to show");
-        assert_eq!(unaccepted_fingerprint(&VfsError::Denied), None);
+        assert_eq!(unaccepted_fingerprint(&VfsError::Denied(String::new())), None);
     }
 
     #[test]
