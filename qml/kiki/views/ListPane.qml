@@ -92,6 +92,6 @@ Item {
         anchors.fill: view; z: -1
         keys: ["text/uri-list"]
         enabled: !root.pane.isTrash
-        onDropped: drop => root.pane.dropInto(root.pane.uri, drop)
+        onDropped: drop => root.pane.dropInto(root.pane.uri, drop, mapToItem(null, drop.x, drop.y))
     }
 }

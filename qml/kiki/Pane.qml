@@ -187,12 +187,24 @@ QtObject {
         const rows = selection.has(index) ? selection.positions() : [index]
         return rows.map(i => { const r = listing.row(i); return r ? childUri(r.name) : null }).filter(u => u)
     }
-    function dragMime(index) { return uriListMime(dragUris(index)) }
+    function dragMime(index, ask) { return uriListMime(dragUris(index), ask) }
     /// What every view drags, in one place: columns builds its own list of URIs — its rows can
     /// belong to a folder this pane is not standing in — but the payload is shaped here.
-    function uriListMime(uris) { return { "text/uri-list": uris.join("\r\n") + "\r\n" } }
+    /// `ask` marks a drag that is to be asked about when it lands — the right button's drag. The
+    /// mark travels in the payload because the drop end is never told which button started it.
+    function uriListMime(uris, ask) {
+        const mime = { "text/uri-list": uris.join("\r\n") + "\r\n" }
+        if (ask) mime[askKey] = "1"
+        return mime
+    }
+    readonly property string askKey: "application/x-kiki-ask"
+    /// A drop that is to be asked about rather than acted on: `{ items, dest, op, pos }`, where
+    /// `op` is what it would have done unasked. The window puts the menu up at `pos`.
+    signal askDrop(var spec)
+
     // Drop `drop` (a DragEvent) into `dest`: move within one scheme, copy across, Ctrl forces copy.
-    function dropInto(dest, drop) {
+    // `pos` is where the pointer let go, in window coordinates, for the menu an asked drop opens.
+    function dropInto(dest, drop, pos) {
         // One drop, one job. Drop targets lie over each other — a folder row over its view's
         // background, a column over the pane's — and Qt hands the same drop to each of them in
         // turn, topmost first. The second would move the files again: a collision prompt for a
@@ -201,6 +213,13 @@ QtObject {
         const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : (drop.hasText ? drop.text.split(/\r?\n/).filter(l => l && !l.startsWith("#")) : [])
         const action = dropAction(urls, dest, drop.modifiers)
         if (!action) { drop.accepted = false; return }
+        // Alt, or a drag the right button started, asks first. It is left UNACCEPTED while the
+        // question stands: a source told its files were moved may delete them, and the answer
+        // can still be Cancel. kiki does the copy or the move itself either way.
+        if ((drop.modifiers & Qt.AltModifier) || (drop.formats || []).indexOf(askKey) >= 0) {
+            askDrop({ items: action.items, dest: dest, op: action.op, pos: pos || null })
+            return
+        }
         drop.accept(action.op === "copy" ? Qt.CopyAction : Qt.MoveAction)
         Kiki.Jobs.submit({ op: action.op, items: action.items, dest: dest })
     }

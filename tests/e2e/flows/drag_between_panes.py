@@ -12,6 +12,8 @@ that is not installed skips its own pairs by name and the rest still run.
 import getpass
 import json
 import os
+import shutil
+import subprocess
 
 from harness import wait_for
 from servers import FTPS_PASSWORD, FTPS_USER, Servers, add_location, sshd_bin, vsftpd_bin
@@ -184,6 +186,45 @@ def run(ctx):
                     wait_for(lambda: (not os.path.exists(os.path.join(here, "del.txt"))) or None, timeout=60) is not None,
                     failures(d) or os.listdir(here))
         sh.open("file://" + local_root)
+
+        # -------------------------------------------------------------- the drop that asks
+        # Alt, or a drag the right button started, puts a menu at the pointer instead of deciding.
+        # Only local ends here: what the menu does is the window's, and it is the same menu
+        # whatever the files are.
+        asking = os.path.join(local_root, "asking")
+        os.makedirs(os.path.join(asking, "into"))
+        for name in ("alt.txt", "right.txt", "cancel.txt"):
+            open(os.path.join(asking, name), "w").write(name)
+        into = os.path.join(asking, "into")
+        auri = "file://" + asking
+
+        r = drop(sh, [auri + "/alt.txt"], auri + "/into", "alt")
+        c.check("Alt: the drop asks and takes nothing yet",
+                r.get("asked") is True and r.get("accepted") is False, r)
+        c.check("…the menu offers Copy here, Move here and Cancel",
+                [i["label"] for i in json.loads(sh.call("menuItems") or "[]")][:2] == ["Copy here", "Move here"]
+                and "Cancel" in [i["label"] for i in json.loads(sh.call("menuItems") or "[]")], sh.call("menuItems"))
+        c.check("…and nothing has moved while it stands", os.path.exists(os.path.join(asking, "alt.txt")))
+        if shutil.which("grim"):
+            subprocess.run(["grim", os.path.join(os.environ.get("KIKI_E2E_OUT", "/tmp"), "drop-menu.png")], capture_output=True)
+        sh.call("menuClick", "Copy here")
+        c.check("Copy here copies", wait_for(lambda: os.path.exists(os.path.join(into, "alt.txt")) or None) is not None, failures(d))
+        c.check("…and leaves the original", os.path.exists(os.path.join(asking, "alt.txt")))
+
+        # A right-button drag asks by the mark it carries: no modifier is held at all.
+        r = drop(sh, [auri + "/right.txt"], auri + "/into", "right")
+        c.check("a right-button drag asks too", r.get("asked") is True, r)
+        sh.call("menuClick", "Move here")
+        moved = wait_for(lambda: (os.path.exists(os.path.join(into, "right.txt"))
+                                  and not os.path.exists(os.path.join(asking, "right.txt"))) or None, timeout=30)
+        c.check("Move here moves", moved is not None, (os.listdir(asking), os.listdir(into)))
+
+        drop(sh, [auri + "/cancel.txt"], auri + "/into", "alt")
+        sh.call("menuClick", "Cancel")
+        c.check("Cancel leaves everything where it was",
+                os.path.exists(os.path.join(asking, "cancel.txt")) and not os.path.exists(os.path.join(into, "cancel.txt")),
+                (os.listdir(asking), os.listdir(into)))
+        c.check("…and the menu is gone", sh.state().get("menuVisible") is False, sh.state().get("menuVisible"))
 
         # -------------------------------------------------------------- what is refused
         # These need no server: they are `Pane.dropAction` saying no, and nothing is submitted.

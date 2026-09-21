@@ -87,7 +87,7 @@ Rectangle {
         anchors.fill: parent
         enabled: r.row && r.row.isDir
         keys: ["text/uri-list"]
-        onDropped: drop => r.pane.dropInto(r.pane.childUri(r.row.name), drop)
+        onDropped: drop => r.pane.dropInto(r.pane.childUri(r.row.name), drop, mapToItem(null, drop.x, drop.y))
         Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
     }
     // Drag source: an invisible proxy carries the selection as text/uri-list.
@@ -101,7 +101,7 @@ Rectangle {
     MouseArea {
         id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton
         drag.target: dragProxy; drag.threshold: 8
-        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
+        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex, hover.pressedButtons & Qt.RightButton); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(r.mapToItem(null, mouse.x, mouse.y)); return }
             if (mouse.modifiers & Qt.ShiftModifier) r.pane.selection.range(r.rowIndex)

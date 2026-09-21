@@ -8,6 +8,8 @@ view while the inspector showed another file.
 """
 import json
 import os
+import shutil
+import subprocess
 
 from harness import snapshot, wait_for
 
@@ -54,6 +56,11 @@ def run(ctx):
     chosen = sh.wait_state(lambda s: s.get("selection") == [deep])
     c.check("a row in a deeper column is chosen where it lives", chosen is not None, sh.state().get("selection"))
     c.check("…while the pane stands in the folder above", sh.state().get("uri") == "file://" + root, sh.state().get("uri"))
+
+    # A picture of the rule, for the eye: the key column in the accent, the trail behind it grey.
+    if shutil.which("grim"):
+        subprocess.run(["grim", os.path.join(os.environ.get("KIKI_E2E_OUT", "/tmp"), "columns-highlight.png")],
+                       capture_output=True)
     sh.call("action", "trash")
     c.check("Del there takes that row",
             wait_for(lambda: ("deep.txt" not in snapshot(os.path.join(root, "Projects"))) or None, timeout=30) is not None,

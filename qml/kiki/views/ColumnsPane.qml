@@ -205,7 +205,7 @@ Item {
         anchors.fill: parent; z: -1
         keys: ["text/uri-list"]
         enabled: !root.pane.isTrash && root.columns.length > 0
-        onDropped: drop => root.pane.dropInto(root.columns[root.columns.length - 1].uri, drop)
+        onDropped: drop => root.pane.dropInto(root.columns[root.columns.length - 1].uri, drop, mapToItem(null, drop.x, drop.y))
     }
     Flickable {
         id: strip
@@ -267,7 +267,7 @@ Item {
                         anchors.fill: parent; z: -1
                         keys: ["text/uri-list"]
                         enabled: !root.pane.isTrash && modelData.uri !== ""
-                        onDropped: drop => root.pane.dropInto(modelData.uri, drop)
+                        onDropped: drop => root.pane.dropInto(modelData.uri, drop, mapToItem(null, drop.x, drop.y))
                         Rectangle { anchors.fill: parent; anchors.rightMargin: 1; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
                     }
                     ListView {
@@ -318,6 +318,7 @@ Item {
                             property color fg: active ? Kiki.Theme.bg : Kiki.Theme.fgDim
                             readonly property var mark: Kiki.Format.gitMark(r)
                             Rectangle {
+                                objectName: "rowmark"
                                 anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 5
                                 radius: 6
                                 color: cr.sel ? (cr.active ? Kiki.Theme.accent : Kiki.Theme.surface) : "transparent"
@@ -341,7 +342,7 @@ Item {
                                 anchors.fill: parent
                                 enabled: !!cr.r && cr.r.isDir && !root.pane.isTrash
                                 keys: ["text/uri-list"]
-                                onDropped: drop => root.pane.dropInto(modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name), drop)
+                                onDropped: drop => root.pane.dropInto(modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name), drop, mapToItem(null, drop.x, drop.y))
                                 Rectangle { anchors.fill: parent; anchors.leftMargin: 5; anchors.rightMargin: 5; radius: 6; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
                             }
                             Item {
@@ -361,7 +362,7 @@ Item {
                                 drag.onActiveChanged: {
                                     if (drag.active && cr.r) {
                                         cr.owner.markSelected(list.colIndex, cr.index)
-                                        colDrag.Drag.mimeData = root.pane.uriListMime([modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)])
+                                        colDrag.Drag.mimeData = root.pane.uriListMime([modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)], pressedButtons & Qt.RightButton)
                                         colDrag.Drag.active = true
                                     } else colDrag.Drag.active = false
                                 }

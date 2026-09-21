@@ -118,6 +118,32 @@ TestCase {
                 "a file the pane is not standing in front of")
     }
 
+    /// The pill drawn behind a chosen row.
+    function mark(row) { return findChild(row, "rowmark") }
+
+    // Drilling right: the row last clicked keeps the accent — it is the key column — and the
+    // trail behind it stays chosen in grey, so the path drilled is still readable.
+    function test_the_key_column_holds_the_accent_and_the_trail_goes_grey() {
+        fake.tree["file:///home/t/Projects"] = [fake.dir("src"), fake.file("deep.txt")]
+        fake.tree["file:///home/t/Projects/src"] = [fake.file("main.rs")]
+        const folder = findChild(cols, "colrow-0-0")               // Projects
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        verify(folder.sel && folder.active, "the row just clicked is the key one")
+        verify(Qt.colorEqual(mark(folder).color, Kiki.Theme.accent), String(mark(folder).color))
+
+        tryVerify(() => findChild(cols, "colrow-1-0") !== null)
+        wait(600)                                   // not the back half of a double click
+        const sub = findChild(cols, "colrow-1-0")                  // src, one column right
+        mouseClick(sub, sub.width / 2, sub.height / 2)
+        compare(cols.focusCol, 1)
+        verify(sub.sel && sub.active, "the key column moved right with the click")
+        verify(Qt.colorEqual(mark(sub).color, Kiki.Theme.accent), String(mark(sub).color))
+        verify(folder.sel && !folder.active, "the folder behind is still chosen, no longer key")
+        verify(Qt.colorEqual(mark(folder).color, Kiki.Theme.surface), String(mark(folder).color))
+        verify(Qt.colorEqual(mark(findChild(cols, "colrow-1-1")).color, "transparent"),
+               "a row nobody chose has no pill at all")
+    }
+
     // ---------------------------------------------------------------- dragging a row out
 
     // The offscreen platform ends a drag as it begins, so what is asserted is that one began and

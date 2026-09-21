@@ -119,4 +119,38 @@ TestCase {
         compare(fake.last("ShowHidden").fields.show, true)
         compare(pane.listing.count, 4)
     }
+
+    // ---------------------------------------------------------------- dragging a row out
+
+    // Plan 29 assumed a drag could be started with the right button and nobody had seen one. It
+    // can, on Qt's side of the glass: the same press and move starts a drag with either button,
+    // and the right one marks its payload so the drop can ask rather than decide. Whether the
+    // COMPOSITOR carries a right-button drag is the other half, and stays on the manual list —
+    // nothing headless here can hold a button down.
+    Component { id: spyC; SignalSpy { signalName: "dragStarted" } }
+    function pull(item, x, y, dx, dy, button) {
+        mousePress(item, x, y, button)
+        for (let k = 1; k <= 6; k++) mouseMove(item, x + dx * k / 6, y + dy * k / 6, -1, button)
+        wait(50)                                   // an automatic drag starts from a queued event
+        mouseRelease(item, x + dx, y + dy, button)
+    }
+    function dragProxyOf(row) { return row.children.find(c => c.Drag !== undefined && c.width === 0) }
+
+    function test_either_button_starts_a_drag_and_the_right_one_marks_it() {
+        const row = findChild(list, "row-1")                       // a.txt
+        const proxy = dragProxyOf(row)
+        verify(proxy !== undefined, "the row has a drag proxy")
+        const spy = spyC.createObject(tc, { target: proxy.Drag })
+
+        pull(row, row.width / 2, row.height / 2, 40, 60, Qt.LeftButton)
+        compare(spy.count, 1, "the left button drags")
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/a.txt\r\n")
+        compare(proxy.Drag.mimeData[pane.askKey], undefined, "and asks nothing of the drop")
+
+        spy.clear()
+        pull(row, row.width / 2, row.height / 2, 40, 60, Qt.RightButton)
+        compare(spy.count, 1, "so does the right button")
+        compare(proxy.Drag.mimeData[pane.askKey], "1", "marked, so the drop puts up the menu")
+        spy.destroy()
+    }
 }

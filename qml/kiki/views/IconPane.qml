@@ -67,7 +67,7 @@ Item {
         // Re-parented to the pane: declared here it would be a child of the grid's CONTENT, which
         // is only as tall as its rows of tiles — everything below the last row, and the margins,
         // took no drop at all, so a drag had to find a folder to land on.
-        DropArea { objectName: "icon-drop-background"; parent: root; anchors.fill: parent; z: -1; keys: ["text/uri-list"]; enabled: !root.pane.isTrash; onDropped: drop => root.pane.dropInto(root.pane.uri, drop) }
+        DropArea { objectName: "icon-drop-background"; parent: root; anchors.fill: parent; z: -1; keys: ["text/uri-list"]; enabled: !root.pane.isTrash; onDropped: drop => root.pane.dropInto(root.pane.uri, drop, mapToItem(null, drop.x, drop.y)) }
         delegate: Item {
             id: cell
             required property int index
@@ -125,7 +125,7 @@ Item {
                     anchors.fill: parent
                     enabled: cell.row && cell.row.isDir
                     keys: ["text/uri-list"]
-                    onDropped: drop => root.pane.dropInto(root.pane.childUri(cell.row.name), drop)
+                    onDropped: drop => root.pane.dropInto(root.pane.childUri(cell.row.name), drop, mapToItem(null, drop.x, drop.y))
                     Rectangle { anchors.fill: parent; radius: 2; color: "transparent"; border.width: 1; border.color: Kiki.Theme.accent; visible: parent.containsDrag }
                 }
                 Item {
@@ -137,7 +137,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton
                     drag.target: cellDrag; drag.threshold: 8
-                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index); cellDrag.Drag.active = true } else cellDrag.Drag.active = false }
+                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index, pressedButtons & Qt.RightButton); cellDrag.Drag.active = true } else cellDrag.Drag.active = false }
                     onClicked: mouse => {
                         if (mouse.button === Qt.RightButton) { if (!cell.selected) root.pane.selection.set(cell.index); root.contextMenu(cell.index, cell.mapToItem(null, mouse.x, mouse.y)); return }
                         if (mouse.modifiers & Qt.ShiftModifier) root.pane.selection.range(cell.index)

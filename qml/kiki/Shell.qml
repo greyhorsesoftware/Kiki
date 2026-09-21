@@ -39,8 +39,20 @@ FloatingWindow {
     // without a view of its own and wrote "mirror" into views.toml as the folder's preference.)
     property bool sideBySide: false
     readonly property bool split: sideBySide
-    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide }
-    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide }
+    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onAskDrop: spec => win.dropMenu(spec) }
+    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide; onAskDrop: spec => win.dropMenu(spec) }
+    /// A drop held `Alt`, or was dragged with the right button: it asks instead of deciding.
+    /// Nothing has happened yet — the drop was not even accepted — so Cancel is truly nothing.
+    function dropMenu(spec) {
+        const n = spec.items.length
+        const what = n === 1 ? decodeURIComponent(spec.items[0].replace(/\/+$/, "").split("/").pop()) : n + " items"
+        menu.open([
+            { label: "Copy here", action: () => Kiki.Jobs.submit({ op: "copy", items: spec.items, dest: spec.dest }) },
+            { label: "Move here", action: () => Kiki.Jobs.submit({ op: "move", items: spec.items, dest: spec.dest }) },
+            { label: what, enabled: false, sep: true, action: () => {} },
+            { label: "Cancel", sep: true, action: () => {} },
+        ], spec.pos ? Qt.point(spec.pos.x, spec.pos.y) : Qt.point(win.width / 2, win.height / 2))
+    }
     function defaultView() { const d = Kiki.Settings.view["default"]; return !d || d === "mirror" ? "list" : d }
     // `[view] default = "mirror"` in an old settings.toml still means: start side by side.
     Connections { target: Kiki.Settings; function onLoadedChanged() { if (Kiki.Settings.loaded && Kiki.Settings.view["default"] === "mirror") win.enterMirror() } }
@@ -805,19 +817,24 @@ FloatingWindow {
                 return JSON.stringify({ accepted: list.length > 0, action: list.length ? "move" : "none", items: list.length })
             }
             const named = { ctrl: Qt.ControlModifier, control: Qt.ControlModifier, shift: Qt.ShiftModifier, alt: Qt.AltModifier }
+            const words = (modifiers || "").split(/[+,\s]+/).map(m => m.toLowerCase())
             let mods = Qt.NoModifier
-            for (const m of (modifiers || "").split(/[+,\s]+/)) if (m && named[m.toLowerCase()] !== undefined) mods |= named[m.toLowerCase()]
+            for (const m of words) if (m && named[m] !== undefined) mods |= named[m]
             let took = Qt.IgnoreAction
             const ev = {
                 accepted: false,
                 hasUrls: list.length > 0,
                 urls: list.map(u => ({ toString: () => u })),
                 hasText: false, text: "",
+                // `right` stands in for a drag the right button started, which arrives as a mark
+                // in the payload rather than as a button — there is no pointer here to press.
+                formats: words.indexOf("right") >= 0 ? ["text/uri-list", win.pane.askKey] : ["text/uri-list"],
                 modifiers: mods,
                 accept: a => { ev.accepted = true; took = a === undefined ? Qt.MoveAction : a }
             }
             win.pane.dropInto(dest, ev)
-            return JSON.stringify({ accepted: ev.accepted, action: took === Qt.CopyAction ? "copy" : took === Qt.MoveAction ? "move" : "none", items: list.length })
+            return JSON.stringify({ accepted: ev.accepted, action: took === Qt.CopyAction ? "copy" : took === Qt.MoveAction ? "move" : "none",
+                                    items: list.length, asked: menu.visible })
         }
         /// The yes/no question, for scripts and tests: `yes` or `no` answers it, anything else
         /// leaves it up. Either way, answers what it was asking.
@@ -885,6 +902,13 @@ FloatingWindow {
         function viewMenu(): void { if (menu.visible) menu.close(); else win.viewMenu() }
         /// What the open menu says, for scripts and tests: each row's label, tick and whether it is live.
         function menuItems(): string { return JSON.stringify(menu.visible ? menu.items.map(i => ({ label: i.label, checked: i.checked === true, enabled: !menu.off(i) })) : []) }
+        /// Click an item in the menu that is open, by label — what the pointer does to it.
+        function menuClick(label: string): void {
+            const it = menu.visible ? menu.items.find(i => i.label === label) : null
+            if (!it || menu.off(it) || !it.action) return
+            menu.close()
+            it.action()
+        }
         function pathMenu(): void { if (menu.visible) menu.close(); else win.pathMenu() }
         function toggleSearch(): void { win.toggleSearch() }
         function inspector(on: string): void { win.inspectorRequested = on === "" ? !win.inspectorRequested : on === "on" }

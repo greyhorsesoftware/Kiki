@@ -12,7 +12,7 @@ Item {
         anchors.fill: parent; z: -1
         keys: ["text/uri-list"]
         enabled: !!root.pane && !root.pane.isTrash
-        onDropped: drop => root.pane.dropInto(root.pane.uri, drop)
+        onDropped: drop => root.pane.dropInto(root.pane.uri, drop, mapToItem(null, drop.x, drop.y))
     }
     property Kiki.Pane pane
     property string home: ""
@@ -141,10 +141,10 @@ Item {
     /// A drag leaving the gallery carries what List and Icon carry: the selection when the row
     /// pressed is in it, that row alone when it is not. `proxy` is the item whose `Drag` hands
     /// it to the compositor.
-    function dragFrom(active, index, proxy) {
+    function dragFrom(active, index, proxy, ask) {
         if (!active) { proxy.Drag.active = false; return }
         if (!pane.selection.has(index)) pane.selection.set(index)
-        proxy.Drag.mimeData = pane.dragMime(index)
+        proxy.Drag.mimeData = pane.dragMime(index, ask)
         proxy.Drag.active = true
     }
 
@@ -315,7 +315,7 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             drag.target: root.current >= 0 && !root.canPan ? stageDrag : null
             drag.threshold: 8
-            drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag)
+            drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag, pressedButtons & Qt.RightButton)
             onDoubleClicked: root.activate(root.current)
             onClicked: mouse => { if (mouse.button === Qt.RightButton) root.contextMenu(root.current, root.mapToItem(null, mouse.x, mouse.y)) }
         }
