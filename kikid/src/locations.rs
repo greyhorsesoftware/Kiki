@@ -70,12 +70,18 @@ pub fn set_image(name: &str, image: Option<&str>) -> std::io::Result<()> {
 }
 
 pub fn remove(name: &str) -> std::io::Result<()> {
+    // Which secrets it has is read off the location itself, so it is asked before the location
+    // is written away — afterwards there is nothing left to ask, and the password stayed behind.
+    let keys = secret_keys(name);
     let items: Vec<Value> = all().into_iter().filter(|l| l.str_field("name") != Some(name)).collect();
     write_all(&items)?;
-    for key in secret_keys(name) {
+    for key in keys {
         keyring::clear(name, &key);
     }
-    sessions().lock().unwrap().remove(&format!("{name}\u{0}browse"));
+    // Every session it has, and the plugin told to let go of each: dropping the record alone
+    // leaves the plugin holding the connection, and it hands that connection to the next
+    // location to take this name — which is then browsing the server that was removed.
+    disconnect(name);
     Ok(())
 }
 
@@ -261,12 +267,17 @@ pub fn connected_names() -> Vec<String> {
 }
 
 pub fn disconnect(name: &str) {
-    let mut s = sessions().lock().unwrap();
-    let keys: Vec<String> = s.keys().filter(|k| k.starts_with(&format!("{name}\u{0}"))).cloned().collect();
-    for k in keys {
-        if let Some(sess) = s.remove(&k) {
-            let _ = sess.plugin.request(sess.req("Disconnect").done());
-        }
+    // Taken out of the map first, told second, with the lock let go in between: a plugin logs
+    // while it answers, and a log line asks which jobs hold sessions on that plugin — so holding
+    // this lock across the round trip is a deadlock, and the daemon answers nothing ever again.
+    // `JobSessions` does the same dance for the same reason.
+    let dropped: Vec<Arc<Session>> = {
+        let mut s = sessions().lock().unwrap();
+        let keys: Vec<String> = s.keys().filter(|k| k.starts_with(&format!("{name}\u{0}"))).cloned().collect();
+        keys.into_iter().filter_map(|k| s.remove(&k)).collect()
+    };
+    for sess in dropped {
+        let _ = sess.plugin.request(sess.req("Disconnect").done());
     }
 }
 

@@ -187,7 +187,10 @@ QtObject {
         const rows = selection.has(index) ? selection.positions() : [index]
         return rows.map(i => { const r = listing.row(i); return r ? childUri(r.name) : null }).filter(u => u)
     }
-    function dragMime(index) { return { "text/uri-list": dragUris(index).join("\r\n") + "\r\n" } }
+    function dragMime(index) { return uriListMime(dragUris(index)) }
+    /// What every view drags, in one place: columns builds its own list of URIs — its rows can
+    /// belong to a folder this pane is not standing in — but the payload is shaped here.
+    function uriListMime(uris) { return { "text/uri-list": uris.join("\r\n") + "\r\n" } }
     // Drop `drop` (a DragEvent) into `dest`: move within one scheme, copy across, Ctrl forces copy.
     function dropInto(dest, drop) {
         // One drop, one job. Drop targets lie over each other — a folder row over its view's

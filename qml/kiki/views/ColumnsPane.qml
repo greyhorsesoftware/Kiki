@@ -124,6 +124,16 @@ Item {
         c.cache.setViewport(Math.max(0, index - 20), 41)
         ensureVisible(false)
     }
+    /// What this view has chosen: the row highlighted in the key column — the one last clicked or
+    /// moved in, which draws its highlight in the accent while the columns behind it, the trail
+    /// drilled down, keep theirs in grey. It need not be in the folder the pane is standing in,
+    /// so the pane's own selection cannot answer for it.
+    function selectedUris() {
+        const c = columns[focusCol]
+        const r = c && c.selected >= 0 ? c.cache.row(c.selected) : null
+        return r ? [c.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(r.name)] : []
+    }
+
     /// True when it moved; false at the leftmost column, so the caller can go up a directory.
     function focusLeft() {
         if (focusCol <= 0) return false
@@ -336,6 +346,7 @@ Item {
                             }
                             Item {
                                 id: colDrag
+                                objectName: "coldrag"
                                 Drag.dragType: Drag.Automatic
                                 Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
                                 Drag.proposedAction: Qt.MoveAction
@@ -344,9 +355,15 @@ Item {
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 drag.target: colDrag; drag.threshold: 8
+                                // A dragged row becomes the highlighted one, as it does in the
+                                // other views: what is moving and what the column shows as chosen
+                                // are the same row. Marked, not pushed — a drag opens nothing.
                                 drag.onActiveChanged: {
-                                    if (drag.active && cr.r) { colDrag.Drag.mimeData = { "text/uri-list": modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name) + "\r\n" }; colDrag.Drag.active = true }
-                                    else colDrag.Drag.active = false
+                                    if (drag.active && cr.r) {
+                                        cr.owner.markSelected(list.colIndex, cr.index)
+                                        colDrag.Drag.mimeData = root.pane.uriListMime([modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)])
+                                        colDrag.Drag.active = true
+                                    } else colDrag.Drag.active = false
                                 }
                                 onClicked: mouse => {
                                     if (!cr.r) return

@@ -93,6 +93,73 @@ TestCase {
         verify(!box.visible)
     }
 
+    // ---------------------------------------------------------------- what is chosen
+
+    // The key column — the one last clicked — and the row highlighted there. Operations read this
+    // rather than the pane's own selection, which knows nothing about the columns.
+    function test_the_key_columns_highlighted_row_is_what_is_chosen() {
+        compare(cols.selectedUris(), [], "nothing highlighted, nothing chosen")
+        const row = findChild(cols, "colrow-0-1")                  // a.txt
+        mouseClick(row, row.width / 2, row.height / 2)
+        compare(cols.selectedUris(), ["file:///home/t/a.txt"])
+    }
+
+    function test_a_row_in_a_deeper_column_is_chosen_where_it_lives() {
+        fake.tree["file:///home/t/Projects"] = [fake.file("deep.txt")]
+        const folder = findChild(cols, "colrow-0-0")
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        compare(cols.selectedUris(), ["file:///home/t/Projects"], "the folder stepped into is chosen")
+        tryVerify(() => findChild(cols, "colrow-1-0") !== null)
+        const deep = findChild(cols, "colrow-1-0")
+        wait(600)                                   // not the back half of a double click
+        mouseClick(deep, deep.width / 2, deep.height / 2)
+        compare(cols.focusCol, 1)
+        compare(cols.selectedUris(), ["file:///home/t/Projects/deep.txt"],
+                "a file the pane is not standing in front of")
+    }
+
+    // ---------------------------------------------------------------- dragging a row out
+
+    // The offscreen platform ends a drag as it begins, so what is asserted is that one began and
+    // what it carried.
+    Component { id: spyC; SignalSpy { signalName: "dragStarted" } }
+    /// Press on `item` at (x, y), move by (dx, dy) in steps with the button held, let go.
+    function pull(item, x, y, dx, dy) {
+        mousePress(item, x, y, Qt.LeftButton)
+        for (let k = 1; k <= 6; k++) mouseMove(item, x + dx * k / 6, y + dy * k / 6, -1, Qt.LeftButton)
+        wait(50)                                   // an automatic drag starts from a queued event
+        mouseRelease(item, x + dx, y + dy, Qt.LeftButton)
+    }
+
+    function test_a_dragged_row_carries_its_uri_and_becomes_the_marked_one() {
+        const row = findChild(cols, "colrow-0-2")                  // b.txt
+        const proxy = findChild(row, "coldrag")
+        const spy = spyC.createObject(tc, { target: proxy.Drag })
+        pull(row, row.width / 2, row.height / 2, 40, -40)
+        compare(spy.count, 1, "a drag began")
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/b.txt\r\n")
+        compare(cols.columns[0].selected, 2, "the row being dragged is the marked one")
+        compare(cols.inspectedUri, "", "and a drag opens nothing")
+        spy.destroy()
+    }
+
+    // A column's rows can belong to a folder the pane is not standing in, so the URI is the
+    // column's own, not the pane's.
+    function test_a_row_in_a_deeper_column_drags_its_own_folders_file() {
+        fake.tree["file:///home/t/Projects"] = [fake.file("deep.txt")]
+        const folder = findChild(cols, "colrow-0-0")
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        tryVerify(() => findChild(cols, "colrow-1-0") !== null)
+        const row = findChild(cols, "colrow-1-0")
+        const proxy = findChild(row, "coldrag")
+        const spy = spyC.createObject(tc, { target: proxy.Drag })
+        pull(row, row.width / 2, row.height / 2, 40, -40)
+        compare(spy.count, 1, "a drag began")
+        compare(proxy.Drag.mimeData["text/uri-list"], "file:///home/t/Projects/deep.txt\r\n")
+        compare(cols.columns[1].selected, 0)
+        spy.destroy()
+    }
+
     // ---------------------------------------------------------------- git (plan 15)
 
     function columnRows(colIndex) {

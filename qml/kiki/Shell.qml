@@ -357,12 +357,12 @@ FloatingWindow {
         onCopyText: text => Quickshell.execDetached(["wl-copy", text])
     }
     property alias clipboard: ops.clipboard
-    function copySelection(cut) { ops.copySelection(cut) }
+    function copySelection(cut) { ops.copySelection(cut, win.selectedUris()) }
     function paste() { ops.paste() }
-    function trashSelection() { if (win.galleryPane()) win.galleryPane().keepPlace(); ops.trashSelection() }
+    function trashSelection() { if (win.galleryPane()) win.galleryPane().keepPlace(); ops.trashSelection(win.selectedUris()) }
     function newFolder() { ops.newFolder() }
     function renameSelected() { ops.renameSelected() }
-    function copyPath() { ops.copyPath() }
+    function copyPath() { ops.copyPath(win.selectedUris()) }
     // View menu (plan 02): one toolbar button, the three views, then hidden files.
     // A menu hung under the toolbar item that opened it, in window coordinates.
     function menuUnder(item, items) {
@@ -445,7 +445,7 @@ FloatingWindow {
     function loadTrashInfo() { Kiki.Daemon.request("TrashInfo", {}, ok => { if (ok) { const m = {}; for (const it of ok.items) m[it.name] = it; win.trashInfo = m } }) }
     function trashNames() { return ops.selectedNames() }
     function restoreSelection() { ops.restoreSelection() }
-    function deleteForever() { ops.deleteForever() }
+    function deleteForever() { ops.deleteForever(win.selectedUris()) }
     function emptyTrash() { ops.emptyTrash() }
     Connections { target: win.pane; function onNavigated(uri) { if (uri.startsWith("trash://")) win.loadTrashInfo() } }
     Connections { target: win.pane.listing; function onReset() { if (win.pane.isTrash) win.loadTrashInfo() } }
@@ -530,7 +530,10 @@ FloatingWindow {
         Kiki.Daemon.request("Locations", {}, ok => { if (ok) locations = ok.locations })
         Kiki.Daemon.request("Devices", {}, ok => { if (ok) devices = ok.devices })
     }
-    function selectedUris() { return ops.selectedUris() }
+    /// What the operations act on. Columns keeps a selection of its own — the highlighted row in
+    /// the key column, in a folder the pane need not be standing in — so while it is showing, it
+    /// is asked instead of the pane. Everything destructive comes through here.
+    function selectedUris() { const c = win.columnsPane(); return c ? c.selectedUris() : ops.selectedUris() }
     /// An item's rectangle in window coordinates, as the geometry queries report it.
     function rectOf(it) {
         const p = it.mapToItem(null, 0, 0)
@@ -863,7 +866,7 @@ FloatingWindow {
         function transfer(kind: string): void { win.transfer(kind === "move") }
         function openLocation(name: string): void { const l = win.locations.find(x => x.name === name); if (l) win.openLocation(l) }
         function state(): string {
-            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.pane.renamingIndex,
+            return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.pane.renamingIndex,
                 daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
                 dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, shortcuts: shortcuts_.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast })
         }

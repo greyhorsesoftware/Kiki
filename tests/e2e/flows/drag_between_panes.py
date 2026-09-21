@@ -168,17 +168,21 @@ def run(ctx):
                     wait_for(lambda: (not there()) or None, timeout=60) is not None, failures(d) or os.listdir(folder))
             c.check(f"{end} -> Trash: …and nothing went to this machine's trash", not trashed(name))
 
-            # Del is the same rule: the question, then gone from the server.
-            open(os.path.join(folder, "del.txt"), "w").write("del")
-            sh.open(uri(f"bin-{n}"))
+            # Del is the same rule: the question, then gone from the server. In a folder of its
+            # own, made before kiki is told to look: a server has no watcher, so a file written
+            # to its disk behind kiki's back is not seen in a folder already listed.
+            here = os.path.join(disk, f"del-{n}")
+            os.makedirs(here)
+            open(os.path.join(here, "del.txt"), "w").write("del")
+            sh.open(uri(f"del-{n}"))
             if not c.check(f"{end}: Del — the file is selected", sh.select("del.txt") is not None, sh.state()):
                 continue
             sh.call("action", "trash")
             q = question(sh, "yes")
             c.check(f"{end}: Del asks first", q.get("open") is True and q.get("title") == "Delete permanently?", q)
             c.check(f"{end}: …and Yes deletes it on the server",
-                    wait_for(lambda: (not os.path.exists(os.path.join(folder, "del.txt"))) or None, timeout=60) is not None,
-                    failures(d) or os.listdir(folder))
+                    wait_for(lambda: (not os.path.exists(os.path.join(here, "del.txt"))) or None, timeout=60) is not None,
+                    failures(d) or os.listdir(here))
         sh.open("file://" + local_root)
 
         # -------------------------------------------------------------- what is refused
