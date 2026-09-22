@@ -14,7 +14,13 @@ Rectangle {
     signal open(string uri)
     property string home: ""
     property var preview: null
+    /// What the panel shows is the row's, and only the row's: the listing is where every value
+    /// comes from. (It used to ask the daemon to `Stat` a URI with no meta yet, which on a
+    /// server's folder answered NotFound and, on anything, showed nothing the row would not.)
     property var meta: row ? row.meta : null
+    /// The narrowest the panel may be dragged: the Permissions grid (88 + 3 × 56) inside the
+    /// panel's margins, whole. Both the window's panel and columns view's info column keep to it.
+    readonly property int minWidth: 88 + 3 * 56 + 20 + 16
     property bool standalone: false
     /// False where the panel is part of the view rather than something you opened: the info
     /// column in Miller columns follows the selection and has nothing to close to.
@@ -66,7 +72,6 @@ Rectangle {
     function reload() {
         const u = uri
         Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) { preview = ok || null; previewPending = false } })
-        if (!meta) Kiki.Daemon.request("Stat", { uri: u }, (ok, err) => { if (u === insp.uri && ok) insp.meta = ok })
         if (row && row.git) Kiki.Daemon.request("GitStatus", { uri: u }, (ok, err) => { if (u === insp.uri) insp.gitInfo = ok || null })
     }
     function kind() { return row ? row.kind : "file" }

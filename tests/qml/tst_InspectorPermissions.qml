@@ -85,4 +85,22 @@ TestCase {
         mouseClick(findChild(insp, "perm-apply"))
         compare(chmods.count, 0)
     }
+
+    // The grid is the widest thing in the panel, and the panel's minimum is what holds it whole.
+    function test_the_grid_fits_inside_the_panels_minimum_width() {
+        const w = findChild(insp, "perm-world-1")            // the last box of the last column
+        const right = w.mapToItem(insp, w.width, 0).x
+        verify(right <= insp.minWidth - 16, "the grid's right edge at " + right + " is past the minimum's margin (" + (insp.minWidth - 16) + ")")
+        verify(insp.minWidth >= 280, insp.minWidth)
+    }
+    // The panel reads the row and only the row: nothing is asked of the daemon for the fields.
+    function test_the_fields_come_from_the_row_and_no_stat_is_asked() {
+        Wire.reset()
+        insp.uri = "sftp://lab/srv/site"
+        insp.row = ({ name: "site", kind: "folder", isDir: true, meta: null })
+        wait(20)
+        compare(Wire.count("Stat"), 0, "a folder on a server was stat'd — which answers NotFound")
+        insp.uri = "file:///home/t/a.txt"
+        insp.row = ({ name: "a.txt", kind: "text", isDir: false, meta: { size: 10, mtime: 1700000000000, mode: 0o644, owner: "gideon", group: "users" } })
+    }
 }

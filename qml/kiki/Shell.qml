@@ -441,7 +441,7 @@ FloatingWindow {
     // The inspected item follows the selection's current row.
     /// The info panel's width, dragged by its edge and remembered between sessions.
     property int inspectorW: Kiki.Settings.view.inspectorWidth || Kiki.Theme.inspectorWidth
-    function setInspectorWidth(w, room) { inspectorW = Math.max(260, Math.min(Math.floor(room * 0.7), Math.round(w))) }
+    function setInspectorWidth(w, room) { inspectorW = Math.max(inspectorPanel.minWidth, Math.min(Math.floor(room * 0.7), Math.round(w))) }
     property string inspectedUri: ""
     property var inspectedRow: null
     Connections {
@@ -1353,7 +1353,7 @@ FloatingWindow {
                     id: inspectorPanel
                     // Columns view supplies its own inspector column; icon and list show it with the selection.
                     visible: win.pane.view !== "columns" && win.inspector
-                    width: Math.min(win.inspectorW, Math.floor(parent.width * 0.7)); height: parent.height
+                    width: Math.max(minWidth, Math.min(win.inspectorW, Math.floor(parent.width * 0.7))); height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onClosed: win.inspectorRequested = false
                     // Dragging the grip leftwards makes the panel wider.

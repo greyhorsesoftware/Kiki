@@ -686,4 +686,13 @@ TestCase {
         shell.pane.view = "list"
         tryCompare(crumb, "uri", "file:///home")
     }
+
+    // The info column can be dragged narrower, never narrower than its Permissions grid.
+    function test_the_info_column_is_never_narrower_than_its_grid() {
+        const col = findChild(cols, "column-0")
+        verify(col)
+        cols.inspectorW = 100
+        verify(cols.inspectorWidth >= 280, "dragged to " + cols.inspectorWidth)
+        cols.inspectorW = 0
+    }
 }

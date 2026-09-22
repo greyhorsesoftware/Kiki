@@ -79,8 +79,8 @@ Item {
     /// The info column is at its widest by default and drags narrower, never wider: the columns
     /// are what the view is for. Computed without reference to `columnWidth`, or the two would
     /// chase each other.
-    readonly property int inspectorMax: Math.min(Kiki.Theme.inspectorWidth, Math.floor(strip.width * 0.45))
-    readonly property int inspectorMin: 240
+    readonly property int inspectorMax: Math.max(inspectorMin, Math.min(Kiki.Theme.inspectorWidth, Math.floor(strip.width * 0.45)))
+    readonly property int inspectorMin: inspectorCol.minWidth
     readonly property int inspectorWidth: inspectorW > 0
         ? Math.max(inspectorMin, Math.min(inspectorW, inspectorMax))
         : inspectorMax
