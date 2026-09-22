@@ -25,6 +25,20 @@ not name is ignored, whatever binaries are in the plugin directory.
 
 ## Install
 
+On Arch / Omarchy, from the latest release:
+
+```
+curl -fsSL https://raw.githubusercontent.com/greyhorsesoftware/Kiki/main/install.sh | bash
+```
+
+It fetches the package for your architecture (x86_64 or aarch64) from GitHub Releases, checks the
+published sha256, and runs `pacman -U`, which resolves the dependencies from the official
+repositories. Run it again to upgrade; `KIKI_VERSION=v0.1.0` picks a release. Or download the
+package from the Releases page and `sudo pacman -U` it yourself. (kiki is not on the AUR: it was
+not taking new accounts when 0.1.0 shipped.)
+
+From a checkout:
+
 ```
 cd packaging && makepkg -f      # -fi builds and installs it
 ```

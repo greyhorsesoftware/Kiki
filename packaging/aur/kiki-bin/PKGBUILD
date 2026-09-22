@@ -1,12 +1,14 @@
 # Maintainer: David Clark <david.j.clark@icloud.com>
-# Repackages the release build from GitHub. Updated by the release workflow.
+# Repackages the release build from GitHub. NOT published: the AUR was not taking new accounts
+# when 0.1.0 shipped, so the release workflow no longer pushes it; `install.sh` at the repository
+# root is how kiki is installed. Kept for the day the AUR is an option again.
 pkgname=kiki-bin
 _pkgname=kiki
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
 arch=('x86_64' 'aarch64')
-url="https://github.com/davidjclark/kiki"
+url="https://github.com/greyhorsesoftware/Kiki"
 license=('MIT')
 # Keep in step with packaging/PKGBUILD.
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'

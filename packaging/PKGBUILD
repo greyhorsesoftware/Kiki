@@ -5,7 +5,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')
-url="https://github.com/davidjclark/kiki"
+url="https://github.com/greyhorsesoftware/Kiki"
 license=('MIT')
 # libsecret is where `secret-tool` lives (gnome-keyring is the Secret Service behind it);
 # libarchive is bsdtar, udisks2 is udisksctl, git is the repository overlay in every listing.
