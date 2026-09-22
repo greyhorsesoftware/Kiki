@@ -1,5 +1,7 @@
 # 05 — Archives
 
+**Status:** built and tested.
+
 Builds on: `04-operations-and-undo.md`.
 
 ## Goal
@@ -8,7 +10,7 @@ Compress selections and extract archives as jobs, without buffering whole archiv
 
 ## Design
 
-- Formats: `zip`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`, `tar.bz2`, `7z`. All through `bsdtar` (libarchive, in Arch base), spawned like `ffmpeg`, so no compression crates enter the daemon; progress is bsdtar's verbose output, one line per entry.
+- Formats: `zip`, `tar`, `tar.gz`, `tar.xz`, `tar.zst`, `tar.bz2`, `7z` — the seven the Compress… dialog offers and the seven `archive.rs` knows, extensions and short forms alike (`.tgz`, `.txz`, `.tzst`, `.tbz2`). All through `bsdtar` (libarchive, in Arch base), spawned like `ffmpeg`, so no compression crates enter the daemon; progress is bsdtar's verbose output, one line per entry.
 - **Compress…** opens a small dialog: archive name, format, destination (defaults to the current folder). Streams the selection into the archive; progress is bytes read.
 - **Extract here** extracts next to the archive into a folder named after it when the archive has more than one top-level entry; **Extract to…** asks for a folder. Path traversal (`../`) entries are refused and the job fails before writing.
 - Inverse: compress → delete the archive; extract → delete the extracted tree (recorded as the list of top-level paths created).

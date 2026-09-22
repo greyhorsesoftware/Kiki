@@ -1,5 +1,7 @@
 # 15 — Git status
 
+**Status:** built and tested.
+
 Builds on: `01-daemon-and-listing.md` (windows, watch, pushed rows), `02-shell-and-views.md` (views, breadcrumb), `03-inspector.md` (Git field).
 
 ## Goal
@@ -19,7 +21,7 @@ Files and folders inside a git repository show their status in every view, the b
 
 **Invalidation**: the existing watch. Any change under the listed directory, or to `<root>/.git/index`, `HEAD`, `MERGE_HEAD` or `refs/`, re-runs status for the affected directories after a 300 ms debounce. `.git` itself is never listed with status.
 
-**Big repositories**: the pathspec keeps a status run proportional to the subtree in view. On repositories over 50,000 tracked files the daemon suggests, once, enabling `core.untrackedCache` and `core.fsmonitor` in a toast with a one-click `git config`. If a status run exceeds 2 s the directory is marked slow and re-run only on explicit refresh.
+**Big repositories**: the pathspec keeps a status run proportional to the subtree in view. ~~On repositories over 50,000 tracked files the daemon suggests, once, enabling `core.untrackedCache` and `core.fsmonitor` in a toast with a one-click `git config`.~~ **Amended 2026-09-21: no such toast, and kiki will not suggest that one.** A repository's own `.git/config` can name programs git then runs, so kiki runs git with `core.fsmonitor=` and `core.hooksPath=/var/empty` — listing a folder must not execute what a repository asks for (`git.rs`, tested). What is built is the other half: if a status run exceeds 2 s the directory is marked slow (`git::is_slow`) and is not re-run on every command in a terminal.
 
 **Branch chip**: `.git/HEAD` is read directly (a symbolic ref or a detached hash), so the chip costs one small file read per navigation and no process. Ahead and behind come from the status header when available.
 
@@ -27,14 +29,14 @@ Files and folders inside a git repository show their status in every view, the b
 
 | Surface | Shows |
 |---|---|
-| List and columns rows | a one-letter badge after the name: `M` modified (yellow), `A` added (green), `D` deleted (red), `R` renamed (yellow), `!` conflicted (red), `?` untracked (muted green); ignored files and folders dimmed |
+| List and columns rows | a one-letter badge after the name: `M` modified (yellow), `A` added (green), `D` deleted (red), `R` renamed (yellow), `!` conflicted (red), `?` untracked (muted green); ignored files and folders dimmed. **The colours are the theme's, not those words** — see "Colours are meanings" below; they were Tokyo Night hex literals until 2026-09-21 |
 | Icon tiles | a coloured dot at the top-right of the icon in the same colours; ignored dimmed |
 | Folders | the aggregated state as a mark; a folder that is **itself a repository** shows a **branch capsule** instead — `⎇ main`, or the short hash on a detached HEAD — where the one-letter badge goes, on the same line, coloured by that repository's own aggregate state: one element says both which branch and whether it is dirty. Icon tiles carry that colour on the dot they already draw; columns rows carry the capsule as list rows do. A long branch elides inside the capsule, which takes at most 40 % of the name column. `folders = "off"` takes it away with the other folder marks. *(Amended 2026-09-21, owner: "why not just make that a branch capsule that has same colors as dot and shows branch too?" — this replaces "the branch name under its name", which wanted taller rows.)* |
 | Breadcrumb | a chip `⎇ main ↑2 ↓1` at the right end of the path when the pane is inside a repository; click copies the branch name |
 | Inspector, General tab | Git: state, branch, last commit (short hash, author, relative date, subject) |
-| Sidebar Favorites | a small dot on a favorite that is a dirty repository root |
+| Sidebar Favorites | ~~a small dot on a favorite that is a dirty repository root~~ **Not in 0.1.0 (2026-09-21)**: not built, and not asked for. The sidebar's only dot is the green one a *connected* location wears |
 
-Settings (`[git]` in `settings.toml`): `enabled = true`, `show_ignored = "dim" | "hide" | "normal"`, `folders = "aggregate" | "off"`.
+Settings (`[git]` in `settings.toml`): `enabled = true`, `showIgnored = "dim" | "hide" | "normal"` (the key is camel-cased, as every other setting is), `folders = "aggregate" | "off"`. `hide` is the daemon's: an ignored row is left out of the listing the way a dot-file is, from that folder's next listing on.
 
 Not in 0.1.0: staging, unstaging, discarding, commit, diff view, submodule recursion, status on remote locations. Context-menu git actions are a later plan.
 
@@ -50,7 +52,7 @@ Not in 0.1.0: staging, unstaging, discarding, commit, diff view, submodule recur
 
 Event: `RepoChanged { root }` when HEAD or the index changes, so the breadcrumb chip updates.
 
-**IPC added**: `gitState(name)` for tests.
+**IPC added**: ~~`gitState(name)` for tests.~~ **Amended 2026-09-21: not built.** A row's git state is read out of `shell state` and the listing's rows, which is what `git_status.py` asserts on; a badge's colour is read off the item by `tst_GitBadges`.
 
 **Mockups**: add badges to `ListView.dc.html` rows and dots to `IconView.dc.html` tiles, plus the breadcrumb chip on `Main.dc.html`, before building.
 

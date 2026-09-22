@@ -1,6 +1,6 @@
 # 31 — Final implementation plan for 0.1.0
 
-**Status:** plan, written 2026-09-19. Nothing here is built yet. Supersedes the "Order" section of `29-release-readiness.md`; where this document and an older plan disagree, this one wins and the older plan is amended in phase 9.
+**Status:** plan, written 2026-09-19; phases 0–7 and 9 built and done by 2026-09-21, phase 8 in part (SMB), phase 10 not started — see each phase's heading. Supersedes the "Order" section of `29-release-readiness.md`; where this document and an older plan disagree, this one wins and the older plan is amended in phase 9.
 
 Builds on: every plan. Inputs: `29-release-readiness.md`, `30-code-health.md`, `activity-view-spec.md`, and a read-only audit of every plan's Verification list against the tree (2026-09-19; five passes, nothing built or run). Findings the audit reached by reading code and did not run are marked **(probable)** — reproduce before fixing.
 
@@ -476,7 +476,7 @@ a `ListRow` is five formatted columns — which is the order the numbers come in
 
 **Tests**: `tst_DragDrop` / `tst_DropAction` grow the ask, refused targets, modifiers read at drop time, focus to the receiver, and the gallery and columns sources carrying a selection. `drag_between_panes.py` as above. What stays manual is the physical press–move–release, and it goes on the phase 10 checklist.
 
-**Sway spike** (½ day, time-boxed): `run_in_sway()` in `run.sh` (`output HEADLESS-1`, `exec` the script, `swaymsg exit`), to find out whether sway's headless backend delivers virtual-pointer events to Quickshell. If yes, `pointer_ops` (14 click checks) stops skipping and `sway` joins CI. If no, the skip stands and `11-testing.md` records why. Either way the answer is written into plan 11.
+**Sway spike — not run** (found in phase 9: no `run_in_sway`, no mention of sway in the tree; `pointer_ops` still skips and plan 11 says why). Was: (½ day, time-boxed): `run_in_sway()` in `run.sh` (`output HEADLESS-1`, `exec` the script, `swaymsg exit`), to find out whether sway's headless backend delivers virtual-pointer events to Quickshell. If yes, `pointer_ops` (14 click checks) stops skipping and `sway` joins CI. If no, the skip stands and `11-testing.md` records why. Either way the answer is written into plan 11.
 
 ### Phase 6 — Side by Side and mirror, driven (3½ days) — **done 2026-09-21, but for what a hand is owed**
 
@@ -569,7 +569,16 @@ One session each, against plan 29 B's list — list, copy out, copy in, rename, 
 - **LocalSend**: removed from 0.1.0 (owner, 2026-09-21). No phone to try.
 - Mail through Thunderbird's composer; Tailscale to a second node.
 
-### Phase 9 — the documents agree with the build (1 day)
+### Phase 9 — the documents agree with the build (1 day) — **done 2026-09-21**
+
+Done by four agents in parallel, each on its own files (CORE/README/API; plans 01–08; 09–20; 21–33 with `docs/SKILL.md` and the Share mockup), plan 31 as their authority and the code as the tie-breaker; nothing but docs changed (38 files, +842/−397). Every plan carries a **Status** line; the table below was corrected where the agents found it stale (07, 08, 20, 25). What they found that is the CODE's to answer, not a document's — left as it is, listed here for after the tag:
+
+- ~~**`Prefetch` is a live request** in `server.rs` that nothing sends (struck from plan 01 as D9, never removed from the daemon).~~ **Removed 2026-09-22** (owner), after measuring what it would have bought: a cold `Open` of a 20,000-file local folder answers its first rows in 2 ms and finishes the scan in 16 ms (cached: 0.4 ms); an 80-file folder 1.7 ms vs 1.1 ms. The streaming scan already does what a prefetch was for, and on a server a prefetch would cost listings nobody asked for.
+- **`kikid/tests/protocol.rs:233` round-trips error codes the daemon never emits** (`Cancelled`, `Busy`, `Plugin`, `Safety`); the codes it does emit are `Unsafe`, `Invalid`, `Version` (now in `API-DAEMON.md`). Harmless — it exercises framing — but a list of strings nobody sends.
+- **`mirror.last` is written after every run** (`Shell.recordMirror`) and read nowhere: `MirrorBar` is `visible: false`, Swap has no way in.
+- **`docs/design/gen.py` still generates the Share mockup with a LocalSend row**; the mockup carries a dated note instead. Regenerating drops it.
+- **The sway spike was never run** (above). `pointer_ops` skips; plan 11 says why.
+- Small truths recorded in the plans rather than plan 31: the mirror's default rules are **nine** names (this document's phase-6 text says eight); `compress` also takes `7z`; `mirrorRun` takes `workers` (clamped 1–8; the UI sends 5); `OpenIn` answers `class`; the `Log` notification carries `role`, not `req`; the PKGBUILD's optdepends have no `gvfs-dnssd`; the SMB share-not-found error is `Invalid` on field `share`; Gallery is offered side by side (what is off there is view memory and the guess); the Neovim preset is `accepts = "both"`.
 
 - A **Status** line under every plan's title (table below).
 - `CORE.md`: both open questions are answered — the PKGBUILD depends on `gnome-keyring` and `libsecret`; kiki's chooser sits *beside* GTK's, per user, with gtk as the fallback — so record them under Decisions and empty the section. Replace the stale plan-17 decision with decisions 1–6, and add: **kiki has no built-in code viewer and will not grow one** — a decision about what kiki is, recorded under Decisions rather than "Out of scope for 0.1.0", so nobody reads it as "later". Row 13 of the build order becomes "Editor bridge", and `CORE.md:80`'s mention of the viewer goes. "Out of scope for 0.1.0" gains: MTP, AFC and PTP; the Jarvis panel; Messages and AirDrop; spring-loaded folders; LocalSend receiving; Swap, "last mirrored" and the mirror options; the divider nudge; the pane-header branch chip; `ssh-agent` and `~/.ssh/config`; the `smb://` handler; AFP; and whichever of D1–D23 stand. Fix the architecture box (kinds), the `vsftpd` prerequisite, and rows 17, 18 (garbled), 19, 24, 29.
@@ -620,8 +629,8 @@ If that is too long, the cut line, in the order it costs least: phase 7 down to 
 | 04 Operations and undo | built and tested; parallel small-file copy not in 0.1.0; activity → plan 32 |
 | 05 Archives | built and tested |
 | 06 Remote locations | built and tested against real `sshd` and FTPS; agent auth not in 0.1.0 |
-| 07 Split mode | built and tested as Side by Side (plan 29 J) |
-| 08 Mirror | built and tested, local and SFTP; Edit rules… not in 0.1.0 |
+| 07 Side by Side | built and tested as Side by Side (plan 29 J); a server and the folder beside it (2026-09-21) |
+| 08 Mirror | built and tested, local and SFTP (one FTPS run where `vsftpd` is installed); Edit rules… built 2026-09-21 (the row said "not in 0.1.0" — D16 was overtaken in phase 6) |
 | 09 Omarchy integration | built; portal and FileManager1 hand-verified on the installed package; D-Bus activation not in 0.1.0 |
 | 10 Polish and packaging | built; installed from the package once |
 | 11 Testing | daemon, QML and e2e layers built; visual, layout and shell-performance layers not in 0.1.0; pointer e2e per phase 5's answer |
@@ -633,12 +642,12 @@ If that is too long, the cut line, in the order it costs least: phase 7 down to 
 | 17 Devices | not in 0.1.0 (plugins stay in the tree; detection off) |
 | 18 Share | built and tested; each way sent once for real |
 | 19 AI query | not in 0.1.0 |
-| 20 Settings | 8 pages built and tested; Locations, Open in, Plugins not in 0.1.0 |
+| 20 Settings | 8 pages built and tested (General, Search, Share, Git, Project mode, AI, Omarchy, About); Keys, Locations, Open in, Devices not in 0.1.0 |
 | 21 View memory | built and tested |
 | 22 Access heat map | built and tested; Accessed field not in 0.1.0 |
 | 23 UI refinement | built and tested |
 | 24 Mirror view | built as Side by Side; mirror bar, Swap, "last mirrored" dropped |
-| 25 SMB | built, hand-verified against one SMB server (SMB2 or later; WebDAV is not in 0.1.0); no automated test |
+| 25 SMB | built and tested against a throwaway `smbd` and the real GVfs stack (`real_smb.rs`, `smb.py`); SMB2 or later; WebDAV not in 0.1.0 |
 | 26 Benchmarks | daemon half built and in CI, with a transfer profile; shell half not in 0.1.0 |
 | 27 Gallery | built and tested; zoom, video poster, remote large preview not in 0.1.0 |
 | 28 UI test coverage | built; drags by IPC hook and by hand |

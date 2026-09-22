@@ -28,5 +28,6 @@ def run(ctx):
     r = d.call("Sort", lid=lid, role="size", order="desc")
     c.check("sort by size replies once the rows are enriched", "ok" in r, r)
 
-    d.ok("Prefetch", uri=uri)
+    # The folder is already open above, so it is in the cache: no Prefetch needed (the request
+    # was removed 2026-09-22; a cold open of 20,000 files answers its first rows in 2 ms anyway).
     c.check("a second open is served from the cache", d.ok("Open", lid=ctx.lid(), uri=uri).get("cached") is True)

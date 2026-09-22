@@ -1,6 +1,25 @@
 # 16 — Project mode
 
+**Status:** built, hand-verified; the rest of the plan not in 0.1.0.
+
 Builds on: `02-shell-and-views.md` (views, IPC), `14-open-in.md` (entries, sessions, placement), `13-code-viewer-and-editor.md` (editor entry), `15-git-status.md` (badges), `09-omarchy-integration.md` (Hyprland).
+
+## As built (D2, 2026-09-21)
+
+The audit called this a prototype with four probable defects. The decision was to fix those four, verify by hand and ship it as it is; everything else in this plan is post-0.1.0.
+
+**The four, all fixed (2026-09-19) and tested (`tst_ProjectTree`, `tree::tests`, `columns_ops.py`):**
+
+1. **`e` on a folder did nothing.** Neovim's preset would not take a folder, and the error was dropped — a tool that will not start now says so in a toast.
+2. **The windows could be given to the wrong role.** Each tool's terminal has a class of its own (`kiki-tool-<id>`), `Arrange` matches by pid first and never gives one window to two roles, and kiki's own window is found by its pid rather than by a class it does not have.
+3. **There may have been no keyboard way out.** The tree takes the keyboard focus while it is up, and `Ctrl+Shift+P` leaves as well as `Esc`.
+4. **A second agent beside the first.** Asking again for a terminal tool already running *in the same folder* returns that one instead of spawning another.
+
+**And one that was not kiki's** (phase 7): "leaving project mode left the window with no keyboard" was the test bench — under cage the two terminals project mode starts took the compositor's keyboard, which on a desktop is simply the new terminal having the focus. The harness gives the flows tools that start, draw nothing and end; `columns_ops.py` then checks the keys are back *and* that a real chord is heard.
+
+**What exists**: the header (project name, a branch capsule with ahead-count, Leave), the filter, the virtualised tree with git badges, `OpenTree` / `TreeExpand` / `TreeFilter` / `TreeReveal` / `Arrange`, the editor and agent slots, `[project] width | arrange | agent`, and the keys `j`/`k`, arrows, `Space`, `h`/`l`, `Enter`, `Alt+Enter` (send to the agent), `/`, `Esc`, `Ctrl+Shift+P`.
+
+**What is not in 0.1.0**: the 48 px strip and `[project] tree = false | "hide"`; remembered expansion and last file (`projects.toml` is not written); the tree's own file operations (`n`, `N`, `F2`, `Del`) and `r` to reveal the editor's current file — `reveal` arrives from the editor over IPC instead; and every performance budget in Verification, none of which has been measured.
 
 ## Goal
 

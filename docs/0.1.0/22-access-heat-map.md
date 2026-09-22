@@ -1,20 +1,22 @@
 # 22 — Access heat map
 
+**Status:** built and tested; the inspector's Accessed field is not in 0.1.0.
+
 Builds on: `01-daemon-and-listing.md` (`Meta`, sort roles), `21-view-memory-and-columns.md` (optional list columns), `20-settings.md` (General page).
 
 ## Goal
 
 A glance at a folder shows what was touched recently. The **Accessed** column renders each file's last access time as a relative phrase over a heat swatch, so the files you were working on stand out from the ones you have not opened in months, and the column sorts so "most recently used" is one click away.
 
-**Status**: built. `Meta.atime`, the `atime` sort, `atimeSupport` per volume, the access log (`kikid/src/access.rs`), the Heat source setting and the hollow fallback swatch are in; rows carry `opened` from the log.
+Built: `Meta.atime`, the `atime` sort, `atimeSupport` per volume, the access log (`kikid/src/access.rs`), the Heat source setting and the hollow fallback swatch; rows carry `opened` from the log.
 
 ## Rendering
 
 - **Text**: a relative phrase, not a date: "just now" (under 45 s), "5 min ago", "3 h ago", "2 days ago" (up to two weeks), "3 weeks ago", "5 months ago", "2 years ago". A dash when the time is unknown.
-- **Heat**: a rounded swatch behind the text in the theme's accent colour. Alpha is `0.05 + 0.45·t²` where `t = 1 − log(hours) / log(hours in a year)`, clamped to 0..1: fully saturated for the last hour, still clearly warm for today, faint for last month, gone at about a year. The log scale is what makes the difference between "today" and "this week" visible while a year and two years look the same, which is how people think about recency.
+- **Heat**: a rounded swatch behind the text in the theme's accent colour. Alpha is ~~`0.05 + 0.45·t²`~~ **`0.05 + 0.45·t^1.5`** where `t = 1 − log(hours) / log(hours in a year)`, clamped to 0..1: fully saturated for the last hour, still clearly warm for today, faint for last month, gone at about a year. The log scale is what makes the difference between "today" and "this week" visible while a year and two years look the same, which is how people think about recency. **Amended 2026-09-21:** the exponent is 1.5, not 2, as `Format.heat` has it — this plan's own three points (0.5 at an hour, about 0.28 at a day, 0.05 at a year) are what fix it; squaring undershoots the middle one at 0.24.
 - **Selection**: the swatch hides on a selected row so the selection colour stays readable.
 - **Sorting**: `Sort { role: "atime" }`; the header shows the arrow like any other column. Sorting by access time needs `Meta` for every row, so it goes through `Enrich` like size and modified.
-- **Icon and columns views**: no swatch in 0.1.0. The inspector's General tab shows the same relative phrase as an "Accessed" field.
+- **Icon and columns views**: no swatch in 0.1.0. ~~The inspector's General tab shows the same relative phrase as an "Accessed" field.~~ **Amended 2026-09-21:** the inspector has no Accessed field and is not getting one in 0.1.0 — the column is where access time is read.
 
 ## Where the time comes from
 
@@ -38,11 +40,11 @@ General page: the **Accessed** column switch (from plan 21), **Heat source** (Fi
 - `Meta.atime` in every row and `Stat` reply (plan 01).
 - `Sort { role: "atime" }`.
 - `Volumes` items gain `atimeSupport`.
-- `AccessLog { uri } -> { opened: u64 }` and `ClearAccessLog {}`; the daemon appends to the log inside `Launch`, `OpenIn`, `OpenText` and `Share`.
+- `AccessLog { uri } -> { opened: u64 }` and `ClearAccessLog {}`; the daemon appends to the log inside `Launch`, `OpenIn` and `Share`. (`OpenText` went with the code viewer — plan 31, D1.)
 
 ## Verification
 
-- `Format.relative` and `Format.heat` unit tests: the phrase boundaries above; alpha is 0.5 at one hour, about 0.28 at a day, about 0.05 at a year, and never above 0.5 or below 0.05.
+- `Format.relative` and `Format.heat` unit tests: the phrase boundaries above; alpha is 0.5 at one hour, about 0.28 at a day, about 0.05 at a year, and never above 0.5 or below 0.05 (`tst_Format`).
 - Reading a file with `cat` on a `strictatime` mount changes its swatch to full within one listing refresh; on `relatime` a second read within the day does not.
 - With Heat source = kiki opens, opening a file through Open with… updates its swatch immediately while `cat` from a terminal does not; Clear access log returns the column to filesystem times.
 - Sorting by Accessed on a 10,000-entry folder finishes within the plan-01 `Enrich` budget.

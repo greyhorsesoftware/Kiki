@@ -1,5 +1,7 @@
 # 18 — Share
 
+**Status:** built and tested; each way sent once for real.
+
 Builds on: `06-remote-locations.md` (plugin processes, framing, keyring), `04-operations-and-undo.md` (jobs, Activity), `05-archives.md` (compressing folders), `14-open-in.md` (menus, settings page pattern).
 
 ## Goal
@@ -12,7 +14,7 @@ A share plugin is an executable named `kiki-plugin-share-<id>` in the plugin dir
 
 | Request | Fields | Reply |
 |---|---|---|
-| `Describe` | | `{ id, name, icon, version, accepts: { files: bool, folders: bool, multiple: bool, maxBytes: u64 \| null }, targets: "list" \| "search" \| "none", form: [Field], secretFields: [string], compose: [Field] }` |
+| `Describe` | | `{ id, name, icon, version, accepts: { files: bool, folders: bool, multiple: bool, maxBytes: u64 \| null }, targets: "list" \| "search" \| "none", form: [Field], secretFields: [string], compose: [Field], requires: [string] }` — `requires` names the programs the plugin needs on `PATH`; the daemon checks them each time it lists the plugins and adds **`unavailable: "<name> is not installed"`** to what the shell sees. (`defaultEnabled` / `off_by_default` went with LocalSend, 2026-09-21: nothing ships switched off any more.) |
 | `Configure` | `config`, `secrets` | `{}` or `Invalid { field, message }` (validates and stores nothing; the daemon keeps config and keyring) |
 | `Targets` | `config`, `secrets`, `query: string \| null` | `{ targets: [{ id, name, detail, online: bool, icon }] }` (for `"search"`, filtered by `query`) |
 | `Share` | `id` (request), `config`, `secrets`, `uris: [Uri]`, `target: string \| null`, `compose: { key: string } ` | streamed `Progress { id, done, total, bytes, bytesTotal, status }` then `{ result: "sent" \| "opened" \| "queued", detail: string \| null }` |
@@ -47,12 +49,14 @@ Nothing ships switched off any more, so a plugin no longer says how it ships: `o
 
 ## UI
 
-- **Share button** in the toolbar (share icon) with a dropdown: one row per installed plugin, then, expanding on hover or right arrow, that plugin's targets; the button itself reopens the last used target. Disabled with a tooltip when the selection is empty or exceeds a plugin's `accepts`.
-- **Context menu**: "Share ▸" submenu with the same structure.
-- **Share sheet**: a small dialog with the selection summary (count, total size, "3 folders will be compressed"), the plugin's `compose` fields, the chosen target, Cancel and Send. Skipped entirely when `compose` is empty and a target was chosen from the menu.
-- **Progress** appears in the Activity popover and the shortcut bar as a job; a toast confirms `sent`, `opened` or `queued` with the target name.
-- **Settings page "Share"**: installed plugins with detected state, each plugin's form, enable switch, and reorder for the menu.
-- **Key**: `Alt+S` opens the Share dropdown on the selection.
+**Amended 2026-09-21 — as built.** What ships is the plugins the plugin directory holds: `plugins/kiki-plugin-share-mail` and `-share-tailscale`, and nothing else (LocalSend's directory is deleted).
+
+- ~~**Share button** in the toolbar (share icon) with a dropdown~~ **There is no toolbar Share button.** The ways in are the context menu and `Alt+S`, which raise the same list.
+- **Context menu**: ~~a "Share ▸" submenu~~ **each way of sending is a row of the menu itself** — "Send via Mail", "Send via Tailscale ▸" — rather than all of them behind one "Share ▸": one level less to the device, and a plugin's targets fit in the one submenu the menu has. Targets are asked for when the row is opened; the online ones come first as the plugin sorted them, offline ones are greyed, and "Nothing found" or the plugin's own error takes their place when there are none. A plugin whose program is missing **stays in the menu, dimmed**, with "not installed" at its right (`unavailable`, below). A plugin that names no targets is sent to at once — Mail opens a composer, and a form in front of that only asks for what the composer is about to ask for.
+- **Share sheet** (`ui/ShareSheet.qml`): the selection summary, the plugin's `compose` fields, the chosen target, Cancel and Send. Skipped when the send can just go: the sheet opens if the daemon says more is needed.
+- **Progress** appears in the Activity popover as a job; a toast confirms with what the plugin said. Tailscale's reads **"Shared via tailscale: sent — 1 file to davids-macbook-pro, waiting in its Tailscale"** — "sent" alone left nothing to go on when a file kiki had handed over did not turn up, so the plugin names the peer and where it is waiting, and a refusal carries Tailscale's own words. The same line goes into the job's log.
+- **Settings page "Share"**: installed plugins with an enable switch and each plugin's form, a secret field travelling as a secret (`tst_SettingsWindow`). ~~detected state, and reorder for the menu~~ — no reorder; the menu is in the order the plugins are found.
+- **Key**: `Alt+S` opens the list on the selection.
 
 ## Daemon
 
@@ -63,7 +67,7 @@ Nothing ships switched off any more, so a plugin no longer says how it ships: `o
 | `Share` | `plugin`, `uris`, `target?`, `compose` | `{ job }` (a plan-04 job: fetch and compress if needed, then the plugin's `Share`; progress on `JobEvents`) |
 | `ShareConfigure` | `plugin`, `config`, `secrets` | `{}` |
 
-Event: `SharePluginsChanged {}`.
+Event: ~~`SharePluginsChanged {}`.~~ **Amended 2026-09-21 (D10): never built, never emitted; out of `API-DAEMON.md` too.** The list is re-read when a window asks for it, which is on open and after a `ShareConfigure`.
 
 **IPC added**: `share(plugin?, target?)`.
 

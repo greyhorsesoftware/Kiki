@@ -1,5 +1,7 @@
 # 26 — Benchmarks
 
+**Status:** the daemon half is built and in CI, with a transfer profile; the shell half is not in 0.1.0 (D20). Scrolling has a measurement of its own — `scroll_perf` and `bench/scroll-history.jsonl`, below.
+
 Builds on: `01-daemon-and-listing.md` (the listing budgets), `11-testing.md` (the performance table and the e2e harness), `10-polish-and-packaging.md` (the performance pass).
 
 ## Goal
@@ -19,6 +21,16 @@ The speed claims in plans 01 and 11 become numbers that are measured the same wa
 | `all` | one of each under the given directory | one `run` measures everything |
 
 Files are one to six bytes so the trees are cheap to create and metadata dominates, which is what kiki's hot paths touch.
+
+**Profiles added since, asked for by name and not part of `all`** — they are gigabytes, or a flow's fixture:
+
+| Profile | Contents | Asked for by |
+|---|---|---|
+| `flat100k` | 100,000 files in one folder | `scroll_perf` |
+| `gallery1k` | 1,000 photographs at 1600×1200, none thumbnailed | `gallery_perf` (plan 27) |
+| `transfer` | ~50,000 files in 2,000 folders eight deep, 2.5 GB in two large files, plus the awkward cases — empty folders, a zero-byte file, a read-only file, a symlink, a name with a newline, a name that is not UTF-8, times over ten years, deterministic content, a `MANIFEST.txt` | `transfer_local`, `transfer_remote` |
+| `transfer-lite` | the same shape at a tenth (5,000 files, 415 MB) — the flows' default | the same |
+| `transfer-tiny` | a tenth again, for a protocol that pays a connection per file | FTPS runs |
 
 ## Memory work driven by the first run
 
@@ -95,7 +107,16 @@ Against the plan-01 acceptance:
 
 ## Shell half (Omarchy, plan 11 harness)
 
-First paint after the first chunk, scroll frame time over 200k rows, key-to-selection latency, window open to home painted, and the mirror scan against the mock SFTP server. The driver writes the same JSON shape with a `shell` profile so the compare command covers both halves in one file.
+~~First paint after the first chunk, scroll frame time over 200k rows, key-to-selection latency, window open to home painted, and the mirror scan against the mock SFTP server. The driver writes the same JSON shape with a `shell` profile so the compare command covers both halves in one file.~~
+
+**Not in 0.1.0** (plan 31, D20): a suite that cannot be built in time must not hold the tag. What was built instead is the one measurement that was hurting — **scrolling**.
+
+## Scrolling, measured and recorded per build (2026-09-20)
+
+- **`tests/e2e/flows/scroll_perf.py`**, by name like `gallery_perf`, on the `flat100k` fixture: List, Icon and Columns each scrolled top to bottom twice through `UI.ScrollProbe` (IPC `scrollRun <ms>` / `scrollStats`) — 20 s, 5,000 rows a second, the pace a hand makes; and 4 s, 25,000 rows a second, a fling no hand makes. It reports frames, average / p95 / worst frame, frames over 33 ms, frames in which a row in view was not there, the time to fill in after stopping, the requests made, and where an answer's time went (`waitMs` / `storeMs` / `bindMs`).
+- **Budgets are on the 20-second pace only** — under 5 % of frames blank, filled in within 2 s of stopping, no frame a second long. The fling is printed, not asserted: under the software renderer its spread is too wide for a tolerance to mean anything.
+- **Every run is recorded**, local runs included (owner, 2026-09-20): one line of JSON appended to **`bench/scroll-history.jsonl`**, kept in the repository — the commit and whether the tree was dirty, the machine and the renderer, the two paces and each view's numbers. A run prints how it differs from the last one on the same machine, renderer and paces; a software-rendered run and one on a GPU are never compared. `KIKI_SCROLL_HISTORY` moves the file; empty records nothing.
+- **`make scroll-perf`** builds, runs and records. **`make scroll-history`** (`tests/e2e/scroll_history.py`, `--all` for every machine) prints the record oldest first. Neither fails on a regression yet — once there are a few dozen lines the 20-second pace can be given a tolerance, like `kikid bench compare`.
 
 ## Not measured here
 
@@ -106,3 +127,5 @@ Real remote servers, real removable media, and real photo libraries; those are t
 - `bench::tests`: `compare` flags only slower timings and only beyond the tolerance; a 300-file tree produces every metric and `entries` counts files and folders.
 - `kikid bench gen all` on a tmpfs completes in under a minute; `run` on the same trees prints all four profiles and writes valid JSON.
 - Introducing a deliberate `sleep(50ms)` in phase 1 makes `compare` fail against the checked-in baseline.
+- `make scroll-perf` is green on `flat100k` and appends a line to `bench/scroll-history.jsonl`; `make scroll-history` prints it against the previous run on the same machine.
+- Transfer throughput and the daemon's peak RSS are written by `transfer_local` / `transfer_remote` to `tests/e2e/out/transfers.json`, in this file's JSON shape, beside the baselines — recorded, not asserted.

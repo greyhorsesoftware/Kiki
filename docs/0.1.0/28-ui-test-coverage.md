@@ -1,5 +1,7 @@
 # 28 — UI test coverage for file operations
 
+**Status:** built; drags are covered by an IPC hook (`shell drop`), by real in-process drags under Qt's `minimal` platform (`tests/qml-drag/tst_RealDrag.qml`, part of `make test`), and by hand on Hyprland.
+
 Builds on: `11-testing.md` (the layers, the harness, the design rules), `02-shell-and-views.md` (keymap, component inventory), `04-operations-and-undo.md` (the operations and the journal), `23-ui-refinement.md` (context menu, shortcut bar).
 
 ## Goal
@@ -26,13 +28,15 @@ No compositor, about a second for the suite, runs on every push. This is where m
 
 **The recording socket.** `tests/qml/stubs/Quickshell/Io/Socket.qml` swallows writes. Replace it with one that records every frame and lets the test push replies and events back, and add `tests/qml/FakeDaemon.qml` over it: `listing(rows)` to seed a folder, `lastRequest()`, `expect(op)`, `emitEvent(e)`. A test then reads: select row 2, press `F2`, type `notes.txt`, press `Enter`, assert one `Submit { op: "rename", uri, name }`. This single piece unblocks everything else in this layer.
 
-**Drag and drop, honestly.** The rows set `Drag.dragType: Drag.Automatic` (`ListRow.qml`, `IconPane.qml`), which hands the drag to the compositor, so a synthetic pointer cannot drive it in-process — activating it in a test would start a real platform drag and block the run. What the drag *offers* (`dragMime`) and what a drop *decides* (`dropInto`: move within a scheme, copy across one, `Ctrl` forces copy, self-drops refused, and the job it submits) are covered here by handing `dropInto` a DragEvent-shaped object. The pointer half — press, move, release over a real target — is a layer B flow.
+**Drag and drop, honestly.** The rows set `Drag.dragType: Drag.Automatic` (`ListRow.qml`, `IconPane.qml`), which hands the drag to the compositor, so a synthetic pointer cannot drive it in-process — activating it in a test would start a real platform drag and block the run. What the drag *offers* (`dragMime`) and what a drop *decides* (`dropInto`: move within a place, copy across one, `Ctrl` forces copy, self-drops refused, and the job it submits) are covered here by handing `dropInto` a DragEvent-shaped object.
+
+**Amended 2026-09-20/21: the platform decides, and `minimal` performs a real drag.** Under `offscreen` a drag ends the moment it begins; under **`minimal`** Qt performs one in-process, so a test can press, move, hold a key and look. `tests/qml-drag/` runs under it as the second half of `make test-qml` — `tst_RealDrag.qml`, 11 real drags: no key within a disk moves; `Ctrl` copies; `Alt` copies; `Shift` within a disk moves; a key pressed **mid-drag** decides the drop; a refused target shows refusing during the drag and takes nothing; across machines no key and `Shift` both copy; the receiving pane says it received; a pressed row of a selection carries the whole selection; Escape drops nothing. It found what no hand-built event could: **a real `DragEvent` has no `modifiers` property**, so every drop read `undefined` and `Ctrl` and `Shift` had never once reached the code, while 81 e2e checks and two QML tables passed on a field that does not exist. The hand-built events are shaped as Qt shapes a real one now (`proposedAction`, no `modifiers`).
 
 **Addressing.** Every element a test clicks gets an `objectName`, and the names are a convention, not ad hoc: `row-<index>`, `tile-<index>`, `column-<depth>`, `sidebar-<name>`, `menu-<label>`, `dialog-<name>`, `field-<key>`, `chip-<key>`. The same names serve the IPC geometry query in layer B and the layout assertions in plan 11.
 
 **Files to add**, one per component, each covering the keyboard path and the mouse path:
 
-`tst_ListPane`, `tst_IconPane`, `tst_ColumnsPane`, `tst_GalleryPane`, `tst_RenameEditor`, `tst_ContextMenuActions`, `tst_Clipboard`, `tst_DragDrop`, `tst_CollisionPrompt`, `tst_Toolbar`, `tst_Breadcrumb`, `tst_FilterBar`, `tst_Inspector` (permissions grid ↔ octal), `tst_ShortcutsOverlay`, `tst_LocationDialog`.
+`tst_ListPane`, `tst_IconPane`, `tst_ColumnsPane`, `tst_GalleryPane`, `tst_RenameEditor`, `tst_ContextMenuActions`, `tst_Clipboard`, `tst_DragDrop`, `tst_CollisionPrompt`, `tst_Toolbar`, `tst_Breadcrumb`, `tst_FilterBar`, `tst_Inspector` (permissions grid ↔ octal), ~~`tst_ShortcutsOverlay`~~ (the overlay was removed 2026-09-21 — it duplicated the rebinding window; plan 23), `tst_LocationDialog`. The suite as it stands is wider than this list — `ls tests/qml` is the inventory.
 
 **The trap, written down so it is not rediscovered:** a `TestCase` that drives pointer or key input must declare `when: windowShown` and `visible: true`. Without them the events are delivered nowhere and every assertion fails with a zero count, which reads exactly like a broken component.
 
@@ -86,7 +90,7 @@ Plus the cases that actually break file managers, each a flow of its own: a name
 
 ## The focus rule
 
-A keymap that stops working is untestable and unusable, and the shell lost its focus twice during this plan's work. The rule is the binding and nothing else: **`Shell.qml`'s keymap item owns the focus whenever no overlay, editor or dialog does**, and the binding names every legitimate taker — filter, search, breadcrumb, menus, dialogs, the AI panel, project mode and the inline rename editor.
+A keymap that stops working is untestable and unusable, and the shell lost its focus twice during this plan's work. The rule is the binding and nothing else: **`Shell.qml`'s keymap item owns the focus whenever no overlay, editor or dialog does**, and the binding names every legitimate taker — filter, search, breadcrumb, menus, dialogs, ~~the AI panel,~~ project mode and the inline rename editor. (The in-app AI panel was removed 2026-09-19 — plan 31, decision 4.)
 
 Taking the focus back whenever the item loses it was tried and **removed**: it races every legitimate hand-over. The inline editor opens, the focus moves to it, the grab pulls it straight back, the editor's own "focus lost" rule closes it, and `F2` does nothing perhaps one time in three. Quickshell's window reports no activation property to hang a safer condition on. If the shell is ever seen not to recover the focus after a compositor overlay takes the seat, the fix belongs on window activation, with a flow that proves it — not on a blanket re-grab.
 
@@ -102,7 +106,7 @@ Every shell flow now starts with `keyFocus` as a precondition and stops if it is
 2. Layer A files, in the order of the matrix.
 3. `cage`, `Makefile`, driver rework (fixtures, `wait_for`, `diff -r`).
 4. Layer B flows, one per matrix row, then the edge cases. **Done**, except the rows that need a pointer: drag to move or copy, the toast's undo button, and the permissions grid.
-5. `wlrctl` and the three flows layer A cannot reach: drag out of the app, rubber-band selection, click-at-a-point. **Done for clicks**; drag still wants a pointer that can hold a button down.
+5. `wlrctl` and the three flows layer A cannot reach: drag out of the app, rubber-band selection, click-at-a-point. **Done for clicks**; ~~drag still wants a pointer that can hold a button down~~ — **amended 2026-09-20:** no headless compositor gives a real drag with the tools we have, so drags are proven by the IPC hook and under `minimal`, and the physical press-move-release is a phase 10 line. Icon view's lasso is `tst_IconPane`'s (2026-09-21).
 6. CI job.
 
 Steps 1 and 2 give every operation both input methods on every push; 3 and 4 prove the bytes moved.
@@ -119,7 +123,7 @@ Steps 1 and 2 give every operation both input methods on every push; 3 and 4 pro
 
 Flows so far: `listing` (first rows inside 100 ms, natural order, the count reaching 10 000, metadata for the live window, sort after enrichment, the second open served from the cache), `trash` (trash, the `trashinfo` record, undo byte for byte, delete for good), `archive` (compress, preview the members, extract, and the tree that comes out equals the one that went in), `ops_menu` (new folder, copy/paste, cut/paste, trash, undo — each asserted as a tree difference), `ops_keyboard` (the same by `Ctrl+C`/`Ctrl+V`, `F2`, `Ctrl+Shift+N`, `Del`, `Ctrl+Z`).
 
-*What the end-to-end run covers now* (**85 checks, green three runs in a row**):
+*What the end-to-end run covered on 2026-09-19* (**85 checks, green three runs in a row**) — the table is kept as the record of that day; `ls tests/e2e/flows` is the inventory now, and what has been added since is listed under it:
 
 | Flow | What it proves |
 |---|---|
@@ -137,13 +141,26 @@ Flows so far: `listing` (first rows inside 100 ms, natural order, the count reac
 | `view_state` | `Ctrl+H`, the filter narrowing and clearing, Escape closing the filter bar, `Ctrl+1`/`Ctrl+2` keeping the selection |
 | `pointer_ops` | click selects, click moves the selection, double click opens a folder, right click opens the menu and a menu item runs, Undo from the toast, and chmod by ticking the permissions grid and clicking Apply — 14 checks, green against a real session |
 
+**Added since** (plan 31, phases 2–8), each in the default run unless it says otherwise: `git_status`, `launcher`, `two_windows`, `listing_live`, `activity`, `side_by_side`, `columns_ops`, `mirror_local`, `mirror_sftp` (needs `sshd`; its FTPS half needs `vsftpd`), `remote_transfers`, `drag_between_panes`, `smb` (needs `smbd`), and by name `scroll_perf`, `gallery_perf`, `transfer_local`, `transfer_remote`. A flow whose server is not installed skips by name rather than failing.
+
+Two things the harness learned the hard way, both of which made a run lie:
+
+- **cage does not hand back its client's exit status**, so `run.sh` reported 0 whatever the driver said — a whole-suite run printed "653 passed, 1 failed" and `make` called it a pass. The driver's verdict is written down inside the compositor and read outside it; no verdict at all is a failure.
+- **cage stays up while anything is drawing in it**, so two detached terminals started by a project-mode check outlived the shell and the run sat until the compositor's deadline (`Error 124`, with every check passed). `run.sh` now ends whatever was started inside the run, known by the run's own `XDG_RUNTIME_DIR`.
+
 **The pointer.** `wlrctl` drives it through the wlroots virtual-pointer protocol, and three things had to be true before a click meant anything:
 
 - **The compositor has to deliver the events.** cage accepts the protocol and then logs `wlr_virtual_pointer_v1 cannot be mapped to an output device`: the events go nowhere. `pointer_ops` therefore `probe()`s before it runs — one click, and if the aimed row is not the row that ends up selected, the flow steps aside with the reason instead of reporting eight failures that say nothing about kiki. Under cage it skips; against a real compositor it runs.
 - **The aim has to be absolute.** `wlrctl` only moves relatively, so the harness parks at the corner and steps to the target — and where the compositor can report the cursor (`KIKI_E2E_CURSORPOS_CMD`, `hyprctl cursorpos`) it reads back and corrects until the pointer is actually there, because on a multi-output desktop "park at the corner" clamps to the current output instead.
 - **The target has to be the right one.** A name search finds pooled list delegates that still answer to the name they had in the last folder, which put every row click one row out. `rowGeometry(i)` asks the view which delegate is showing row `i` (`ListView.itemAtIndex`), and the aim became exact.
 
-**Dragging is still out of reach**: `wlrctl` has only `click`, which presses and releases together, and kiki's rows hand their drag to the compositor (`Drag.Automatic`). That needs `ydotool` (uinput, so the compositor sees an ordinary input device) — the last three matrix rows wait on it.
+~~**Dragging is still out of reach**: `wlrctl` has only `click`, which presses and releases together … the last three matrix rows wait on it.~~
+
+**Amended 2026-09-20: dragging is covered, by three routes instead of a virtual pointer** (plan 31, decision 5 and phase 5):
+
+- **An IPC hook.** `shell drop <uris> <dest> <modifiers>` hands `Pane.dropInto` an object shaped like the `DragEvent` Qt would give it, so everything a drag does after the button goes down is what runs, and it answers what the drop decided (`{accepted, action, items}`) so a flow need not guess. `tests/e2e/flows/drag_between_panes.py` — in the default run — drives every local / SFTP / FTPS pair in both directions and each to itself, plain and with each modifier, a multiple selection, the refusals, and drops onto `trash:///` from every end: **98 checks**, each asserted on disk. Two more IPCs make that possible without a keyboard: `shell question [yes|no]` reads and answers the yes/no dialog, and `shell action <id>` runs a keymap action as its key would. (The URIs go newline-separated, as a `text/uri-list`: Quickshell's IPC strips square brackets out of an argument, so JSON does not survive the trip.)
+- **Real in-process drags under `minimal`**, above.
+- **By hand on Hyprland**, on plan 31's phase 10 checklist: the cursor the theme gives for copy, move and "not allowed"; a right-button drag; Escape mid-drag; a drop into the unfocused pane; the key table confirmed under QtWayland.
 
 *Four traps the harness had to learn*, all of which made checks pass while nothing happened:
 - **A fresh config means the first-run dialog is up**, over everything, swallowing every key. `run.sh` answers that question in `settings.toml` before the shell starts — a test run must never be asked to change the machine's defaults.

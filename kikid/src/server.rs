@@ -381,10 +381,6 @@ impl Client {
             "Enrich" => self.enrich(b, id),
             "Close" => self.close(b),
             "Refresh" => self.refresh(b),
-            "Prefetch" => match parse_uri(b, "uri") {
-                Ok(u) => listing::open(&u).map(|_| Some(Value::obj().done())).map_err(vfs_err),
-                Err(e) => Err(e),
-            },
             "Favorites" => Ok(Some(Value::obj().v("items", crate::config::favorites()).done())),
             "SetFavorites" => match b.get("items").and_then(Value::as_arr) {
                 // Every window, not just the one that asked: a second window's sidebar listens

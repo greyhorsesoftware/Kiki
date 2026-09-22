@@ -1,5 +1,7 @@
 # 01 — Daemon, string pool and windows
 
+**Status:** built and tested; perf budgets measured in `bench`, not asserted; Prefetch struck.
+
 Builds on: nothing. Everything else builds on this.
 
 ## Goal
@@ -8,26 +10,33 @@ A lean Rust daemon (`kikid`) that enumerates any directory into a string pool wi
 
 ## Design
 
-**Crate layout** (`kikid/`, one binary, minimal graph per CORE.md):
-- `src/json.rs` — writer and reader for this protocol's messages. The reader accepts exactly the grammar the protocol uses (objects, arrays, strings, integers, booleans, null) and is fuzzed.
+**Crate layout** (`kikid/`, one binary, minimal graph per CORE.md). **Amended 2026-09-21 — the paths as they are:**
+- ~~`src/json.rs`~~ `crates/kiki-json` — writer and reader for this protocol's messages, a crate of its own re-exported as `kikid::json`. The reader accepts exactly the grammar the protocol uses (objects, arrays, strings, integers, booleans, null); it is property-tested and fuzzed (`crates/kiki-json/tests/property.rs`).
 - `src/proto.rs` — message types and framing as specified in `API-DAEMON.md` (`u32` LE length, `u8` type, payload; type 0 JSON, type 1 binary).
-- `src/vfs/` — the `Backend` trait, `local.rs` (rustix: `getdents64`, `statx`, `openat`, `renameat`, `unlinkat`, `mkdirat`, `copy_file_range`, `fchmodat`, `utimensat`), and `uri.rs` (the resolver).
+- `src/vfs/` — the listing source trait (below), `local.rs` (rustix: `getdents64`, `statx`, `openat`, `renameat`, `unlinkat`, `mkdirat`, `copy_file_range`, `fchmodat`, `utimensat`), `remote.rs` (a plugin session as a listing source) and `uri.rs` (the resolver).
 - `src/string_pool.rs` — the listing string pool.
-- `src/listing.rs` — phase 1 scan, phase 2 windows, sort and filter, the listing cache.
+- ~~`src/listing.rs`~~ `src/listing/` — `scan.rs` (phase 1 and the in-place patch), `view.rs` (sort and filter), `rows.rs`, `stats.rs` (phase 2), `cache.rs` (the listing cache) and `deco.rs` (thumbnail and git decorations, keyed by name; phase 4b).
 - `src/watch.rs` — inotify via the kernel API on one fd, one watcher thread.
-- `src/server.rs` — Unix socket at `$XDG_RUNTIME_DIR/kiki.sock`; a reader thread and a writer thread per connection, events fan out through a channel to the writer.
+- `src/server.rs` — Unix socket at `$XDG_RUNTIME_DIR/kiki.sock` (`KIKI_SOCKET` overrides it); a reader thread and a writer thread per connection, events fan out through a channel to the writer.
 
 **URIs and the resolver**: `Uri` is a validated newtype (scheme, authority, percent-decoded path). `resolve(uri) -> (BackendRef, PathBuf)`: `file://` and bare absolute paths resolve to the local backend; other schemes resolve to a plugin process by authority (plan 06). `parent()`, `join(name)` and `display()` (`~`-shortened for local, `name/path` for a location) feed breadcrumbs.
 
-**`Backend` trait** (local implements it directly; plugin processes implement it by protocol, plan 06):
+**The backend trait** (local implements it directly; plugin processes implement it by protocol, plan 06). **Amended 2026-09-21 — as built it is `vfs::Source`, and it is a *listing* trait, not the whole backend:**
 
 ```
-scan(path) -> stream of (name, kind) chunks          phase 1: never stats
-stat(path) -> Meta                                    phase 2: size, mtime_ms (0 = unknown), mode, uid, gid, digest
-read(path) -> byte stream        write(path) -> byte sink
-mkdir, rename, delete (file or empty dir), set_mtime (best-effort), chmod (when `mode` capability)
-capabilities() -> { trash, set_mtime, mode, real_dirs, digest_kind, separator }
+trait Source                                          vfs/mod.rs
+  scan(&mut sink(Vec<RawEntry>)) -> count             phase 1: name, kind, and Meta where it is free
+  stat_child(name) -> (Meta, EntryType)               phase 2
+  watchable() -> bool                                 inotify can follow it (local only)
+  still_at(path) -> bool                              the handle is still that directory
+  cancel()                                            stop a scan nobody is looking at
+
+impls: local::DirHandle, remote::RemoteDir (one plugin session and a path)
+Meta      = { size, mtime_ms, atime_ms (0 = unknown), mode, uid, gid, hidden }
+Capabilities = { trash, set_mtime, mode, real_dirs }   — no digest_kind, no separator
 ```
+
+Reads, writes and every mutation sit beside it rather than in it: `vfs::local` and `ops.rs` for this machine, and `locations::Session` / `plugin.rs` for a server, which is what `transfer.rs` and the mirror engine call. A remote path is therefore not "the same trait over a pipe" — the listing is, and the operations are their own code path.
 
 **String pool** (`string_pool.rs`): one `Vec<u8>` of names, a `Vec<u32>` of offsets, a `Vec<u8>` of kinds (`Dir`, `File`, `Link`, `Other` from `d_type`, plus an extension-derived kind byte for icons), and a `Vec<Option<Meta>>` filled by phase 2. Sort orders are `Vec<u32>` index arrays over the string pool, one per (role, order) requested; a filter is a `Vec<u32>` of matching indices. A 200,000-entry directory is a few megabytes and never reallocates names.
 
@@ -38,7 +47,7 @@ capabilities() -> { trash, set_mtime, mode, real_dirs, digest_kind, separator }
 - *Free metadata.* A backend whose `scan` can return metadata at no extra cost (SFTP readdir carries attributes; FTPS `MLSD` does; a future S3 listing does) fills `Meta` during phase 1, so remote windows and mirror scans never pay per-file round trips. Local `getdents64` cannot, so local stays two-phase.
 - *Operations that need everything* (sort by size or date, size totals, mirror scan) ask for `Enrich { id }`, which stats every row at low priority and reports progress; sorting by name or kind never waits for it. Name search needs only phase 1. Directories under 2,000 entries are enriched fully right after phase 1.
 
-**Listing cache**: completed string pools stay in memory keyed by URI in an LRU capped at 500,000 entries in total. A watched directory is authoritative: inotify events patch its string pool, so reopening it, opening it in a second pane or re-expanding a column is served from memory with no directory read. When a watch is evicted (64 per client, LRU) the string pool is kept but marked stale; the next open re-runs phase 1 and diffs against the old string pool so unchanged rows keep their `Meta`. At startup, and after idle, the daemon prefetches Favorites and the last-open directories so the first window of a session is usually served from memory. Remote listings (plan 06) have no watch and cache for 30 s, refreshed on expiry, on `F5`, or immediately after a job writes there.
+**Listing cache**: completed string pools stay in memory keyed by URI in an LRU capped at 500,000 entries in total. A watched directory is authoritative: inotify events patch its string pool, so reopening it, opening it in a second pane or re-expanding a column is served from memory with no directory read. When a watch is evicted (64 per client, LRU) the string pool is kept but marked stale; the next open re-runs phase 1 and diffs against the old string pool so unchanged rows keep their `Meta`. ~~At startup, and after idle, the daemon prefetches Favorites and the last-open directories so the first window of a session is usually served from memory.~~ (**Struck 2026-09-21** with `Prefetch`, below: nothing is warmed ahead of being asked for.) Remote listings (plan 06) have no watch and cache for 30 s, refreshed on expiry, on `F5`, or immediately after a job writes there.
 
 **Allocator tuning**: at startup kikid calls `mallopt` three times through `libc`: `M_MMAP_THRESHOLD` pinned to 131072 so the dynamic threshold never rises and freed large buffers return to the kernel, `M_ARENA_MAX` 2 so a dozen threads do not retain a dozen heaps, and `M_TRIM_THRESHOLD` 1 MiB so the main heap trims promptly. To keep the pinned threshold cheap, buffers used in loops are allocated once and reused: the `getdents` buffer per scanner, the copy buffer per job, the decode buffer per thumbnail worker. Kept only if the measurement below shows it matters.
 
@@ -52,8 +61,10 @@ capabilities() -> { trash, set_mtime, mode, real_dirs, digest_kind, separator }
 - `Enrich { id }` -> `Progress { id, done, total }`
 - `Close { id }`
 - `Stat { uri } -> Meta`
-- `Prefetch { uri }`: open and phase-1 scan without a client window, for the shell to warm the parent, Favorites and, in columns view, the selected folder
+- ~~`Prefetch { uri }`: open and phase-1 scan without a client window, for the shell to warm the parent, Favorites and, in columns view, the selected folder~~ **Struck 2026-09-21** (plan 31, D9): the daemon answers `Prefetch`, and nothing has ever sent it — not the shell, and not the daemon itself at startup. The request stays in `server.rs`; the warming this paragraph and the cache paragraph above describe is not built.
 - `Ping`, `Version`
+
+**Added since** (phase 4a, 4b — see plan 31): a `Window` also carries `viewFirst`/`viewCount`, the part of the range actually on screen, so thumbnails are made for what is being looked at rather than for the whole held range; a handful of changes in a name- or kind-sorted, unfiltered view arrive as `Splice { n, gen, ops }` instead of a `Reset`; and replies, `Reset` and `Splice` carry the listing's generation `gen`, which is what stops a reply computed before a change being applied after it.
 
 Errors are typed (`NotFound`, `Denied`, `Io(msg)`), never strings the UI has to parse.
 
@@ -65,10 +76,10 @@ Errors are typed (`NotFound`, `Denied`, `Io(msg)`), never strings the UI has to 
 - Bench binary on a 10,000-entry directory: first phase-1 chunk under 16 ms, full phase 1 under 100 ms.
 - 200,000 entries: phase 1 under 1 s; first window painted in directory order within a frame and the sorted `Reset` within 300 ms; a `Window` request at any offset answered under 5 ms; visible rows show size and date within 100 ms of stopping a scroll; the count of `statx` calls equals the rows that were ever in a window, not the directory size.
 - Quickshell test page scrolling 200,000 rows through `WindowCache` stays under 16 ms per frame with no frame blocked on a request, with delegate creation count flat after the first screen (reuse working).
-- Navigation to a directory whose parent was prefetched sends one socket write and paints from the daemon's cache with zero directory reads.
+- ~~Navigation to a directory whose parent was prefetched sends one socket write and paints from the daemon's cache with zero directory reads.~~ **Struck 2026-09-21** with `Prefetch`.
 - `touch` in a watched directory changes the row within 100 ms and contains exactly that entry.
 - Reopening a watched 10,000-entry directory performs zero directory reads (counted by the bench binary); after watch eviction the revisit re-lists but keeps `Meta` for unchanged rows.
 - Two clients on the same directory both receive every `Changed` event.
 - Resolver tests: `file:///tmp/x`, `/tmp/x` and `~/x` resolve to the local backend; an unknown scheme is a typed error; `parent`, `join`, `display` round-trip.
 - Resident memory after opening and closing a 200,000-entry directory (with its cache entry evicted) and after a 1 GB copy returns to within 5 MB of the idle baseline; with the `mallopt` calls removed it does not. If both pass, the calls go.
-- Unit tests for the local `Backend` on a temp tree (scan, stat, mkdir, rename, delete, set_mtime, chmod).
+- Unit tests for the local backend on a temp tree (scan, stat, mkdir, rename, delete, set_mtime, chmod) — `kikid/tests/local_ops.rs`, ten modes against `stat -c %a` among them, plus the resolver at all three layers.

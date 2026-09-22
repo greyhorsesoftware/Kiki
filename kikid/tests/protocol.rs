@@ -78,7 +78,7 @@ fn body(kind: &str) -> Value {
     let o = Value::obj();
     match kind {
         "Hello" => o.u("version", 1).s("client", "kiki"),
-        "Open" | "Prefetch" | "Refresh" | "Close" | "Enrich" => o.u("lid", 7).s("uri", "file:///home/david/Projets été"),
+        "Open" | "Refresh" | "Close" | "Enrich" => o.u("lid", 7).s("uri", "file:///home/david/Projets été"),
         "Window" => o.u("lid", 7).u("first", 0).u("count", 512).u("viewFirst", 0).u("viewCount", 60),
         "Sort" => o.u("lid", 7).s("role", "atime").s("order", "desc"),
         "Filter" => o.u("lid", 7).s("text", "ét"),

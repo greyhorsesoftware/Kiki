@@ -6,14 +6,19 @@
 </head>
 <body>
 <x-dc>
+<!-- Out of date, 2026-09-21: 0.1.0 ships two share plugins, Mail and Tailscale. LocalSend, Messages
+     and AirDrop are not in it, and there is no "Share via" sub-menu — the ways are rows in the
+     context menu itself (18-share.md). -->
 <helmet>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cascadia+Mono:wght@400;600&amp;display=swap">
   <style>
     body { margin: 0; background: #16161e; font-family: "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.4; color: #c0caf5; -webkit-font-smoothing: antialiased; }
     a { color: #7aa2f7; } a:hover { color: #7dcfff; }
     svg { display: block; flex: none; }
+    .stale { padding: 6px 8px; color: #e0af68; font-size: 11px; }
   </style>
 </helmet>
+<div class="stale">Out of date (2026-09-21): 0.1.0 ships Mail and Tailscale only — LocalSend, Messages and AirDrop are not in it, and the ways to send are rows in the context menu rather than a sheet with a "Share via" list.</div>
 <div style="display: flex; width: 1200px; height: 760px; background: #1a1b26; border: 2px solid #7aa2f7; box-sizing: border-box; overflow: hidden;"><div style="display: flex; flex-direction: column; width: 224px; flex: none; background: #16161e; border-right: 1px solid #292e42; padding: 12px 0; box-sizing: border-box; overflow: hidden;">
   <div style="display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 16px 0 24px; margin-top: 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #565f89;"><span>Favorites</span></div>
   <div style="display: flex; flex-direction: column; gap: 1px;">

@@ -1,5 +1,7 @@
 # 11 — Testing
 
+**Status:** daemon, QML and e2e layers built; visual, layout and shell-performance layers not in 0.1.0 (D20); `pointer_ops` skips — no headless compositor here delivers a virtual pointer.
+
 Builds on: every plan. Applied from plan 01 onward; not a phase that runs at the end.
 
 ## Goal
@@ -20,6 +22,25 @@ Automated coverage of behaviour, layout, appearance and performance, so a releas
 | Layout | geometry, elision, minimum sizes, hit targets | same | IPC geometry queries |
 | Performance | first paint, frame time, input latency | same | timestamps from Quickshell, asserted in the test |
 | Manual | drag feel, animation feel, Hyprland focus, third-party portal clients, first-run keyring consent | a real Omarchy session or VM | checklist below |
+
+**Which of those exist (2026-09-21).** Built: Daemon, Plugins, Protocol, Window cache, Leaf components, Shell in the real runtime, Manual. **Not in 0.1.0** (D20): Visual, Layout and the shell half of Performance — a suite that cannot be built in time must not hold the tag; the daemon's own budgets live in `bench` (plan 26) and the theme pass stays on the manual list. The compositor is `cage`, not `sway --headless`; `wtype` is unused — flows drive through IPC and the keyboard, and `wlrctl` only appears in `pointer_ops`, which skips.
+
+## The suites as they are (2026-09-21)
+
+`make test` is four things in order, and any one of them failing fails it:
+
+1. **`clippy`** — `cargo clippy --all-targets -- -D warnings`. A warning is a failure, not a chore (plan 30 W5).
+2. **`cargo test`** — the daemon, the plugin binaries through the pipe protocol, the protocol suite against a real socket, and the JSON property tests. **209 passed.**
+3. **`make test-qml`** — `qmltestrunner -import tests/qml/stubs -input tests/qml` under `QT_QPA_PLATFORM=offscreen` (the environment wins), then **`tests/qml-drag` under `minimal`**. Two platforms because offscreen ends a drag the moment it begins, while `minimal` performs a real in-process drag — the only way to hold `Ctrl` down and read what Qt actually does with it (phase 5). **662 passed.**
+4. **`make test-e2e`** — `tests/e2e/run.sh`: one `cage` client at a fixed 1200 × 760 with its own `XDG_RUNTIME_DIR` and session bus, kikid, Quickshell and the Python driver inside it. **733 passed, 1 skipped.**
+
+**The servers are real, not mocks.** `tests/e2e/servers.py` starts OpenSSH's `sshd`, `vsftpd` and Samba's `smbd` as the launching user, each on a high port with its own throwaway config, keys, passdb and certificate (`sudo pacman -S openssh vsftpd samba`). A flow whose server is not installed skips **by name**, so a machine without one still runs everything else. SMB additionally needs the real GVfs stack, and the daemon under it runs in a `dbus-run-session` with a `gvfsd --no-fuse` of its own on the run's private runtime directory — gvfsd-smb asks the keyring before it asks the server anything, and the ambient keyring is the developer's own.
+
+**Two things about running under cage, both learned the hard way.** It stays up while anything is drawing in it, so `run.sh` ends whatever the run started (known by the run's own `XDG_RUNTIME_DIR`) before the script leaves — a detached terminal used to hold the run to the compositor's deadline. And it does not hand back its client's exit status, so the driver's verdict is written down inside the compositor and read outside it; no verdict at all is a failure. Without cage, `run.sh` runs the daemon-only flows and says which it skipped.
+
+**Why `pointer_ops` skips.** cage accepts `wlr_virtual_pointer_v1` and then logs *"cannot be mapped to an output device"*: the events go nowhere. The flow probes with a single click and steps aside with that sentence rather than failing fourteen checks that say nothing about kiki. `wlrctl` cannot hold a button down either, so no headless compositor available here gives a real drag: drags are proven three other ways — the `shell drop` IPC hook (`drag_between_panes.py`, every local/remote pair in both directions with each modifier), real in-process drags under `minimal` (`tests/qml-drag/tst_RealDrag.qml`), and by hand on Hyprland on the phase-10 checklist.
+
+**The sway spike** (plan 31, decision 5) was a time-boxed half day to find out whether sway's headless backend delivers virtual-pointer events to Quickshell. **It was not run, and no answer is recorded**: there is no `run_in_sway` in `run.sh` and no mention of sway anywhere in the tree. The skip therefore stands for 0.1.0, and `sway` is not in CI.
 
 ## Design rules that make this possible
 
@@ -73,9 +94,11 @@ Flows, one script each:
 - Open and Save through the portal from a test client (`zenity --file-selection` and a five-line PyGObject script); assert returned URIs, filters and suggested names
 - change the Omarchy theme symlink; assert tokens updated without restart
 
-Pointer input via `wtype` and the wlroots virtual pointer is used only for the two drag flows (drag into Favorites, drag between panes), and those are allowed to be marked flaky-retry.
+~~Pointer input via `wtype` and the wlroots virtual pointer is used only for the two drag flows (drag into Favorites, drag between panes), and those are allowed to be marked flaky-retry.~~ **Amended 2026-09-21:** the virtual pointer does not work under cage at all (above), so no flow depends on it; the drag flows go through the `shell drop` IPC hook, which hands `Pane.dropInto` the object shape Qt would have given it, so everything after the button goes down is what runs. Nothing is marked flaky-retry; the one retry in the suite is `remote_transfers`' race between a 1.5 GB upload and a listing, which forgives the machine and not the bug.
 
 ## Visual tests
+
+**Not in 0.1.0 (D20, 2026-09-21.)** No baselines exist, `odiff` is not a dependency and there is no visual CI job; every theme is eyeballed once by hand at phase 10 instead. The section stands as the design for a later release.
 
 - After each e2e flow reaches a named screen, the driver calls the IPC `snapshot(objectName)` which uses `grabToImage` and writes a PNG.
 - Baselines live in `tests/visual/<theme>/<screen>.png`, one per Omarchy theme: Tokyo Night, Catppuccin, Nord, Gruvbox, Everforest, Kanagawa, Rose Pine, Matte Black.
@@ -84,6 +107,8 @@ Pointer input via `wtype` and the wlroots virtual pointer is used only for the t
 - The first baselines are checked by eye against `docs/design/`. After that the mockups are reference only, not a pixel target.
 
 ## Layout tests
+
+**Not in 0.1.0 (D20, 2026-09-21.)** There is no layout suite. What it would have caught is covered case by case where it bit — the chooser in a short window, the mirror Review footer at three widths, Configure at three heights, the inspector's Permissions grid — each pinned in its own QML test, and the geometry query it would have used (`shell geometry <objectName>`) exists and is what the flows aim the pointer with.
 
 Through the IPC geometry query, assert after each screen:
 
@@ -94,6 +119,8 @@ Through the IPC geometry query, assert after each screen:
 - dialogs fit their frame with nothing clipped.
 
 ## Performance tests
+
+**The shell half is not in 0.1.0 (D20, 2026-09-21)**; none of the budgets below is asserted in a test. What is measured: the daemon's side in `bench`, in CI, with a transfer profile (plan 26); `scroll_perf` and `gallery_perf`, by name, which record times and peak RSS rather than failing on a threshold; and the watch budget, which *is* asserted (`kikid/tests/watch.rs`, plan 01's 100 ms). Launch-to-paint is unmeasured.
 
 Run in the same headless runtime on a quiet CI machine, with generous thresholds that still catch order-of-magnitude regressions:
 
@@ -120,9 +147,11 @@ Quickshell timestamps the events; the driver reads them over IPC.
 
 ## CI
 
+**As built (2026-09-21)**, `.github/workflows/ci.yml` has five jobs: daemon and plugins per architecture (`make lint`, `make test-rust`, the ignored protocol and contract tests, a build of the device plugins so they do not rot unseen, a JSON fuzz smoke run); QML under Qt with no compositor; a package build per architecture; **e2e under `cage` against the *installed* package**; and benchmarks. There is no visual, layout or performance job.
+
 - `cargo test` on every push.
 - `qmltestrunner` on every push.
-- e2e, visual, layout and performance in one job under `cage`, on every PR, about ten minutes.
+- ~~e2e, visual, layout and performance in one job under `cage`~~ e2e in one job under `cage`, on every PR, about ten minutes.
 - The manual checklist is a PR template item on release branches only.
 
 ## Coverage
@@ -168,5 +197,5 @@ Writing those tests found two real faults, which is the point of doing it:
 ## Verification for this plan
 
 - The harness runs green on a fresh Omarchy VM from a single `make test`.
-- A script cross-checks the IPC function list in plan 02 and every `objectName` in the QML against the test sources; each must be referenced by at least one test.
-- A one-pixel colour change in a token fails the visual job for every theme that uses it.
+- ~~A script cross-checks the IPC function list in plan 02 and every `objectName` in the QML against the test sources~~ **Amended 2026-09-21:** no such script was written; coverage of the shell is the flows plus `make coverage` on the daemon.
+- ~~A one-pixel colour change in a token fails the visual job for every theme that uses it.~~ **Amended 2026-09-21:** no visual job (D20). What guards the palette instead is `tst_ThemeDanger` and `tst_GitBadges`, which assert that a badge takes the theme's colour and that a theme whose yellow is red does not draw a modified project as a conflicted one.

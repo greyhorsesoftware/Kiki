@@ -1,6 +1,21 @@
 # 12 — Search
 
+**Status:** built and tested as trimmed.
+
 Builds on: `01-daemon-and-listing.md` (string pool, windows, watch), `02-shell-and-views.md` (search box), `06-remote-locations.md` (remote walks).
+
+## As built — the plan trimmed (2026-09-21, D5)
+
+The choice was: build this plan as written (5–7 days) or keep what works, fix what is wrong and say so. The second. What differs from the sections below, in one place so nobody has to read them against the code:
+
+- **Two surfaces, not one field.** *This folder* is the **filter strip** above the listing (`/`, `Ctrl+F`): it sends `Filter` on the open listing, the view does not change, and the strip reads `12 of 458`. *Everywhere* and *a location* are the **search overlay** (`Ctrl+Shift+F`, `views/SearchOverlay.qml`) — a panel over the window, so closing it leaves the folder, selection and scroll exactly as they were, rather than the results replacing the pane.
+- **The scope is a chip you click**, one per scope across the top of the overlay (Everywhere, then each saved location). **No typed prefixes, no scope menu, no `Tab` cycling**: `everywhere:` and `homelab:` are parsed by `ui/SearchBox.qml`, which only the portal chooser uses, and there with no scopes to offer. A keystroke restarts a debounce timer rather than cancelling a request in flight.
+- **The index is a flat scan, not a sorted one.** There is no `sorted` array and no memory map: every mode walks the names once (`prefix` compares the case-folded key's start, `fuzzy` falls back to a subsequence match) and keeps the best 10,000 in a heap. `index.bin` is a plain little-endian dump, read at startup.
+- **A location search is not streamed.** One recursive `Scan` where the plugin has one, folder by folder where it answers `Unsupported` (FTPS; SFTP without a shell), collected and answered whole — and *known and left*: it runs in the client's request thread, so that window's other requests wait for it.
+- **No `IndexProgress`** — the event is in neither the daemon nor the shell, and leaves `API-DAEMON.md` too (D10).
+- **The two bugs found by the audit are fixed, with tests** (2026-09-19): the index ranked only the first 40,000 matches it met, so the best hit could be one it never reached — every match is ranked now, and `capped` means more than fit rather than exactly as many; and a location whose plugin has no recursive scan found nothing at all instead of being walked folder by folder.
+
+None of the Verification budgets below has been measured.
 
 ## Goal
 
@@ -30,7 +45,7 @@ Lives in kikid (`src/index/`), built from the same phase-1 scanning as listings.
 
 A million entries is roughly 20 MB of names plus 12 MB of entries and keys. The daemon keeps it in memory and saves it to `~/.cache/kiki/index.bin` (a plain little-endian dump of the vectors, written atomically) after every build and every directory walk; at startup the file is loaded when its roots still match the settings and brought up to date by the walk, so a restart costs one read of the file plus a stat per directory instead of a full crawl. Memory-mapping the file for queries is a later step; a read at startup is under a second for a million entries.
 
-**Roots and excludes**: `$HOME` by default; mounted volumes are added from the Locations sidebar's volume context menu. Excludes: `.cache`, `.git`, `node_modules`, `__pycache__`, the mirror filter rules, and any directory containing a `.kiki-noindex` file. Configurable in `settings.toml` under `[index]`.
+**Roots and excludes**: `$HOME` by default; roots and excludes are edited on Settings → Search. Excludes as built: `.cache`, `.git`, `node_modules`, `__pycache__`, `.Trash`, `target`, and any directory containing a `.kiki-noindex` file. ~~the mirror filter rules~~ (the mirror's rules are its own; the two lists are not shared). Configurable in `settings.toml` under `[index]`.
 
 **Building**: a phase-1 crawl of the roots on one low-priority thread with a 1 MB `getdents` buffer, names only, never stat on files. A home directory with a million files builds in a few seconds warm. The first build starts 30 s after the daemon's first client connects, so it never competes with the first window.
 
@@ -57,9 +72,9 @@ A million entries is roughly 20 MB of names plus 12 MB of entries and keys. The 
 | `IndexRebuild` | | `{}` |
 | `IndexRoots` / `SetIndexRoots` | — / `roots: [Uri]` | `{ roots }` / `{}` |
 
-Events: `IndexProgress { done, total }` during a build or walk.
+~~Events: `IndexProgress { done, total }` during a build or walk.~~ **Amended 2026-09-21 (D10):** never built, never emitted; out of `API-DAEMON.md` too. The Settings → Search page shows entry and directory counts and the index's age from `IndexStatus`, which is enough to know where it stands.
 
-**IPC added**: `searchScope(folder|everywhere|<location>)`, `search(text)` accepts the same prefix syntax as the field.
+**IPC added**: ~~`searchScope(folder|everywhere|<location>)`, `search(text)` accepts the same prefix syntax as the field.~~ **As built:** `shell search <text>` filters the open listing through the strip, and `shell searchEverywhere <text>` opens the overlay on that text (empty closes it). The scope is not settable from IPC.
 
 ## Verification
 

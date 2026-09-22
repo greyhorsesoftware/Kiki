@@ -96,7 +96,7 @@ What is in it:
 | `JobLog` | `job`, `from?` | `{ lines: [{ t, level, source, text }], next, dropped }`; ask again from `next` |
 | `LocationLog` | `location`, `from?` | the same, for the location's plugin |
 
-Event `JobsCleared { jobs: [id] }`. `Jobs` returns every live job and the fifty most recent finished ones. Forgetting is the daemon's because the list is fetched again on every reconnect, which would bring back whatever a window had only hidden.
+Event `JobsCleared { jobs: [id] }`. All four requests are answered in `server.rs` and the event is broadcast from `jobs.rs`; `kikid/tests/protocol.rs` scrapes every request type out of `server.rs`'s own match arms, so a request documented here and answered by nobody fails a test. `Jobs` returns every live job and the fifty most recent finished ones. Forgetting is the daemon's because the list is fetched again on every reconnect, which would bring back whatever a window had only hidden.
 
 Plugin → daemon (only when `KIKI_PLUGIN_LOG` is set): `{ event: "Log", level, target, message, role }`.
 

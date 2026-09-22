@@ -23,11 +23,18 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
   inotify watcher, job threads, index and device threads. Listings live in a string
   pool with lazy viewport windows.
 - **`crates/kiki-plugin-sdk`** and **`plugins/`**: location plugins (`sftp`, `ftps`,
-  `gio` for smb/dav/afp, `mtp`, `ptp`, `afc`), service plugins (`dbus`, `highlight`)
-  and share plugins (`share-*`) are separate processes spawned on use, spoken to over
-  stdin/stdout frames, run concurrently inside the plugin with cancellation. The device
-  plugins hand-write `extern "C"` FFI; `dbus` uses zbus; `sftp`/`ftps` use tokio,
-  russh and suppaftp; the share plugins spawn CLIs or speak SMTP/HTTP over rustls.
+  `gio` — installed as `kiki-plugin-smb`; its `dav` and `afp` arms are in the source and
+  no build runs it under those names — plus `mtp`, `ptp`, `afc`, which are in the tree
+  and do not ship), the `dbus` service plugin, and share plugins (`share-mail`,
+  `share-tailscale`). Each is a separate process spawned on use, spoken to over
+  stdin/stdout frames, running concurrently inside the plugin with cancellation. The
+  device plugins hand-write `extern "C"` FFI; `dbus` uses zbus; `sftp`/`ftps` use tokio,
+  russh and suppaftp; the share plugins spawn CLIs or speak SMTP over rustls.
+  **0.1.0 ships three location kinds — `ftps`, `sftp`, `smb` (`plugin::LOCATION_KINDS`)
+  — and two share plugins.** WebDAV, AFP, LocalSend, MTP, PTP and AFC are not in it; a
+  plan that still describes one describes what was cut. `kiki-thumber` is a fourth kind
+  of child: it speaks the same framing and makes every thumbnail, so the daemon decodes
+  no file itself.
 - **`qml/`**: the Quickshell shell. Singletons `Daemon` (socket), `Settings`, `Theme`,
   `Jobs`, `Format`; `Pane`, `WindowCache`, `Selection`; views and dialogs under
   `ui/` and `views/`. Leaf components import only QtQuick.
@@ -151,9 +158,9 @@ Cover, as tables wherever the content is comparable:
   `hyprctl`, `secret-tool`, share CLIs): is user data ever interpolated unquoted?
 - **Secrets** — keyring only via `secret-tool`; nothing in `locations.toml`,
   logs, JSON replies, or `ps` argv; passwords passed to plugins only in `Connect`.
-- **Transport** — TLS in `ftps`, `share-mail`, `share-localsend`: pinning,
-  verification, the deliberate `AcceptAll` in LocalSend and whether its scope is
-  as narrow as the protocol needs; SSH host-key handling in `sftp`.
+- **Transport** — TLS in `ftps` and `share-mail`: pinning, verification, the
+  fallback to web PKI, and whether a cached session can be handed to a server it
+  was not made for; SSH host-key handling in `sftp`.
 - **`unsafe` and FFI** — every `unsafe` block in `kikid` (`libc`, `mallopt`,
   `getdents64`, `lseek`, `pre_exec`) and the device plugins' hand-written
   struct layouts: what happens if a layout is wrong, and whether the plan says
@@ -194,10 +201,11 @@ Cover, as tables wherever the content is comparable:
   `server.rs` dispatch and the SDK: messages documented but unhandled, handled
   but undocumented, fields renamed on one side.
 - **Tests** — unit (`cargo test -p kikid`), the SDK loop test, mock-server suites
-  (SFTP, FTPS, SMTP, LocalSend), the stub-plugin contract test, QML leaf tests
-  with the Quickshell stubs, the e2e harness. Assess whether tests assert
-  behaviour or execute lines; cite one strong and one weak example. Name what
-  has never run (Quickshell, D-Bus, devices, GIO).
+  (SFTP, FTPS, SMTP), the real-server suites (`sshd`, `vsftpd`, `smbd` with GVfs),
+  the stub-plugin contract test, QML leaf tests with the Quickshell stubs, the real
+  drags under Qt's `minimal` platform (`tests/qml-drag`), and the e2e harness under
+  `cage`. Assess whether tests assert behaviour or execute lines; cite one strong and
+  one weak example. Name what has never run (the device plugins; the physical drag).
 - **Dependencies table** — crate versions with release ages, crates pulled by a
   single plugin, `rustls` with `ring` versus `aws-lc`, tokio confined to plugins,
   duplicated versions in `Cargo.lock`.

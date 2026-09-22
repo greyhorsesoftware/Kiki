@@ -1,5 +1,7 @@
 # 29 — Release readiness: what stands between the tree and 0.1.0
 
+**Status:** closed by `31-final-implementation-plan.md`, which supersedes the Order at the foot of this document and carries the work. The sections below are kept as the audit that produced it, amended in place where the build went another way.
+
 Builds on: every plan. This one adds no feature. It lists what has code but has never been proven, what a build does not actually ship, and the housekeeping a release needs — and orders it.
 
 ## Where the tree stands (measured 2026-09-19, on Omarchy)
@@ -14,7 +16,9 @@ Every numbered plan has code behind it. What follows is what that sentence does 
 
 ## A. Side by Side and mirroring: built, never driven (plans 07, 08, 24)
 
-The largest untested surface in the tree. The mirror engine has 12 Rust tests (`kikid/src/mirror/tests.rs`: diff, detectors, guards, a local end-to-end on two temp folders). Nothing above the engine has ever been exercised: there is no e2e flow for split or mirror among the fifteen in `tests/e2e/flows/`, no QML test of `MirrorBar` or `MirrorWorkspace`, and no one has used either by hand.
+**Driven 2026-09-21** (plan 31, phase 6), so "never driven" no longer holds: `side_by_side.py` (75 checks), `mirror_local.py` (83), `mirror_sftp.py` (27, on a real `sshd` and, where it is installed, `vsftpd`), `tst_MirrorWorkspace` (36+), `tst_MirrorRulesDialog` (20) and IPC hooks for every control the workspace has. What a hand is still owed is short and on the phase 10 list: the physical clicks, "Save report…" writing through `execDetached`, and how the screens look under a long run. Six defects came out of driving it — the Review footer's joined counts, the Done summary, a re-opened workspace showing the last run's table, a scan that finished before its own `Submit` reply, a folder that could be mirrored into itself, and an audit log that ignored `KIKI_STATE_DIR`.
+
+The audit's finding, for the record: the mirror engine had 12 Rust tests (`kikid/src/mirror/tests.rs`: diff, detectors, guards, a local end-to-end on two temp folders) and nothing above the engine had ever been exercised — no e2e flow for split or mirror among the fifteen in `tests/e2e/flows/`, no QML test of `MirrorBar` or `MirrorWorkspace`, and nobody had used either by hand.
 
 **By hand first** — an hour with two local folders, then a real remote, against the plans' own Verification lists:
 
@@ -77,15 +81,24 @@ One pass, on Omarchy, before tagging:
 
 ## H. Large transfers: local → local, remote → local, local → remote
 
-Every copy the suites make today is a handful of small files. Nothing has moved a LARGE folder — many thousands of entries, deep nesting, a few multi-gigabyte files — in any direction, and that is where a job queue, progress reporting, cancellation and memory use actually get tested. `kikid bench` times `copy_mb_s` and an `upload`, but a benchmark is one timed pass, not a correctness test.
+**Built 2026-09-21** (plan 31, phase 4), and what exists now is:
+
+- **`kikid bench gen transfer`** and its `-lite` and `-tiny` sizes, with every awkward case this section asked for (plan 26).
+- **`tests/e2e/flows/transfer_local.py`** and **`transfer_remote.py`** — up to the server and back down again in one flow, not two — on `transfer_common.py`, by name like `gallery_perf`. Every entry compared entry for entry, large files and a sample of small ones hash for hash; progress monotonic and totals never revised down; another folder still lists inside 500 ms while it runs; cancel mid-run ends `cancelled` with no part file; undo of a large copy, and of a cancelled one, removes what it made and nothing else; peak RSS and throughput recorded to `tests/e2e/out/transfers.json`. A check that could not have failed is **said, not passed** — a local copy of 415 MB is over in 0.3 s on a filesystem that clones.
+- **Measured** (SFTP, `transfer-lite`, 5,000 files, 415 MB, loopback): 73 MB/s up, 29–35 down, the daemon growing 2 MB to an 11 MB peak. FTPS carries the same fixture: 58 and 65 without TLS session reuse, 114 and 139 with.
+- **Move semantics** are as this section asked: a file that cannot be copied is noted and the rest goes on, the job failing at the end naming each; a move deletes an original only when all of it arrived **and was checked** against the destination's own size; an original that cannot then be removed is "copied, but the original could not be removed".
+- **Found by the large fixture**: FTP command injection (a name with a line break became a second command — nothing with CR, LF or NUL goes on the wire now); that most real FTPS servers demand the control connection's own TLS session on the data connection, which kiki could not offer; and that a name which is not valid UTF-8 cannot be transferred at all — a limit of 0.1.0, for the release notes.
+
+The audit's case for it, which stands:
+
+Every copy the suites made in September was a handful of small files. Nothing had moved a LARGE folder — many thousands of entries, deep nesting, a few multi-gigabyte files — in any direction, and that is where a job queue, progress reporting, cancellation and memory use actually get tested. `kikid bench` times `copy_mb_s` and an `upload`, but a benchmark is one timed pass, not a correctness test.
 
 **Fixtures** — reuse the generator plan 26 already has (`kikid bench gen`), with a transfer-shaped profile: ~50,000 small files across ~2,000 directories eight levels deep, plus two or three files of 1–4 GB, plus the awkward cases (empty directories, a symlink, a name with a newline and one with non-UTF-8 bytes, a read-only file, a zero-byte file, mtimes spread across years). Generated into a temp directory, never committed.
 
 **Three flows**, each asserting the same things — the filesystem is the oracle (plan 28):
 
 - `tests/e2e/flows/transfer_local.py` — local → local, same filesystem and across filesystems (`cross_fs.py` already knows how to find a second one).
-- `tests/e2e/flows/transfer_download.py` — remote → local, from the throwaway `sshd` of section A.
-- `tests/e2e/flows/transfer_upload.py` — local → remote, to the same server.
+- ~~`transfer_download.py` and `transfer_upload.py`~~ — built as **one** flow, `transfer_remote.py`: up to the server, then down again, which is the round trip that proves the bytes.
 
 What each asserts:
 
@@ -190,7 +203,9 @@ Tests:
 
 ## K. Drag and drop between the two panes, spring-loaded folders, modifiers
 
-**What is there** (so this section starts from the code, not from nothing): rows in List and Icon view are drag sources (`Drag.Automatic`, `text/uri-list`, copy and move offered, move proposed), and folders, the pane background and sidebar favourites are drop targets. `Pane.qml:184–192` decides the action: **move within a scheme, copy across one, `Ctrl` forces copy**, a drop onto itself or into its own subtree is refused. `tst_DragDrop.qml` covers that policy with a synthetic drop; the pointer half has never run end to end (section C). **What is not there:** Columns and Gallery are neither sources nor targets; nothing has been dragged between the two panes of Side by Side by hand; there is no way to open a folder mid-drag; `Shift` means nothing; and "copy across a scheme" is the whole of the remote story.
+**Built 2026-09-20/21** (plan 31, phase 5), and the amendments through this section are what the building changed. Two of them are the shape of the whole feature: **link is not in 0.1.0** (the daemon has no `link` operation at all, so it is a new op with its own undo and journal entry, not a QML change), and **spring-loaded folders are not in 0.1.0** either — no hover-to-open, no `springDelayMs`, no `tst_SpringLoad`. Both are later releases, not deferred items inside this one.
+
+**What is there** (so this section starts from the code, not from nothing): rows in List and Icon view are drag sources (`Drag.Automatic`, `text/uri-list`, copy and move offered, move proposed), and folders and the pane background are drop targets; **sidebar favourites take a drop as "add a favourite"** (`Sidebar.qml`) — "favourites are drop targets for files" was wrong about the code and is amended here. `Pane.qml:184–192` decides the action: **move within a scheme, copy across one, `Ctrl` forces copy**, a drop onto itself or into its own subtree is refused. `tst_DragDrop.qml` covers that policy with a synthetic drop; the pointer half has never run end to end (section C). **What was not there** (September 2026), and where each ended: Columns and Gallery are **both sources and targets now** — the gallery's stage and each filmstrip tile, and a column carrying the row pressed, which is all a column has to carry (it keeps one highlighted row, and multi-select in columns is not in 0.1.0); a folder does not open mid-drag and will not in 0.1.0; `Shift` reads as no key (above); and a place is **scheme _and_ host**, so `sftp://nas` → `sftp://backup` copies rather than moving.
 
 ### Between the two panes
 
@@ -199,7 +214,9 @@ Tests:
 - A press that becomes a drag must not also be the click that focuses the other pane and must not disturb the selection being dragged (section J's press-to-focus: focus moves on the *drop*, to the pane that received it).
 - Dragging out of the window (to a terminal, a browser upload) and in from outside keep working as they do now; this section must not regress them.
 
-### Spring-loaded folders
+### Spring-loaded folders — **not in 0.1.0** (decided 2026-09-20)
+
+*Nothing below is built: no hover-to-open, no `springDelayMs` setting, no `tst_SpringLoad`. Kept as the description for whoever builds it.*
 
 Hold a drag over a folder and it opens, so the drop can go somewhere that was not on screen when the drag began.
 
@@ -210,21 +227,21 @@ Hold a drag over a folder and it opens, so the drop can go somewhere that was no
 - Only folders spring. An archive, a location that is not connected (would need a password prompt mid-drag) and the trash do not; they are plain drop targets or not targets at all.
 - A remote folder springs too, and listing it takes time: show the pane's loading state, and do not flash-and-open a second level until the first has listed.
 
-### Modifiers: copy, move, link
+### Modifiers: copy and move
 
-One rule, the same in every view and for every target, shown **while dragging** — the cursor badge and a one-line hint by the pointer ("Copy to homelab:/srv/site") change the moment a modifier goes down or the target changes, so nobody finds out what happened from the result:
+One rule, the same in every view and for every target, shown **while dragging** — ~~the cursor badge and a one-line hint by the pointer ("Copy to homelab:/srv/site")~~ **the cursor, and only the cursor** (owner, 2026-09-21): kiki has no cursors of its own and needs none, since the cursor theme has copy, move and "not allowed" and Qt picks one from the action the drop target reports. Every view's drop areas are one component, `views/DropTarget.qml`, which asks `Pane.dragOver` on every enter and move and answers Copy, Move, or **Ignore for a refusal** — which is the "not allowed" cursor *during* the drag. The one-line hint by the pointer was built and taken out again: it said what the cursor says.
 
 | Held | Action |
 |---|---|
 | nothing | the default for this source → target pair (below) |
 | `Ctrl` | copy |
-| `Shift` | move |
-| `Ctrl+Shift` | link (symlink; local → local only, otherwise not offered) |
-| `Alt` | drop, then ask: a small menu at the pointer — Copy here / Move here / Link here / Cancel |
+| `Shift` | the same as no key — the rule by place |
+| ~~`Ctrl+Shift`~~ | ~~link (symlink; local → local only)~~ — **link is not in 0.1.0** |
+| ~~`Alt`~~ | ~~drop, then ask: Copy here / Move here / Link here / Cancel~~ — the drop menu was built and **removed** 2026-09-21 (owner: *"what is the drop menu? we already have a context menu"*). `Alt` copies, not by design but by Qt, which falls back to Copy for a source that offers no Link; pinned in `tst_RealDrag`. |
 
-- Modifiers are read at **drop** time and continuously during the drag, not captured at the start: people press them late.
-- A right-button drag is `Alt`: it always asks. (Whether the compositor delivers right-button drags through `Drag.Automatic` is to be checked, not assumed.)
-- `Esc` cancels the drag, returns any sprung view, and changes nothing.
+- Modifiers are read at **drop** time and continuously during the drag, not captured at the start: people press them late. **How**, since a real `DragEvent` has no `modifiers`: Qt folds the keys into `proposedAction` — no key → Move, `Ctrl` → Copy, `Shift` → Move, `Alt` → Copy. No key and `Shift` cannot be told apart, so **`Shift` can no longer force a move between machines**; it copies, as no key does, and cut and paste is how a move between machines is asked for. Pairing it the other way would have lost `Ctrl` within one disk, turning a copy the user asked for into a move: the worse way round.
+- ~~A right-button drag is `Alt`: it always asks.~~ A right-button drag is an ordinary drag (Qt starts one with either button; whether Hyprland carries it is a phase 10 line).
+- `Esc` cancels the drag and changes nothing.
 
 ### Local and remote
 
@@ -234,24 +251,24 @@ The default action depends on what the two ends are, because "move" between mach
 |---|---|---|
 | local → local, same filesystem | move | a rename; instant |
 | local → local, other filesystem | move | copy then delete; a job with progress (`cross_fs.py` already finds a second filesystem) |
-| local → remote | copy | upload. `Shift` moves: upload, **verify**, then delete the local original |
-| remote → local | copy | download. `Shift` moves: download, verify, then delete the remote original |
+| local → remote | copy | upload. ~~`Shift` moves~~ — no key and `Shift` read the same, so a drag cannot move between machines |
+| remote → local | copy | download. ~~`Shift` moves~~ — the same |
 | remote → same remote | move | a server-side rename where the plugin can (`Features`), else copy + delete through this machine |
-| remote → other remote | copy | streamed through this machine; there is no server-to-server path. `Shift` moves, and says it will take as long as the copy |
-| anything → trash | move to trash | local only; a remote has no trash (`CORE.md`: remote delete is a confirmed, non-undoable delete) — dropping remote files on the trash asks, in danger colours |
-| trash → anywhere | restore/move out | |
-| anything → archive, device, read-only location | refused, or copy where the target can take it | the target's plugin `Features` decide; a refused target shows the "no" cursor *during* the drag, not an error after it |
+| remote → other remote | copy | streamed through this machine; there is no server-to-server path |
+| anything → trash | move to trash | local only; a remote has no trash — a server's files dropped on the Trash are **deleted after a question** in danger colours, and `Del` and the menu's Move to Trash ask the same way, through the same function |
+| trash → anywhere | restore/move out | and the trash *view* refuses a paste, a new folder and a drop into a folder row inside it |
+| anything → archive, device, read-only location | refused, or copy where the target can take it | **a refusal is only what the code can know**: a folder into itself, an item into the folder it is already in. No location carries a read-only flag and nothing asks a plugin whether it may write, so that waits for the flag (post-0.1.0). A refusing target still takes the drag — a `DropArea` that turns one away hears no more of it — so the outline a folder draws binds to `welcoming`, not `containsDrag`, and a refused drop is answered with Ignore rather than passed to the folder behind |
 
 - A move whose delete half fails (permissions, the link dropped) is reported as "copied; the original could not be removed", never as a failure that implies nothing arrived — and never retried into deleting something that did not copy.
-- **Undo**: a local move or copy undoes as it does now. `CORE.md` already rules that remote delete is not undoable, so a remote *move* is undoable only until its delete half runs; the job says which half it is in. A copy to a remote undoes by deleting what it created, behind a confirmation.
+- **Undo**, as built (2026-09-21): a local move or copy undoes as it does now. **A copy to a server undoes** — it journals `deleteCopies`: every file it created with the size and time the *server* reported as it landed, and every folder it created, never the folder it landed in. The undo deletes only what the server still says is that, by the check the mirror makes for that server, leaves what has changed or gone and names it, and removes a folder only if it is empty afterwards. Both toasts say a remote delete is permanent; there is no separate confirmation dialog. ~~A remote *move* is undoable only until its delete half runs; the job says which half it is in.~~ **A move that touches a server is not undoable at all, deliberately.**
 - Collisions use the existing prompt (`CollisionPrompt`); across a remote the comparison is by size and mtime within the plugin's tolerance, as mirror does.
 - Dragging many small files to a remote is exactly section H's upload case; drag and drop adds nothing to the transfer itself and must not grow a second code path for it — `Ops.transferTo` is the one door.
 
 ### Tests
 
-- `tst_DragDrop.qml` grows the table above: each source → target pair's default, each modifier overriding it, link offered only local → local, the trash and refused targets, modifiers read at drop time.
-- `tst_SpringLoad.qml`: hold → flash → open after the delay and not before; moving off cancels; chained opens; drop returns the target to its starting folder with selection, scroll and history untouched; `Esc` does the same; delay 0 turns it off; a disconnected location and an archive do not spring.
-- e2e `drag_between_panes`: needs a compositor that delivers pointer events (section C decides which); until then the IPC hook pattern used for the divider (`sideBySide drag …`) can drive a drag's *decisions* — begin, hover target, modifiers, drop — without a real pointer, and asserts on the filesystem.
+- `tst_DragDrop.qml` grows the table above: each source → target pair's default, each modifier overriding it, ~~link offered only local → local,~~ the trash and refused targets, modifiers read at drop time. **And `tests/qml-drag/tst_RealDrag.qml`**, 11 real drags under Qt's `minimal` platform, which is where the modifiers are really proven (plan 28).
+- ~~`tst_SpringLoad.qml`~~ — spring-loading is not in 0.1.0.
+- e2e `drag_between_panes`: **built, in the default run, 98 checks**, driven by `shell drop <uris> <dest> <modifiers>` — the IPC hook hands `Pane.dropInto` the object Qt would give it, so a flow tests the real path and asserts on the filesystem. No compositor that delivers a held button is needed, and none exists with the tools we have.
 - By hand, once: drag a folder of a few thousand files local → remote with the orb up, cancel it halfway, and check both ends.
 
 ## L. Signing in to an SFTP location (built 2026-09-19)
@@ -302,7 +319,7 @@ Reported as "dragging to white space does not download or move — you have to h
 
 ## M. Code scan, 2026-09-19 (leaks, carelessness, duplication)
 
-The open items below have a plan of their own: **`30-code-health.md`** (W1–W8, in order, each with its tests). **W1–W3 — LocalSend's fingerprint check, the mirror plan store, and the two git caches — were built the same day**; what is open below is W4–W8.
+The open items below have a plan of their own: **`30-code-health.md`** (W1–W8, in order, each with its tests). **W1–W3 — the share plugin's fingerprint check, the mirror plan store, and the two git caches — were built the same day**; ~~what is open below is W4–W8~~ — **W4 and W5 were built in plan 31's phases 0 and 2, and W6–W8 are 0.1.1** (D23).
 
 Clippy is all but clean (8 style warnings, none a defect). Per-client daemon state is released on disconnect; the job list, the listing cache, the row window and the thumbnail path are all bounded.
 
@@ -317,7 +334,7 @@ Clippy is all but clean (8 style warnings, none a defect). Per-client daemon sta
 - `icons.rs` lookup cache and `listing::names` are unbounded too, but bounded in practice (names × sizes; uids).
 
 **Open — security, found on the way**
-- **LocalSend sends to whoever answers.** `kiki-plugin-share-localsend/src/http.rs` accepts any TLS certificate (`AcceptAll`) and never compares it with the fingerprint the peer announced, which is the protocol's whole identity check. Anyone on the LAN who answers first gets the files. Verify the certificate's SHA-256 against the announced fingerprint. (Mail and FTPS do verify: web PKI or a pinned fingerprint.)
+- **The nearby-device share plugin sent to whoever answered**: it accepted any TLS certificate and never compared it with the fingerprint the peer had announced, which is that protocol's whole identity check. **Closed twice over** — fixed as W1 on 2026-09-19, and the plugin itself removed from 0.1.0 on 2026-09-21. The rule is kept in `30-code-health.md` for whoever writes the next one. (Mail and FTPS do verify: web PKI or a pinned fingerprint.)
 
 **Open — carelessness**
 - `Theme.qml` re-reads three or four files every 2 s for ever, in every window, because a watch on a file behind Omarchy's `current` symlink dies when the theme changes. Watch the symlink's directory (or `theme.name`, which is already watched and changes with it) and reload the rest on that.
@@ -332,6 +349,8 @@ Clippy is all but clean (8 style warnings, none a defect). Per-client daemon sta
 - Rust: the rustls verifier boilerplate was copied between the LocalSend and mail plugins — settled on 2026-09-21 by LocalSend going, leaving mail's the only copy; `Count` done-events are built identically in three places in `server.rs`; `location.get("config")…unwrap_or(empty)` three times in `locations.rs`; the `uris` array parse twice on adjacent lines of `server.rs`. The SFTP/FTPS/MTP/gio plugins share trait signatures, not bodies — that is the SDK working, not duplication.
 
 ## Order
+
+> **Superseded 2026-09-19 by `31-final-implementation-plan.md`**, which took this list, added what the audit of every plan's Verification found, and ran it as eleven phases. The order below is kept for the reasoning in it — why J comes before A, why H comes after I — not as the plan of record. Where the two disagree, plan 31 wins.
 
 1. **G, first two bullets and the commit** — cheap, and everything after it is easier to review on a clean tree.
 2. **J** — before anyone drives Side by Side by hand: it changes what the view is called, where its control is, how the panes are sized, how it is entered and what it writes, and section A's tests should be written once, against the structure that ships.
@@ -353,8 +372,8 @@ Clippy is all but clean (8 style warnings, none a defect). Per-client daemon sta
 - Turning Side by Side off leaves the focused pane's folder on screen with its selection, focus on it, and the other folder waiting for the next toggle.
 - Side by Side is a toolbar button of its own and is absent from the view menu; its divider drags, holds its ratio through a window resize, and comes back after a restart.
 - The view is called Side by Side everywhere a user can read it, the operation is still called Mirror, and a Side by Side session leaves `views.toml` byte-identical.
-- Every view is a drag source and a drop target; the default action and each modifier match section K's tables for every local/remote pair, shown while dragging; a folder held over flashes and opens, and the target view is back where it started after the drop.
-- `tests/e2e/run.sh --flow transfer_local`, `transfer_download` and `transfer_upload` pass on the large fixture, cancel and mid-run failure included, with throughput and peak RSS recorded beside the plan 26 baselines.
+- Every view is a drag source and a drop target; the default action and each modifier match section K's tables for every local/remote pair, shown by the cursor while dragging. ~~a folder held over flashes and opens~~ — nothing springs open, and nothing offers to link.
+- `tests/e2e/run.sh --flow transfer_local` and `--flow transfer_remote` pass on the large fixture, cancel and mid-run failure included, with throughput and peak RSS recorded beside the plan 26 baselines.
 - The activity orb shows running, failed and idle correctly through all three transfer flows, its popup lists every job with its state, and `tst_ActivityOrb` is green.
 - Every location kind in `plugin::LOCATION_KINDS` has been opened against real hardware or a real server once, and every kind not in it is listed under "Out of scope for 0.1.0".
 - A session's shell log is free of the four warnings in F.

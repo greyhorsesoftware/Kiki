@@ -1,14 +1,18 @@
 # 17 — Devices (phones and cameras)
 
+**Status:** not in 0.1.0 (plugins stay in the tree; detection off).
+
 Builds on: `06-remote-locations.md` (plugin processes, plugin API), `01-daemon-and-listing.md` (windows, previews), `03-inspector.md` (thumbnails), `04-operations-and-undo.md` (jobs).
 
-**Status**: generated. `kiki-plugin-mtp`, `kiki-plugin-ptp` and `kiki-plugin-afc` link their C libraries through hand-written `extern "C"` blocks (no bindgen, no build script), so they type-check on the planning machine and link on Omarchy with `libmtp`, `libgphoto2` and `libimobiledevice` installed. The workspace excludes them from macOS test runs (`--exclude kiki-plugin-mtp --exclude kiki-plugin-ptp --exclude kiki-plugin-afc`); CI installs the libraries. **First build on Omarchy**: compare the struct layouts (`LIBMTP_file_t`, `LIBMTP_devicestorage_t`, `CameraFileInfo`) and the constants (`LIBMTP_FILETYPE_UNKNOWN`, `LOCKDOWN_E_*`) against the installed headers before trusting a listing. Hotplug is a two-second sysfs rescan rather than a netlink listener (same result, no socket code); the daemon side is `kikid/src/devices.rs`.
+**Where the code stands (2026-09-21).** ~~**Status**: generated.~~ The three plugins are generated and still here: `kiki-plugin-mtp`, `kiki-plugin-ptp` and `kiki-plugin-afc` link their C libraries through hand-written `extern "C"` blocks (no bindgen, no build script). They are workspace `members` but **not `default-members`**, so a plain `cargo build` does not build them and the PKGBUILD installs none of them; one CI job still builds them with `-p` and installs their libraries, or they would rot unseen. `plugin::LOCATION_KINDS` is `ftps`, `sftp`, `smb` — `plugin::ships("mtp" | "ptp" | "afc")` is false — so **detection is off**: `devices::start` does not spawn its thread when no device kind ships, `devices::openable` drops any device whose kind this build does not ship, and the sidebar draws no Devices section (tested, with an assertion that sends whoever ships a device kind back here). None of the three has ever been run against real hardware.
+
+**Bringing one back** is: its entry in the workspace's `default-members`, its kind in `plugin::LOCATION_KINDS`, its line in the PKGBUILD's install loop, and the device libraries back in `depends`. **First build on Omarchy**: compare the struct layouts (`LIBMTP_file_t`, `LIBMTP_devicestorage_t`, `CameraFileInfo`) and the constants (`LIBMTP_FILETYPE_UNKNOWN`, `LOCKDOWN_E_*`) against the installed headers before trusting a listing. Hotplug is a two-second sysfs rescan rather than a netlink listener (same result, no socket code); the daemon side is `kikid/src/devices.rs`.
 
 ## Goal
 
 A plugged-in Android phone (MTP), iPhone (AFC) or camera (PTP) appears in a **Devices** section of the sidebar within a second, browses like any other location with thumbnails and previews, supports copy in both directions and delete where the protocol allows, and disappears cleanly on unplug or eject. Each protocol is a plugin process; the daemon adds hotplug detection and nothing device-specific.
 
-> **Not in the default build.** `plugin::LOCATION_KINDS` and the workspace's `default-members` ship only `sftp` and `ftps` today; this plan's plugin builds with `-p` and needs its entry added back to both lists (see `06-remote-locations.md`).
+> **Not in the default build, and not in 0.1.0** (owner, 2026-09-19, decision 1). `plugin::LOCATION_KINDS` is `ftps`, `sftp`, `smb`; the workspace's `default-members` match it. Everything below is the design, held for a later release.
 
 ## Plugins
 
@@ -42,7 +46,7 @@ Three binaries following `API-PLUGIN.md`, each linking its C library so those de
 - **Eject** (context menu, `Ctrl+E` with the device selected, or the eject icon on hover) disconnects the session and, for MTP and AFC, sends the protocol's close so the phone stops showing "connected to computer". Unplugging without eject during a transfer fails that job with `Network` and removes the entry.
 - Copy between a device and anywhere else is a plan-04 job like any transfer; the journal records only what can be undone (a copy to the device can be undone by deleting; a copy from the device likewise).
 - If another virtual-filesystem daemon (gvfs, kio) has already claimed the device, the plugin reports `Busy` with the process name and the sidebar entry shows it instead of failing silently.
-- Permissions: the `libmtp`, `libgphoto2` and `usbmuxd` packages ship udev rules that grant the seated user access through logind; the PKGBUILD depends on them and no group changes are needed.
+- Permissions: the `libmtp`, `libgphoto2` and `usbmuxd` packages ship udev rules that grant the seated user access through logind, so no group changes are needed. ~~the PKGBUILD depends on them~~ **Amended 2026-09-21:** it does not — they went with this plan, and come back with it.
 
 ## Protocol additions
 
