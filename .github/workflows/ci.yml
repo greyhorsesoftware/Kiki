@@ -25,9 +25,9 @@ jobs:
       - name: Install toolchain
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf \
-            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng libmtp libgphoto2 libimobiledevice usbmuxd glib2 gvfs gvfs-smb
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -35,22 +35,11 @@ jobs:
             target
           key: cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
       - name: Format and lint
-        # `make lint` covers what the package ships (the workspace's default members); the
-        # optional location plugins are built separately below so they cannot rot.
         run: make lint
       - name: Unit and integration tests
         run: make test-rust
       - name: Protocol and plugin contract tests
         run: cargo test --test '*' -- --include-ignored
-      # Not in 0.1.0 (plan 31), but still in the tree: built here so they cannot rot. This is the
-      # only job that needs libmtp, libgphoto2 and libimobiledevice.
-      - name: Build the device plugins, which are not in the default build
-        run: cargo build --release -p kiki-plugin-mtp -p kiki-plugin-ptp -p kiki-plugin-afc
-      - name: JSON reader fuzz smoke
-        run: |
-          cargo install cargo-fuzz --locked
-          cargo +nightly fuzz run json_reader -- -max_total_time=60 || echo "::warning::fuzz target not present yet"
-        continue-on-error: true
 
   qml:
     name: QML leaf and interaction tests
@@ -64,7 +53,7 @@ jobs:
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed make xorg-server-xvfb \
             qt6-base qt6-declarative qt6-svg qt6-multimedia qt6-multimedia-ffmpeg ttf-liberation
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Run qmltestrunner
         run: |
           # The leaf and interaction tests (plan 28): they drive synthetic mouse and key input,
@@ -89,12 +78,12 @@ jobs:
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo glib2 gvfs gvfs-smb
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: makepkg
         run: |
           chown -R builder .
           sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kiki-package-${{ matrix.arch }}
           path: packaging/kiki-*.pkg.tar.zst
@@ -114,10 +103,10 @@ jobs:
             xdg-desktop-portal gnome-keyring openssh vsftpd ffmpeg python nodejs npm \
             qt6-base qt6-declarative qt6-wayland
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Quickshell from the AUR (cached)
         id: qs-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /home/builder/quickshell/*.pkg.tar.zst
           key: quickshell-${{ hashFiles('.github/quickshell-pin') }}
@@ -131,7 +120,7 @@ jobs:
       - name: Install Quickshell and kiki
         run: |
           pacman -U --noconfirm /home/builder/quickshell/*.pkg.tar.zst
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: kiki-package-x86_64
           path: pkg
@@ -146,42 +135,9 @@ jobs:
       - name: Show the logs
         if: always()
         run: tail -n 40 tests/e2e/out/*.log || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: e2e-diffs
           path: tests/e2e/out/**
 
-  bench:
-    name: Benchmarks (x86_64)
-    runs-on: ubuntu-latest
-    container: archlinux:latest
-    needs: rust
-    steps:
-      - name: Install toolchain
-        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf glib2 gvfs gvfs-smb
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-bench-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build kikid (release)
-        run: cargo build --release -p kikid
-      - name: Generate trees and measure
-        run: |
-          target/release/kikid bench gen all /tmp/kiki-bench
-          target/release/kikid bench run /tmp/kiki-bench --json bench-linux-x86_64.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bench-linux-x86_64
-          path: bench-linux-x86_64.json
-      - name: Compare with the checked-in baseline
-        run: |
-          if [ -f bench/baseline-linux-x86_64.json ]; then
-            target/release/kikid bench compare bench/baseline-linux-x86_64.json bench-linux-x86_64.json --tolerance 40
-          else
-            echo "no baseline yet; copy the artifact to bench/baseline-linux-x86_64.json to start comparing"
-          fi

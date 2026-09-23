@@ -40,7 +40,7 @@ pub fn find_binary(scheme: &str) -> Option<PathBuf> {
 const SERVICES: &[&str] = &["dbus"];
 
 /// The location kinds this build ships. Discovery, `Describe`, the Add-location dialog and
-/// `AddLocation` never see anything else, so this list and the workspace's default members are
+/// `AddLocation` never see anything else, so this list and the workspace's members are
 /// together the whole answer to "which protocols does this kiki speak". The stub is the contract
 /// test's plugin, so it counts only under the `stub` feature.
 ///

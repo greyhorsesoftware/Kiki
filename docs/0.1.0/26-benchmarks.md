@@ -1,6 +1,6 @@
 # 26 — Benchmarks
 
-**Status:** the daemon half is built and in CI, with a transfer profile; the shell half is not in 0.1.0 (D20). Scrolling has a measurement of its own — `scroll_perf` and `bench/scroll-history.jsonl`, below.
+**Status:** the daemon half is built and run by hand (not in CI since 2026-09-23, see below), with a transfer profile; the shell half is not in 0.1.0 (D20). Scrolling has a measurement of its own — `scroll_perf` and `bench/scroll-history.jsonl`, below.
 
 Builds on: `01-daemon-and-listing.md` (the listing budgets), `11-testing.md` (the performance table and the e2e harness), `10-polish-and-packaging.md` (the performance pass).
 
@@ -65,7 +65,7 @@ Every `_ms` and `_us` metric in the baseline is compared to the new run; a value
 ## Baselines and CI
 
 - `bench/baseline-<os>-<arch>.json` is checked in per machine class. `macos-aarch64` is the planning Mac, useful only for relative comparison of daemon changes. **`linux-x86_64` is the one that matters** and is now recorded (below); every baseline carries a `machine` object — CPU, cores, memory, kernel, filesystem and the directory the trees were generated in — because a listing benchmark measures the filesystem as much as the code.
-- The CI `bench` job (x86_64, after the test job) generates `all`, runs the suite on a release build, uploads the JSON as an artifact, and compares against `bench/baseline-linux-x86_64.json` with a 40 percent tolerance when that file exists. Runner speed varies between GitHub hosts, so the tolerance is loose and the point is catching order-of-magnitude regressions, not tuning.
+- ~~The CI `bench` job (x86_64, after the test job) generates `all`, runs the suite on a release build, uploads the JSON as an artifact, and compares against `bench/baseline-linux-x86_64.json` with a 40 percent tolerance when that file exists. Runner speed varies between GitHub hosts, so the tolerance is loose and the point is catching order-of-magnitude regressions, not tuning.~~ **Removed 2026-09-23** (owner). The baseline is the owner's machine (i5-1245U, NVMe, btrfs) and a GitHub runner is a different machine on a throttled disk: its first run reported 22 regressions, `copy64m_ms` at +5765 per cent among them, and no tolerance separates a runner from a real regression. Benchmarks are run **by hand, on the baseline's machine**, before a tag and after any change to listing, transfer, index or mirror code: `kikid bench run <tree> --json out.json && kikid bench compare bench/baseline-linux-x86_64.json out.json`.
 - Docs-only commits (`docs/**`, any `*.md`) do not run CI at all.
 
 ## The Linux baseline (2026-09-19)

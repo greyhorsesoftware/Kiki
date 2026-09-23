@@ -4,7 +4,7 @@
 //! **0.1.0 installs it as `kiki-plugin-smb` and nothing else.** WebDAV and AFP are out of 0.1.0
 //! (owner, 2026-09-21), so `dav` and `afp` are kinds this binary would answer for and no build
 //! ever runs it under: the arms below are what putting either back would need, together with
-//! `plugin::LOCATION_KINDS`, the workspace's default members and the package's install line.
+//! `plugin::LOCATION_KINDS` and the package's install line.
 //!
 //! SMB means SMB2 or later. SMB1/NT1 is not supported and will not be (`25-smb.md`); nothing here
 //! lowers libsmbclient's own minimum, and a server that offers only SMB1 is refused by name.

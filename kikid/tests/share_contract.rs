@@ -124,7 +124,7 @@ fn the_share_plugins_describe_themselves_and_share_rs_hands_them_local_files() {
         std::os::unix::fs::symlink(&bin, plugins.join(format!("kiki-plugin-share-{id}"))).unwrap();
         real.push(id);
     }
-    assert_eq!(real.len(), 2, "run `cargo test` over the workspace: the share plugins are default members");
+    assert_eq!(real.len(), 2, "run `cargo test` over the workspace: the share plugins are members");
 
     // ---------------------------------------------------------------- what they say about themselves
     #[rustfmt::skip]

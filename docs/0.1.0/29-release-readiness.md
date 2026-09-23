@@ -35,7 +35,7 @@ Write down what breaks; fix; then freeze it in tests:
 
 ## B. Devices and network locations: generated, not shipped (plans 17, 25)
 
-- `kiki-plugin-mtp`, `kiki-plugin-afc` and `kiki-plugin-gio` build on this machine. `kiki-plugin-ptp` does not link: `libgphoto2` is not installed (`-lgphoto2`, `-lgphoto2_port`). `sudo pacman -S libgphoto2`, rebuild.
+- ~~`kiki-plugin-mtp`, `kiki-plugin-afc` and `kiki-plugin-gio` build on this machine. `kiki-plugin-ptp` does not link: `libgphoto2` is not installed (`-lgphoto2`, `-lgphoto2_port`). `sudo pacman -S libgphoto2`, rebuild.~~ Moot 2026-09-23: the device plugins left the tree.
 - None of the four has been run against hardware or a server. Each needs one real session: an Android phone (MTP), an iPhone (AFC), a camera (PTP), an **SMB share** through `gvfsd` (GIO). List, copy out, copy in, eject / unmount, hotplug while kiki is open. **The WebDAV session is not owed any more**: WebDAV was removed from 0.1.0 (owner, 2026-09-21) precisely because it had never had one — `25-smb.md`. The SMB session gains one line: a server that offers only SMB1 is refused by name, not with a status code.
 - **A build does not ship them.** `plugin::LOCATION_KINDS` is `["ftps", "sftp", "smb"]` and the workspace's `default-members` omits the device plugins, so the app cannot open those location kinds even when the plugin binary is present. **Decided per kind:** SMB is in; MTP, AFC, PTP, WebDAV and AFP are not, and are under "Out of scope for 0.1.0" in `CORE.md` so the plan and the build agree.
 

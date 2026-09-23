@@ -24,11 +24,10 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
   pool with lazy viewport windows.
 - **`crates/kiki-plugin-sdk`** and **`plugins/`**: location plugins (`sftp`, `ftps`,
   `gio` — installed as `kiki-plugin-smb`; its `dav` and `afp` arms are in the source and
-  no build runs it under those names — plus `mtp`, `ptp`, `afc`, which are in the tree
-  and do not ship), the `dbus` service plugin, and share plugins (`share-mail`,
-  `share-tailscale`). Each is a separate process spawned on use, spoken to over
-  stdin/stdout frames, running concurrently inside the plugin with cancellation. The
-  device plugins hand-write `extern "C"` FFI; `dbus` uses zbus; `sftp`/`ftps` use tokio,
+  no build runs it under those names), the `dbus` service plugin, and share plugins
+  (`share-mail`, `share-tailscale`). Each is a separate process spawned on use, spoken to
+  over stdin/stdout frames, running concurrently inside the plugin with cancellation.
+  `dbus` uses zbus; `sftp`/`ftps` use tokio,
   russh and suppaftp; the share plugins spawn CLIs or speak SMTP over rustls.
   **0.1.0 ships three location kinds — `ftps`, `sftp`, `smb` (`plugin::LOCATION_KINDS`)
   — and two share plugins.** WebDAV, AFP, LocalSend, MTP, PTP and AFC are not in it; a

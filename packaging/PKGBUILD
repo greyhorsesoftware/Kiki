@@ -48,8 +48,8 @@ package() {
   done
   # A location kind is the suffix of the name the plugin is run by: gio goes in as smb.
   install -Dm755 "${t}/kiki-plugin-gio" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-smb"
-  # The device plugins (ptp mtp afc), WebDAV and AFP are not in 0.1.0: adding one back is this
-  # list, the workspace's default-members and plugin::LOCATION_KINDS.
+  # WebDAV and AFP are not in 0.1.0: adding one back is this list and plugin::LOCATION_KINDS.
+  # The device plugins (ptp mtp afc) are in git history, not the tree (plan 17).
   install -Dm755 "${_srcdir}/packaging/bin/kiki" "${pkgdir}/usr/bin/kiki"
 
   install -d "${pkgdir}/usr/share/kiki"

@@ -1092,13 +1092,6 @@ name = "kiki-json"
 version = "0.1.0"
 
 [[package]]
-name = "kiki-plugin-afc"
-version = "0.1.0"
-dependencies = [
- "kiki-plugin-sdk",
-]
-
-[[package]]
 name = "kiki-plugin-dbus"
 version = "0.1.0"
 dependencies = [
@@ -1124,20 +1117,6 @@ version = "0.1.0"
 dependencies = [
  "gio",
  "glib",
- "kiki-plugin-sdk",
-]
-
-[[package]]
-name = "kiki-plugin-mtp"
-version = "0.1.0"
-dependencies = [
- "kiki-plugin-sdk",
-]
-
-[[package]]
-name = "kiki-plugin-ptp"
-version = "0.1.0"
-dependencies = [
  "kiki-plugin-sdk",
 ]
 

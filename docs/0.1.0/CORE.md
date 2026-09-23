@@ -64,7 +64,7 @@ Each step ships on its own and is verified before the next starts.
 | 10 | `10-polish-and-packaging.md` | all | Theme coverage, PKGBUILD, Omarchy install hook (the cheat sheet was removed on 2026-09-21: `Ctrl+?` opens the rebinding window, which held the same rows) |
 | 12 | `12-search.md` | 1, 2, 6 | In-folder filter, the name index for Everywhere search, remote walks (ships after 6, before 10) |
 | 13 | `14-open-in.md` | 2, 9 | "Open in…": one TOML list of command templates for editors, AI harnesses and other tools; sessions with a reuse channel; toolbar button, context submenu, `e`, settings page (ships after 9) |
-| 17 | `17-devices.md` | 1, 3, 4, 6 | **Not in 0.1.0.** Devices over MTP, AFC and PTP: the three plugins stay in the tree and build by name, but no kind ships, detection does not run and the sidebar draws no Devices section |
+| 17 | `17-devices.md` | 1, 3, 4, 6 | **Not in 0.1.0.** Devices over MTP, AFC and PTP: the three plugins left the tree on 2026-09-23 (git history has them); no kind ships, detection does not run and the sidebar draws no Devices section |
 | 18 | `18-share.md` | 4, 5, 6, 14 | Share menu with share plugins as processes; **Mail and Tailscale (Taildrop) ship**. LocalSend was built and removed on 2026-09-21; Messages and AirDrop (OpenDrop over OWL) were removed before that (ships after 14, before 10) |
 | 19 | `19-ai-query.md` | 3, 4, 6, 13, 14 | **Not in 0.1.0.** The Jarvis panel — a chat panel with local answers and a CLI in print mode — is gone; what remains is "Open AI here…", which starts the chosen AI's own command-line tool in a terminal beside the files |
 | 20 | `20-settings.md` | every plan with a setting | One Settings window with a page per area; keymap served from one table (ships last before 10) |
@@ -89,7 +89,7 @@ Why this order: listing is the performance floor everything sits on, so it is me
 
 Tabs, bulk rename, further location plugins (S3 and other object stores; SMB is plan 25), iPhone app document folders, bidirectional sync, following symlinks, mirroring permissions.
 
-**Locations and devices.** MTP (Android), AFC (iPhone) and PTP (cameras): the three plugins stay in the tree and build by name, but no device kind ships and detection does not run (`17-devices.md`). AFP. The `smb://` scheme handler and its dialog prefill — an `smb://` URI opens in whatever else claims it (`25-smb.md`). `ssh-agent` and `~/.ssh/config`: an SFTP location carries its own key or password, and nothing reads the agent or the config file (`06-remote-locations.md`).
+**Locations and devices.** MTP (Android), AFC (iPhone) and PTP (cameras): the three plugins are in git history, not the tree, since 2026-09-23; no device kind ships and detection does not run (`17-devices.md`). AFP. The `smb://` scheme handler and its dialog prefill — an `smb://` URI opens in whatever else claims it (`25-smb.md`). `ssh-agent` and `~/.ssh/config`: an SFTP location carries its own key or password, and nothing reads the agent or the config file (`06-remote-locations.md`).
 
 **Sending.** Messages and AirDrop (OpenDrop over OWL).
 

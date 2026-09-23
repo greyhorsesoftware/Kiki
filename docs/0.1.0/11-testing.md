@@ -120,7 +120,7 @@ Through the IPC geometry query, assert after each screen:
 
 ## Performance tests
 
-**The shell half is not in 0.1.0 (D20, 2026-09-21)**; none of the budgets below is asserted in a test. What is measured: the daemon's side in `bench`, in CI, with a transfer profile (plan 26); `scroll_perf` and `gallery_perf`, by name, which record times and peak RSS rather than failing on a threshold; and the watch budget, which *is* asserted (`kikid/tests/watch.rs`, plan 01's 100 ms). Launch-to-paint is unmeasured.
+**The shell half is not in 0.1.0 (D20, 2026-09-21)**; none of the budgets below is asserted in a test. What is measured: the daemon's side in `bench`, by hand on the baseline's machine (plan 26; CI's runners are not comparable); `scroll_perf` and `gallery_perf`, by name, which record times and peak RSS rather than failing on a threshold; and the watch budget, which *is* asserted (`kikid/tests/watch.rs`, plan 01's 100 ms). Launch-to-paint is unmeasured.
 
 Run in the same headless runtime on a quiet CI machine, with generous thresholds that still catch order-of-magnitude regressions:
 
@@ -147,7 +147,7 @@ Quickshell timestamps the events; the driver reads them over IPC.
 
 ## CI
 
-**As built (2026-09-21)**, `.github/workflows/ci.yml` has five jobs: daemon and plugins per architecture (`make lint`, `make test-rust`, the ignored protocol and contract tests, a build of the device plugins so they do not rot unseen, a JSON fuzz smoke run); QML under Qt with no compositor; a package build per architecture; **e2e under `cage` against the *installed* package**; and benchmarks. There is no visual, layout or performance job.
+**As built (2026-09-23)**, `.github/workflows/ci.yml` has four jobs: daemon and plugins per architecture (`make lint`, `make test-rust`, the ignored protocol and contract tests); QML under Qt with no compositor; a package build per architecture; and **e2e under `cage` against the *installed* package**. There is no visual, layout or performance job; the benchmark job that existed until 2026-09-23 compared a GitHub runner against the owner's machine and could only fail (plan 26).
 
 - `cargo test` on every push.
 - `qmltestrunner` on every push.
