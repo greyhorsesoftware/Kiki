@@ -503,13 +503,28 @@ FloatingWindow {
         menuUnder(crumb, items)
     }
     /// The gear: settings, the keymap, and who made this.
-    function gearMenu() {
-        menuUnder(toolbar.gearButton, [
+    function gearItems() {
+        return [
             { label: "Settings…", key: keymap.chordFor("settings"), action: () => settingsWin.open("general") },
             { label: "Keyboard shortcuts…", key: keymap.chordFor("shortcuts"), action: () => keysWin.open() },
             { label: "About kiki…", sep: true, action: () => aboutDlg.open() },
-        ])
+        ]
     }
+    function gearMenu() { menuUnder(toolbar.gearButton, gearItems()) }
+    /// The toolbar folded: every button it hides, as one menu — the views as a submenu, the
+    /// gear's rows at the bottom.
+    function hamburgerItems() {
+        const items = [
+            { label: "Search everywhere…", key: keymap.chordFor("search"), action: () => win.openSearch(leftFilter.text) },
+            { label: win.inspectorRequested ? "Hide info" : "Show info", key: keymap.chordFor("inspector"), enabled: win.pane.view !== "columns" && win.inspectedUri !== "", action: () => win.inspectorRequested = !win.inspectorRequested },
+        ]
+        if (win.remoteOpen || win.split) items.push({ label: win.split ? "One pane" : "Side by Side", key: keymap.chordFor("viewMirror"), action: () => win.toggleMirrorView() })
+        items.push({ label: "View", sep: true, items: win.viewMenuItems() })
+        items.push({ label: win.sidebarShown ? "Hide favorites" : "Show favorites", key: keymap.chordFor("sidebar"), action: () => win.sidebarShown = !win.sidebarShown })
+        const gear = win.gearItems(); gear[0].sep = true
+        return items.concat(gear)
+    }
+    function hamburgerMenu(button) { menuUnder(button, hamburgerItems()) }
     /// The rows and their ticks are `viewmenu.js`'s (tested there); what each does is here.
     /// Ticked for the FOCUSED pane's view, side by side as well — each pane has its own. (The
     /// ticks used to be withheld when split: a leftover from when Mirror was itself a view and
@@ -1213,6 +1228,9 @@ FloatingWindow {
             onToggleMirror: win.toggleMirror()
             onNavigate: uri => win.navigateFromTitle(uri)
             split: win.split; mirror: win.mirrorOpen
+            inspector: win.inspectorRequested
+            inspectorAvailable: win.pane.view !== "columns" && win.inspectedUri !== ""
+            onToggleInspector: win.inspectorRequested = !win.inspectorRequested
             remoteHost: win.split ? win.remoteHost() : ""
             remoteOpen: win.remoteOpen
             crumbUri: !win.split && win.activeView && win.activeView.shownUri ? win.activeView.shownUri : ""
@@ -1222,6 +1240,7 @@ FloatingWindow {
             onViewMenu: win.viewMenu()
             onPathMenu: win.pathMenu()
             onSettings: win.gearMenu()
+            onHamburger: button => win.hamburgerMenu(button)
             onToggleSearch: win.openSearch(leftFilter.text)
             sidebarShown: win.sidebarShown
             onToggleSidebar: win.sidebarShown = !win.sidebarShown

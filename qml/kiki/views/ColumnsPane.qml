@@ -74,8 +74,11 @@ Item {
     // arrived from the daemon yet (resolved by onRowsUpdated below).
     property int focusCol: 0
     property int pendingIndex: -1
-    /// 0 until someone drags the info column's edge, and that width from then on.
-    property int inspectorW: 0
+    /// The width the info panel was last dragged to — the window's panel and this column share
+    /// the setting — or 0 for "as wide as it may be". It used to start at 0 whatever the setting
+    /// said, so the column ignored a panel the owner had made narrower and came up at its
+    /// widest beside a single column.
+    property int inspectorW: Kiki.Settings.view.inspectorWidth || 0
     /// The info column is at its widest by default and drags narrower, never wider: the columns
     /// are what the view is for. Computed without reference to `columnWidth`, or the two would
     /// chase each other.

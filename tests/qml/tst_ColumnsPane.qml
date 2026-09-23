@@ -231,11 +231,13 @@ TestCase {
         fake.tree["file:///home/t/Projects"] = [fake.file("deep.txt")]
         const folder = findChild(cols, "colrow-0-0")
         mouseClick(folder, folder.width / 2, folder.height / 2)
-        tryVerify(() => findChild(cols, "colrow-1-0") !== null)
+        // The Row places the new column on the next frame; until then it sits on the first and
+        // a click on its row lands in column 0 (seen once in a full run).
+        tryVerify(() => findChild(cols, "colrow-1-0") !== null && findChild(cols, "column-1").x > 0)
         const row = findChild(cols, "colrow-1-0")
         wait(600)                                   // not the back half of a double click
         mouseClick(row, row.width / 2, row.height / 2)
-        compare(cols.focusCol, 1)
+        tryCompare(cols, "focusCol", 1)
         cols.beginRename()
         const editor = editorIn(row)
         verify(editor !== null && editor.visible)
@@ -693,6 +695,17 @@ TestCase {
         verify(col)
         cols.inspectorW = 100
         verify(cols.inspectorWidth >= 280, "dragged to " + cols.inspectorWidth)
+        cols.inspectorW = 0
+    }
+
+    // The info column starts at the width the panel was last dragged to — the setting the
+    // window's panel keeps — not at its widest.
+    function test_the_info_column_starts_at_the_remembered_width() {
+        const was = Kiki.Settings.view.inspectorWidth
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { inspectorWidth: 300 })
+        cols.inspectorW = Kiki.Settings.view.inspectorWidth || 0
+        compare(cols.inspectorWidth, 300)
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { inspectorWidth: was })
         cols.inspectorW = 0
     }
 }

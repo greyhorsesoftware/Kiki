@@ -11,7 +11,20 @@ Rectangle {
     /// buttons do not slide about when the layout is toggled.
     readonly property bool pathShown: !split
     property string home: ""
+    /// The info panel is up. The button beside Search lights while it is, and toggles it.
     property bool inspector: false
+    /// Columns view has an info column of its own and the window's panel never shows there, and
+    /// with nothing selected in list, icon or gallery view there is nothing to show: the button
+    /// dims either way.
+    property bool inspectorAvailable: true
+    signal toggleInspector()
+    /// Too narrow for the buttons: they fold into one, a hamburger, whose menu carries every
+    /// one of them (owner, 2026-09-22). `hamburger(pos)` asks the window for that menu.
+    signal hamburger(var button)
+    /// The path keeps at least this much, or the buttons fold. Worked out from the buttons'
+    /// fixed sizes, never from what is showing, so folding cannot feed back into itself.
+    readonly property int pathMin: 180
+    readonly property bool compact: width - 16 - (34 + 34 + 34 + 52 + 48 + 34) - 4 * 6 < pathMin
     property bool split: false
     property bool mirror: false
     signal toggleMirror()
@@ -80,7 +93,7 @@ Rectangle {
     ToggleButton {
         id: sideBySideBtn
         objectName: "side-by-side"
-        visible: (bar.remoteOpen || bar.split) && bar.width >= 360
+        visible: (bar.remoteOpen || bar.split) && !(bar.compact && !bar.split)
         z: 2
         anchors.verticalCenter: parent.verticalCenter
         x: bar.split ? mirrorBtn.x - width - 4 : row.x + sbsSlot.x
@@ -110,9 +123,9 @@ Rectangle {
         // The buttons keep their natural size and the path takes the rest, so the toolbar fits
         // the window instead of spilling over the sidebar. The view button is the first to go
         // when the window is too narrow for it.
-        readonly property int fixedCount: 3 + (viewButton.visible ? 1 : 0) + (sbsSlot.visible ? 1 : 0)
-        readonly property int fixedWidth: sidebarBtn.width + (viewButton.visible ? viewButton.width : 0)
-            + (sbsSlot.visible ? sbsSlot.width : 0) + searchBtn.width + gearBtn.width
+        readonly property int fixedCount: bar.compact ? 2 : 4 + (viewButton.visible ? 1 : 0) + (sbsSlot.visible ? 1 : 0)
+        readonly property int fixedWidth: sidebarBtn.width + (bar.compact ? menuBtn.width
+            : infoBtn.width + (viewButton.visible ? viewButton.width : 0) + (sbsSlot.visible ? sbsSlot.width : 0) + searchBtn.width + gearBtn.width)
         readonly property int freeWidth: Math.max(0, width - fixedWidth - spacing * fixedCount)
         // Open, the field grows out of the glass and the path gives up the room; it never takes
         // the path's place entirely.
@@ -137,18 +150,41 @@ Rectangle {
         }
         ToggleButton {
             id: searchBtn
+            visible: !bar.compact
             anchors.verticalCenter: parent.verticalCenter
             icon: "search"; tip: "Search everywhere (Ctrl+Shift+F)"
             onClicked: bar.toggleSearch()
         }
+        // The info panel, opened and closed (owner, 2026-09-22). The same toggle as Ctrl+I and
+        // the menu's Get info; lit while the panel is up.
+        ToggleButton {
+            id: infoBtn
+            objectName: "toolbar-info"
+            visible: !bar.compact
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "info"; active: bar.inspector && bar.inspectorAvailable
+            enabled: bar.inspectorAvailable
+            tip: bar.inspectorAvailable ? (bar.inspector ? "Hide info" : "Show info") + " (Ctrl+I)" : ""
+            onClicked: bar.toggleInspector()
+        }
         // Where the side-by-side button stands while there is one pane and a server in it: the
         // button itself floats (it moves to Mirror's side when on), and this keeps its room.
-        Item { id: sbsSlot; visible: sideBySideBtn.visible && !bar.split; width: sideBySideBtn.width; height: 1 }
-        ViewSwitcher { id: viewButton; visible: bar.width >= 360; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
+        Item { id: sbsSlot; visible: sideBySideBtn.visible && !bar.split && !bar.compact; width: sideBySideBtn.width; height: 1 }
+        ViewSwitcher { id: viewButton; visible: !bar.compact; anchors.verticalCenter: parent.verticalCenter; view: bar.pane.view; onMenu: bar.viewMenu() }
+        // Everything above, folded into one menu when there is no room for the buttons.
+        ToggleButton {
+            id: menuBtn
+            objectName: "toolbar-menu"
+            visible: bar.compact
+            anchors.verticalCenter: parent.verticalCenter
+            icon: "menu"; tip: "Menu"
+            onClicked: bar.hamburger(menuBtn)
+        }
         // A menu, not a button: the chevron says so, the way the view switcher does.
         Rectangle {
             id: gearBtn
             objectName: "gear"
+            visible: !bar.compact
             anchors.verticalCenter: parent.verticalCenter
             width: 48; height: 34; radius: 2
             color: gearHover.containsMouse ? Kiki.Theme.surface : "transparent"

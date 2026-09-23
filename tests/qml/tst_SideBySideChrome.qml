@@ -172,4 +172,21 @@ TestCase {
         compare(remote.uri, "sftp://homelab/srv/site")
     }
 
+
+    // ---------------------------------------------------------------- folding
+    // Too narrow for the buttons and they fold into one hamburger (owner, 2026-09-22); wide
+    // again, they come back. Worked out from the buttons' fixed sizes, so it cannot oscillate.
+    function test_the_buttons_fold_into_a_hamburger_when_the_bar_is_narrow() {
+        const was = bar.width
+        bar.width = 1000
+        verify(!bar.compact)
+        verify(findChild(bar, "toolbar-info").visible && findChild(bar, "gear").visible && !findChild(bar, "toolbar-menu").visible)
+        bar.width = 420
+        verify(bar.compact, "420 px and the buttons still stand: " + bar.width)
+        verify(findChild(bar, "toolbar-menu").visible)
+        verify(!findChild(bar, "toolbar-info").visible && !findChild(bar, "gear").visible && !bar.viewButton.visible, "a button survived the fold")
+        verify(bar.breadcrumb.width >= bar.pathMin - 1, "the path did not get its room: " + bar.breadcrumb.width)
+        bar.width = was
+        tryVerify(() => !bar.compact)
+    }
 }

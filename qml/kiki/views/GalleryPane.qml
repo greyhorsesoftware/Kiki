@@ -73,7 +73,9 @@ Item {
     readonly property int current: pane ? pane.selection.current : -1
     property var row: null
     function refreshRow() { row = (pane && current >= 0) ? pane.listing.row(current) : null }
-    onCurrentChanged: refreshRow()
+    // The strip follows the picture on the stage however it was chosen — a click on a tile at
+    // the edge, a script, the keys — not only after the keys, which were the one caller before.
+    onCurrentChanged: { refreshRow(); if (current >= 0) ensureVisible(current) }
     readonly property bool isImage: row && (row.kind === "image" || row.kind === "video")
     readonly property string uri: row && pane ? pane.childUri(row.name) : ""
     // Remote files cannot be handed to the loader as a path; their cached thumbnail stands in.
@@ -122,7 +124,7 @@ Item {
     /// writes `contentX` from C++ where no Behavior sees it, so the target is worked out here and
     /// animated; the tile is centred when there is room to, so the neighbours read both ways.
     function ensureVisible(i) {
-        const want = Math.max(0, Math.min(i * shotPitch - (strip.width - shotWidth) / 2, Math.max(0, strip.contentWidth - strip.width)))
+        const want = Math.max(-strip.leftMargin, Math.min(i * shotPitch - (strip.width - shotWidth) / 2, Math.max(-strip.leftMargin, strip.contentWidth - strip.width + strip.rightMargin)))
         if (Math.abs(want - strip.contentX) < 1) return
         glide.stop(); glide.from = strip.contentX; glide.to = want; glide.start()
     }
@@ -524,7 +526,10 @@ Item {
             height: parent.height
             anchors.verticalCenter: parent.verticalCenter
             anchors.horizontalCenter: parent.horizontalCenter
-            width: Math.min(parent.width - 16, Math.max(1, contentWidth))
+            // 6 px of the strip's own on either side of its content, inside its clip: the first
+            // and last tiles grow too, and were losing their outer edges to it.
+            width: Math.min(parent.width - 16, Math.max(1, contentWidth) + leftMargin + rightMargin)
+            leftMargin: 6; rightMargin: 6
             orientation: ListView.Horizontal; spacing: root.shotGap
             clip: true; reuseItems: true
             // A strip scrolls sideways whatever the wheel says: a mouse has only a vertical one,
@@ -537,14 +542,16 @@ Item {
                     const py = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 2
                     const d = px !== 0 ? px : py
                     if (d === 0) { event.accepted = false; return }
-                    strip.contentX = Math.max(0, Math.min(strip.contentX + d, Math.max(0, strip.contentWidth - strip.width)))
+                    strip.contentX = Math.max(-strip.leftMargin, Math.min(strip.contentX + d, Math.max(-strip.leftMargin, strip.contentWidth - strip.width + strip.rightMargin)))
                     event.accepted = true
                 }
             }
             model: root.pane ? root.pane.listing.count : 0
             onContentXChanged: root.syncStrip()
             onWidthChanged: root.syncStrip()
-            Component.onCompleted: root.syncStrip()
+            // Starts at its margin, not at 0, or the first tile sits 6 px into the clip.
+            Component.onCompleted: { contentX = -leftMargin; root.syncStrip() }
+            onCountChanged: if (contentX < -leftMargin || contentWidth <= width) contentX = -leftMargin
             Connections { target: root.pane ? root.pane.listing : null; function onReset() { strip.forceLayout() } }
             delegate: Rectangle {
                 id: shot
@@ -635,7 +642,7 @@ Item {
                 onWheel: event => {
                     const dx = event.pixelDelta.x !== 0 ? event.pixelDelta.x : event.angleDelta.x / 2
                     if (dx === 0) { event.accepted = false; return }
-                    strip.contentX = Math.max(0, Math.min(strip.contentX + dx, Math.max(0, strip.contentWidth - strip.width)))
+                    strip.contentX = Math.max(-strip.leftMargin, Math.min(strip.contentX + dx, Math.max(-strip.leftMargin, strip.contentWidth - strip.width + strip.rightMargin)))
                     event.accepted = true
                 }
             }

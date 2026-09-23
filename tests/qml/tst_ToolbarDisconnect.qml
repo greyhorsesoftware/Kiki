@@ -19,6 +19,8 @@ TestCase {
     function init() {
         Wire.reset(); Wire.connectAll()
         shell.locations = [{ name: "lab", plugin: "sftp", remoteUri: "sftp://lab/srv", localUri: "file:///home/t/site" }, { name: "bare", plugin: "sftp", remoteUri: "sftp://bare/", localUri: "" }]
+        // The window is never shown here, so its content is 0 wide and the toolbar would fold.
+        findChild(shell.contentItem, "toolbar").width = 1200
         shell.sideBySide = true
         shell.left.open("file:///home/t")
         shell.right.open("file:///home/t/other")
@@ -111,5 +113,75 @@ TestCase {
         shell.pane.open("sftp://lab/srv")
         wait(20)
         verify(shell.split)
+    }
+
+    // ---------------------------------------------------------------- the info button
+    // Beside Search: opens and closes the info panel, and is lit while it is up — the same
+    // toggle as Ctrl+I and the menu's Get info (owner, 2026-09-22).
+    function test_the_info_button_opens_and_closes_the_panel_and_lights_with_it() {
+        const b = findChild(shell.contentItem, "toolbar-info")
+        verify(b.visible)
+        shell.inspectedUri = "file:///home/t/a.txt"          // something selected
+        shell.inspectorRequested = false
+        verify(!b.active)
+        b.clicked()
+        verify(shell.inspectorRequested)
+        verify(b.active, "lit while the panel is up")
+        b.clicked()
+        verify(!shell.inspectorRequested)
+        verify(!b.active)
+        // Opened another way — the key — the button follows.
+        shell.inspectorRequested = true
+        verify(b.active)
+        shell.inspectorRequested = false
+    }
+
+    // The hamburger's menu carries every button it hides: search, info, side by side when it is
+    // offered, the views as a submenu, favorites, and the gear's rows.
+    function test_the_hamburger_menu_carries_every_folded_button() {
+        shell.sideBySide = false
+        shell.inspectorRequested = false
+        let labels = shell.hamburgerItems().map(i => i.label)
+        compare(labels.filter(l => l.indexOf("favorites") < 0), ["Search everywhere…", "Show info", "View", "Settings…", "Keyboard shortcuts…", "About kiki…"])
+        verify(labels.indexOf("Search everywhere…") === 0)
+        verify(labels.indexOf("Side by Side") < 0, "offered with no server open")
+        const view = shell.hamburgerItems().find(i => i.label === "View")
+        verify(view.items.length >= 4, "the views are a submenu: " + view.items.map(i => i.label))
+        verify(labels.indexOf("Settings…") > labels.indexOf("View") && labels.indexOf("About kiki…") === labels.length - 1)
+        shell.left.open("sftp://lab/srv"); wait(20)
+        if (shell.split) shell.leaveMirror()
+        labels = shell.hamburgerItems().map(i => i.label)
+        verify(labels.indexOf("Side by Side") >= 0, "a server open: side by side is in the menu")
+        shell.hamburgerItems().find(i => i.label === "Show info").action()
+        verify(shell.inspectorRequested)
+        compare(shell.hamburgerItems().find(i => i.label === "Hide info").label, "Hide info")
+        shell.inspectorRequested = false
+    }
+
+    // Columns view has an info column of its own and the window's panel never shows there: the
+    // button dims and takes no click; the folded menu's row is off too.
+    // …and with nothing selected in list, icon or gallery view there is nothing to show.
+    function test_with_nothing_selected_the_info_button_dims() {
+        const b = findChild(shell.contentItem, "toolbar-info")
+        shell.pane.view = "list"
+        shell.inspectedUri = ""
+        tryVerify(() => !b.enabled)
+        compare(b.tip, "", "a dimmed button says nothing")
+        verify(!shell.hamburgerItems().find(i => i.label.indexOf("info") >= 0).enabled)
+        shell.inspectedUri = "file:///home/t/a.txt"
+        tryVerify(() => b.enabled)
+        shell.inspectedUri = ""
+    }
+    function test_in_columns_view_the_info_button_dims() {
+        const b = findChild(shell.contentItem, "toolbar-info")
+        shell.inspectedUri = "file:///home/t/a.txt"
+        shell.pane.view = "columns"
+        tryVerify(() => !b.enabled)
+        verify(b.opacity < 0.5)
+        verify(!shell.hamburgerItems().find(i => i.label.indexOf("info") >= 0).enabled)
+        shell.pane.view = "list"
+        tryVerify(() => b.enabled)
+        compare(b.opacity, 1)
+        shell.inspectedUri = ""
     }
 }

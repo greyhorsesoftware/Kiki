@@ -431,7 +431,9 @@ TestCase {
         ws.anchors.fill = undefined; ws.width = data.w; ws.height = 600
         ws.screen = "review"
         ws.counts = { copies: 34, deletes: 0, bytes: 8074035, filtered: 1, replicaEntries: 40 }
-        wait(20)
+        // Laid out for the new width before it is measured: once in a full run the buttons were
+        // read 3 px early, still at the old width's places.
+        waitForRendering(ws); wait(40)
         const labels = footerButtons().map(b => b.text)
         verify(labels.indexOf("Mirror") >= 0 && labels.indexOf("Save report…") >= 0 && labels.indexOf("Back") >= 0, labels.join(","))
         for (const b of footerButtons()) {

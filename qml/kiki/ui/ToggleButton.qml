@@ -15,6 +15,9 @@ Rectangle {
     readonly property bool hovered: hover.containsMouse
     signal clicked()
     width: Math.max(34, iconSize + 18); height: width; radius: 2
+    // Disabled, it dims and takes no clicks (the info button in columns view, which has an
+    // info column of its own).
+    opacity: enabled ? 1 : 0.35
     color: !flat && (active || hover.containsMouse) ? Kiki.Theme.surface : "transparent"
     Icon {
         objectName: "icon"
@@ -22,5 +25,5 @@ Rectangle {
         color: btn.active || (btn.flat && hover.containsMouse) ? Kiki.Theme.accent : (btn.flat ? btn.restColor : Kiki.Theme.chrome)
     }
     Tip { visible: btn.tip !== "" && hover.containsMouse; text: btn.tip }
-    MouseArea { id: hover; anchors.fill: parent; onClicked: btn.clicked(); hoverEnabled: true }
+    MouseArea { id: hover; anchors.fill: parent; enabled: btn.enabled; onClicked: btn.clicked(); hoverEnabled: btn.enabled }
 }
