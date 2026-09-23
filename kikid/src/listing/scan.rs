@@ -1,8 +1,8 @@
 //! Phase 1: the scan, the rescan a watcher triggers, and the in-place patch that avoids one.
 
-use super::*;
 use super::cache::{cache, evict_if_needed};
 use super::stats::{stat_pool, StatJob};
+use super::*;
 
 /// The `Count` that says the scan is over, and — this is the part that was missing — how it went.
 /// The error used to be readable only in the reply to `Open`, so a folder that failed to list
@@ -13,7 +13,6 @@ fn finished(lid: u64, n: u64, error: Option<&str>) -> Value {
 }
 
 impl Listing {
-
     /// Phase 1: enumerate names and kinds into the pool, publishing counts as chunks land.
     pub(super) fn scan(self: &Arc<Self>) {
         let start = Instant::now();
@@ -218,23 +217,21 @@ impl Listing {
         let roots = &roots;
         thread::scope(|s| {
             for _ in 0..roots.len().min(AGGREGATE_WORKERS) {
-                s.spawn(|| {
-                    loop {
-                        let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some((i, name, path)) = roots.get(k) else { break };
-                        let Some(state) = crate::git::aggregate(path) else { continue };
-                        let mut inner = self.inner.lock().unwrap();
-                        if inner.epoch != epoch {
-                            break;
-                        }
-                        let Some(mark) = inner.deco.repo(name).cloned() else { continue };
-                        if mark.state == Some(state) {
-                            continue;
-                        }
-                        inner.deco.set_repo(name, Some(crate::git::RepoMark { state: Some(state), ..mark }));
-                        drop(inner);
-                        self.push_rows(&[*i]);
+                s.spawn(|| loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((i, name, path)) = roots.get(k) else { break };
+                    let Some(state) = crate::git::aggregate(path) else { continue };
+                    let mut inner = self.inner.lock().unwrap();
+                    if inner.epoch != epoch {
+                        break;
                     }
+                    let Some(mark) = inner.deco.repo(name).cloned() else { continue };
+                    if mark.state == Some(state) {
+                        continue;
+                    }
+                    inner.deco.set_repo(name, Some(crate::git::RepoMark { state: Some(state), ..mark }));
+                    drop(inner);
+                    self.push_rows(&[*i]);
                 });
             }
         });
@@ -247,10 +244,7 @@ impl Listing {
     pub fn rescan(self: &Arc<Self>) {
         let (old, had_git) = {
             let inner = self.inner.lock().unwrap();
-            let old: HashMap<Vec<u8>, Option<Meta>> = (0..inner.pool.len() as u32)
-                .filter(|&i| !inner.pool.is_removed(i))
-                .map(|i| (inner.pool.name(i).to_vec(), inner.meta[i as usize].clone()))
-                .collect();
+            let old: HashMap<Vec<u8>, Option<Meta>> = (0..inner.pool.len() as u32).filter(|&i| !inner.pool.is_removed(i)).map(|i| (inner.pool.name(i).to_vec(), inner.meta[i as usize].clone())).collect();
             (old, inner.git_done)
         };
         let mut old = old;
@@ -409,5 +403,4 @@ impl Listing {
         }
         crate::index::patch_dir(&self.path);
     }
-
 }

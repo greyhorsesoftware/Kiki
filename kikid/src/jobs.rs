@@ -262,11 +262,19 @@ fn pump() {
             .name(format!("job-{}", job.id))
             .spawn(move || {
                 job.set_state(State::Running);
-                crate::joblog::say(job.id, "info", format!("{} — started{}", job.title, match (&job.about.src, &job.about.dest) {
-                    (Some(s), Some(d)) => format!(": {s} → {d}"),
-                    (Some(s), None) => format!(": {s}"),
-                    _ => String::new(),
-                }));
+                crate::joblog::say(
+                    job.id,
+                    "info",
+                    format!(
+                        "{} — started{}",
+                        job.title,
+                        match (&job.about.src, &job.about.dest) {
+                            (Some(s), Some(d)) => format!(": {s} → {d}"),
+                            (Some(s), None) => format!(": {s}"),
+                            _ => String::new(),
+                        }
+                    ),
+                );
                 let result = run(&job);
                 let inverse = match result {
                     Ok(inv) => {
@@ -753,7 +761,11 @@ fn something_to_undo(inverse: Value) -> Option<Value> {
     if inverse.str_field("op") != Some("delete") {
         return Some(inverse);
     }
-    let there: Vec<Value> = inverse.get("items").and_then(Value::as_arr).map(|a| a.iter().filter(|u| u.as_str().and_then(|s| Uri::parse(s).ok()).is_some_and(|u| !u.is_local() || u.to_path().symlink_metadata().is_ok())).cloned().collect()).unwrap_or_default();
+    let there: Vec<Value> = inverse
+        .get("items")
+        .and_then(Value::as_arr)
+        .map(|a| a.iter().filter(|u| u.as_str().and_then(|s| Uri::parse(s).ok()).is_some_and(|u| !u.is_local() || u.to_path().symlink_metadata().is_ok())).cloned().collect())
+        .unwrap_or_default();
     (!there.is_empty()).then(|| Value::obj().s("op", "delete").v("items", Value::Arr(there)).b("_silent", true).done())
 }
 
@@ -1117,9 +1129,12 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
 /// Is a run that was started from this plan still queued or running? While one is, the plan
 /// outlives the view it was reviewed in.
 pub fn plan_wanted(plan: u64) -> bool {
-    queue().lock().unwrap().jobs.iter().any(|j| {
-        j.op.str_field("op") == Some("mirrorRun") && j.op.u64_field("plan") == Some(plan) && matches!(j.status.lock().unwrap().state, State::Running | State::Queued)
-    })
+    queue()
+        .lock()
+        .unwrap()
+        .jobs
+        .iter()
+        .any(|j| j.op.str_field("op") == Some("mirrorRun") && j.op.u64_field("plan") == Some(plan) && matches!(j.status.lock().unwrap().state, State::Running | State::Queued))
 }
 
 /// The location's own name, or something to call a server that has none.
@@ -1402,7 +1417,8 @@ mod tests {
             return; // running as root: nothing is unreadable
         }
         let (tx, _rx) = mpsc::channel();
-        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone()))
+            .unwrap();
         let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
         assert!(why.starts_with("1 of 3 could not be copied: locked.txt"), "{why}");
         assert!(d.join("dst/site/a.txt").exists() && d.join("dst/site/img/z.bin").exists(), "the others arrived, the one after it included");

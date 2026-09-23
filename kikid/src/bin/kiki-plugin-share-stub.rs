@@ -88,7 +88,7 @@ fn main() {
                     .v("form", Value::Arr(vec![field("note", "Note", "text")]))
                     .v("secretFields", Value::Arr(vec![Value::Str("token".into())]))
                     .v("compose", Value::Arr(vec![field("subject", "Subject", "text")]))
-                    .v("requires",Value::Arr(if me == "needy" { vec![Value::Str("definitely-not-a-program".into())] } else { vec![] }))
+                    .v("requires", Value::Arr(if me == "needy" { vec![Value::Str("definitely-not-a-program".into())] } else { vec![] }))
                     .done(),
             ),
             "Ping" | "Cancel" => ok(id, Value::obj().done()),

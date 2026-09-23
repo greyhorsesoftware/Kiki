@@ -56,12 +56,7 @@ fn stub_plugin_end_to_end() {
     assert!(std::fs::read_to_string(dir.join("config/locations.toml")).unwrap().contains("[location.config]"));
 
     // A server that offers a key is not saved until the user has accepted that key.
-    let keyed = Value::obj()
-        .s("name", "keyed")
-        .s("plugin", "stub")
-        .s("remoteUri", "stub://keyed/")
-        .v("config", Value::obj().s("name", "keyed").s("fingerprint", "SHA256:stub-key").done())
-        .done();
+    let keyed = Value::obj().s("name", "keyed").s("plugin", "stub").s("remoteUri", "stub://keyed/").v("config", Value::obj().s("name", "keyed").s("fingerprint", "SHA256:stub-key").done()).done();
     let asked = locations::save(keyed.clone(), &Value::obj().done(), None, true).unwrap();
     assert_eq!(asked.as_deref(), Some("SHA256:stub-key"), "the key should have come back for the user to check");
     assert_eq!(locations::all().len(), 1, "nothing is written until the key is accepted");
@@ -204,12 +199,7 @@ fn mirror_uploads_to_a_location_and_settles(dir: &std::path::Path) {
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
 
-    let loc = Value::obj()
-        .s("name", "lab")
-        .s("plugin", "stub")
-        .s("remoteUri", "stub://lab/")
-        .v("config", Value::obj().s("name", "lab").done())
-        .done();
+    let loc = Value::obj().s("name", "lab").s("plugin", "stub").s("remoteUri", "stub://lab/").v("config", Value::obj().s("name", "lab").done()).done();
     locations::save(loc, &Value::obj().done(), None, true).unwrap();
 
     // A little tree to send up.

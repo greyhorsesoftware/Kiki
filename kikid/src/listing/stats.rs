@@ -39,7 +39,6 @@ pub(super) fn stat_pool() -> &'static StatPool {
 }
 
 impl Listing {
-
     /// Run on a stat worker: fetch metadata for rows, then push changed rows into live windows.
     pub(super) fn run_stats(self: &Arc<Self>, rows: Vec<u32>, epoch: u64, low_priority: bool) {
         let mut done: Vec<u32> = Vec::with_capacity(rows.len());
@@ -267,5 +266,4 @@ impl Listing {
         let (m, _) = dir.stat_child(name)?;
         Ok(meta_json(&m))
     }
-
 }

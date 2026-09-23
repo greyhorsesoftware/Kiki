@@ -147,11 +147,7 @@ fn smb1_only(message: &str) -> bool {
     m.contains("software caused connection abort")
         || m.contains("connection reset by peer")
         || (m.contains("negotiat")
-            && (m.contains("smb1")
-                || m.contains("nt1")
-                || m.contains("nt_status_connection_reset")
-                || m.contains("nt_status_connection_disconnected")
-                || m.contains("nt_status_invalid_network_response")))
+            && (m.contains("smb1") || m.contains("nt1") || m.contains("nt_status_connection_reset") || m.contains("nt_status_connection_disconnected") || m.contains("nt_status_invalid_network_response")))
 }
 
 const SMB1_REFUSED: &str = "This server only offers SMB1, which kiki does not support.";

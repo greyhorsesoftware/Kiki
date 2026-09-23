@@ -1,12 +1,11 @@
 //! Windows: who is subscribed to what, the rows they get, and the JSON a row becomes.
 
-use super::*;
 use super::cache::cache;
-use super::stats::{stat_pool, StatJob};
 use super::deco;
+use super::stats::{stat_pool, StatJob};
+use super::*;
 
 impl Listing {
-
     pub fn subscribe(&self, sub: Subscriber) {
         let mut inner = self.inner.lock().unwrap();
         inner.subscribers.retain(|s| !(s.client == sub.client && s.lid == sub.lid));
@@ -124,11 +123,9 @@ impl Listing {
             flush(run_start, prev);
         }
     }
-
 }
 
 impl Inner {
-
     /// Where a name is now. `idx` is a hint from when the work was asked for — right unless a
     /// rescan has dealt the indexes again since, which is why it is checked rather than trusted.
     /// The fallback scans the pool, so the hint is what keeps a queue of thousands cheap.
@@ -174,7 +171,6 @@ impl Inner {
         )
         .done()
     }
-
 }
 
 pub fn meta_json(m: &Meta) -> Value {

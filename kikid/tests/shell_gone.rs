@@ -38,7 +38,11 @@ fn slow_compare(master: &std::path::Path, name: &str) -> u64 {
         .b("applyFilters", false)
         .done();
     let id = jobs::submit(Value::obj().s("op", "mirrorScan").v("spec", spec).done(), None).unwrap();
-    until(&format!("the compare of {name} to start"), Duration::from_secs(5), || { let s = state(id); assert!(s == "running" || s == "queued", "{name}: {s}: {}", kikid::json::to_string(&jobs::list())); s == "running" });
+    until(&format!("the compare of {name} to start"), Duration::from_secs(5), || {
+        let s = state(id);
+        assert!(s == "running" || s == "queued", "{name}: {s}: {}", kikid::json::to_string(&jobs::list()));
+        s == "running"
+    });
     id
 }
 

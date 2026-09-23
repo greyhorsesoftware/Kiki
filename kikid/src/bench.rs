@@ -117,10 +117,7 @@ fn transfer(dir: &Path, files: usize, dirs: usize, big: &[u64]) -> std::io::Resu
     std::fs::write(odd.join("target.txt"), b"what the link points at")?;
     let _ = std::fs::remove_file(odd.join("link-to-target"));
     std::os::unix::fs::symlink("target.txt", odd.join("link-to-target"))?;
-    std::fs::write(
-        dir.join("MANIFEST.txt"),
-        format!("files {files}\nfolders {dirs}\nsmall_bytes {small_bytes}\nlarge {}\nlarge_bytes {}\nawkward 7\n", big.len(), big.iter().sum::<u64>()),
-    )
+    std::fs::write(dir.join("MANIFEST.txt"), format!("files {files}\nfolders {dirs}\nsmall_bytes {small_bytes}\nlarge {}\nlarge_bytes {}\nawkward 7\n", big.len(), big.iter().sum::<u64>()))
 }
 
 fn flat(dir: &Path, n: usize) -> std::io::Result<()> {
@@ -170,11 +167,7 @@ fn jpegs(dir: &Path, n: usize, w: u32, h: u32) -> std::io::Result<()> {
                         let a = ((fx * 6.0 + phase).sin() * (fy * 4.0 - phase).cos() + 1.0) * 96.0;
                         let b = ((fx * 2.0 - fy * 3.0 + phase).sin() + 1.0) * 110.0;
                         let grain = (((x * 31 + y * 17 + seed * 7) % 17) as f32) - 8.0;
-                        *p = image::Rgb([
-                            (a + grain + 40.0).clamp(0.0, 255.0) as u8,
-                            (b + grain * 0.5 + 20.0).clamp(0.0, 255.0) as u8,
-                            (255.0 - a * 0.7 + grain).clamp(0.0, 255.0) as u8,
-                        ]);
+                        *p = image::Rgb([(a + grain + 40.0).clamp(0.0, 255.0) as u8, (b + grain * 0.5 + 20.0).clamp(0.0, 255.0) as u8, (255.0 - a * 0.7 + grain).clamp(0.0, 255.0) as u8]);
                     }
                     if let Err(e) = img.save(&path) {
                         *err.lock().unwrap() = Some(std::io::Error::other(e));
@@ -456,23 +449,11 @@ pub fn run(dir: &Path) -> Value {
 /// Which machine produced these numbers. A baseline without it is a row of figures nobody can
 /// reproduce: a listing benchmark measures the filesystem underneath it as much as the code.
 fn machine(dir: &Path) -> Value {
-    let cpu = std::fs::read_to_string("/proc/cpuinfo")
-        .ok()
-        .and_then(|t| t.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string())))
-        .unwrap_or_default();
-    let mem_kb = std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|t| t.lines().find(|l| l.starts_with("MemTotal:")).and_then(|l| l.split_whitespace().nth(1).and_then(|n| n.parse::<u64>().ok())))
-        .unwrap_or(0);
+    let cpu = std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|t| t.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))).unwrap_or_default();
+    let mem_kb = std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| t.lines().find(|l| l.starts_with("MemTotal:")).and_then(|l| l.split_whitespace().nth(1).and_then(|n| n.parse::<u64>().ok()))).unwrap_or(0);
     let kernel = std::process::Command::new("uname").arg("-r").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     // The filesystem the trees were generated on, which is half of what a listing benchmark measures.
-    let fs = std::process::Command::new("findmnt")
-        .args(["-no", "FSTYPE", "-T"])
-        .arg(dir)
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_default();
+    let fs = std::process::Command::new("findmnt").args(["-no", "FSTYPE", "-T"]).arg(dir).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
     Value::obj()
         .s("cpu", cpu)
         .u("cores", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0) as u64)
@@ -631,7 +612,11 @@ mod tests {
         // …and not the same block over and over.
         let big = std::fs::read(d.join("a/large/large-0.bin")).unwrap();
         assert_ne!(big[..1 << 20], big[1 << 20..2 << 20]);
-        let mtimes: std::collections::HashSet<u64> = (0..300).filter_map(|i| std::fs::metadata(folder_of(&d.join("a"), i, 40).join(format!("file-{i:06}.{}", ["txt", "jpg", "rs", "md", "bin"][i % 5]))).ok()).filter_map(|m| m.modified().ok()).map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / (365 * 24 * 3600)).collect();
+        let mtimes: std::collections::HashSet<u64> = (0..300)
+            .filter_map(|i| std::fs::metadata(folder_of(&d.join("a"), i, 40).join(format!("file-{i:06}.{}", ["txt", "jpg", "rs", "md", "bin"][i % 5]))).ok())
+            .filter_map(|m| m.modified().ok())
+            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / (365 * 24 * 3600))
+            .collect();
         assert!(mtimes.len() >= 5, "times spread over years: {mtimes:?}");
         std::fs::remove_dir_all(&d).unwrap();
     }

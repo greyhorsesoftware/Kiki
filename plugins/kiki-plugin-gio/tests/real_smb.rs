@@ -412,15 +412,7 @@ fn smb_through_gvfs_against_a_real_server() {
     // password again after every refusal, for ever, and the plugin kept answering.
     let guard = p.deadline(45);
     let t = Instant::now();
-    let r = p.req(
-        Value::obj()
-            .s("type", "Connect")
-            .s("location", "wrong")
-            .s("role", "browse")
-            .v("config", f.config(SHARE, "password"))
-            .v("secrets", Value::obj().s("password", "not the password").done())
-            .done(),
-    );
+    let r = p.req(Value::obj().s("type", "Connect").s("location", "wrong").s("role", "browse").v("config", f.config(SHARE, "password")).v("secrets", Value::obj().s("password", "not the password").done()).done());
     guard.store(true, Ordering::SeqCst);
     let e = r.get("err").unwrap_or_else(|| panic!("a wrong password was accepted: {}", json::to_string(&r)));
     assert_eq!(e.str_field("code"), Some("Auth"), "{}", json::to_string(&r));
@@ -429,30 +421,21 @@ fn smb_through_gvfs_against_a_real_server() {
 
     // A share that is not there is the `share` field's problem, named — not "No such file or
     // directory" about a Windows share nobody mentioned.
-    let (code, message, field) = p.err(
-        Value::obj().s("type", "Connect").s("location", "gone").s("role", "browse").v("config", f.config("nosuchshare", "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done(),
-    );
+    let (code, message, field) =
+        p.err(Value::obj().s("type", "Connect").s("location", "gone").s("role", "browse").v("config", f.config("nosuchshare", "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done());
     assert_eq!((code.as_str(), field.as_str()), ("Invalid", "share"), "{message}");
     assert!(message.contains("nosuchshare"), "{message}");
 
     // A server that is not answering is the network's problem, and says which host.
-    let (code, message, _) = p.err(
-        Value::obj()
-            .s("type", "Connect")
-            .s("location", "off")
-            .s("role", "browse")
-            .v("config", f.config_on(free_port(), SHARE, "password"))
-            .v("secrets", Value::obj().s("password", PASSWORD).done())
-            .done(),
-    );
+    let (code, message, _) =
+        p.err(Value::obj().s("type", "Connect").s("location", "off").s("role", "browse").v("config", f.config_on(free_port(), SHARE, "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done());
     assert_eq!(code, "Network", "{message}");
     assert!(message.contains("127.0.0.1"), "naming the host: {message}");
 
     // A server that offers only SMB1 is refused in those words. Plan 25 wrote this message match
     // from Samba's source and never saw a server; what gvfsd-smb really hands over is an errno.
-    let (code, message, _) = p.err(
-        Value::obj().s("type", "Connect").s("location", "old").s("role", "browse").v("config", f.config_on(f.smb1_port, SHARE, "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done(),
-    );
+    let (code, message, _) =
+        p.err(Value::obj().s("type", "Connect").s("location", "old").s("role", "browse").v("config", f.config_on(f.smb1_port, SHARE, "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done());
     assert_eq!((code.as_str(), message.as_str()), ("Network", "This server only offers SMB1, which kiki does not support."));
 
     // ------------------------------------------------ signed in
@@ -542,11 +525,7 @@ fn smb_through_gvfs_against_a_real_server() {
     p.ok(Value::obj().s("type", "Stat").s("location", "lab").s("role", "job-1").s("path", "/docs/readme.md").done());
     p.req(Value::obj().s("type", "Disconnect").s("location", "lab").s("role", "job-1").done());
     p.ok(Value::obj().s("type", "Stat").s("location", "lab").s("path", "/docs/readme.md").done());
-    assert_eq!(
-        p.err(Value::obj().s("type", "Stat").s("location", "lab").s("role", "job-1").s("path", "/docs/readme.md").done()).0,
-        "Network",
-        "and the job's own session really is gone with it"
-    );
+    assert_eq!(p.err(Value::obj().s("type", "Stat").s("location", "lab").s("role", "job-1").s("path", "/docs/readme.md").done()).0, "Network", "and the job's own session really is gone with it");
 
     // ------------------------------------------------ what the dialog's Browse… offers
     let shares = p.ok(Value::obj().s("type", "Browse").s("field", "share").v("config", f.config(SHARE, "password")).v("secrets", Value::obj().s("password", PASSWORD).done()).done());

@@ -469,11 +469,7 @@ fn still_ours(guard: &str, was: (u64, u64), now: (u64, u64)) -> bool {
 pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack, VfsError> {
     let guard = op.str_field("guard").unwrap_or("sizeMtime");
     let files: Vec<Value> = op.get("files").and_then(Value::as_arr).map(<[Value]>::to_vec).unwrap_or_default();
-    let mut dirs: Vec<Uri> = op
-        .get("dirs")
-        .and_then(Value::as_arr)
-        .map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect())
-        .unwrap_or_default();
+    let mut dirs: Vec<Uri> = op.get("dirs").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
     job.set_totals((files.len() + dirs.len()) as u64, 0);
     let mut out = TakenBack::default();
     let mut touched: Vec<Uri> = Vec::new();
@@ -493,11 +489,7 @@ pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack
         job.file_started(uri.name(), was.0);
         match landed(&at, uri.name()) {
             None => note(&mut out, "warn", format!("{}: no longer there — nothing to take back", uri.display())),
-            Some(now) if !still_ours(guard, was, now) => note(
-                &mut out,
-                "warn",
-                format!("{}: changed since the copy ({} bytes at {}, now {} at {}) — left alone", uri.display(), was.0, was.1, now.0, now.1),
-            ),
+            Some(now) if !still_ours(guard, was, now) => note(&mut out, "warn", format!("{}: changed since the copy ({} bytes at {}, now {} at {}) — left alone", uri.display(), was.0, was.1, now.0, now.1)),
             Some(_) => match delete(&at, uri.name(), false, cancel) {
                 Ok(()) => {
                     out.deleted += 1;
@@ -548,10 +540,9 @@ pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack
 fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsError> {
     match (from, to) {
         (Side::Local(a), Side::Local(b)) => std::fs::rename(a.join(name), b.join(target)).map_err(VfsError::from),
-        (Side::Remote(s, a), Side::Remote(_, b)) => s
-            .plugin
-            .request(s.req("Rename").s("from", format!("{}/{}", a.trim_end_matches('/'), name)).s("to", format!("{}/{}", b.trim_end_matches('/'), target)).done())
-            .map(|_| ()),
+        (Side::Remote(s, a), Side::Remote(_, b)) => {
+            s.plugin.request(s.req("Rename").s("from", format!("{}/{}", a.trim_end_matches('/'), name)).s("to", format!("{}/{}", b.trim_end_matches('/'), target)).done()).map(|_| ())
+        }
         _ => Err(VfsError::Unsupported),
     }
 }

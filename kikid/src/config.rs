@@ -49,10 +49,7 @@ fn write_toml(name: &str, v: &Value) -> std::io::Result<()> {
     // of the files kiki replaced. Refusing costs the user an error message and keeps their file.
     if let Ok(text) = std::fs::read_to_string(&path) {
         if toml::parse(&text).is_err() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("{} could not be read; fix or move it, and kiki will write here again", path.display()),
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{} could not be read; fix or move it, and kiki will write here again", path.display())));
         }
     }
     std::fs::create_dir_all(&dir)?;

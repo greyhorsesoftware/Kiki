@@ -82,12 +82,7 @@ fn removing_a_location_clears_its_secrets_and_lets_every_session_go() {
     // WebDAV was removed from 0.1.0 (owner, 2026-09-21), and a `locations.toml` written by a
     // build that had it keeps its `dav` entries: upgrading kiki must not be a crash, an empty
     // sidebar, or a plugin name shown to somebody who never typed one.
-    let dav = Value::obj()
-        .s("name", "shelf")
-        .s("plugin", "dav")
-        .s("remoteUri", "dav://shelf/")
-        .v("config", Value::obj().s("host", "shelf.lan").done())
-        .done();
+    let dav = Value::obj().s("name", "shelf").s("plugin", "dav").s("remoteUri", "dav://shelf/").v("config", Value::obj().s("host", "shelf.lan").done()).done();
     locations::upsert(dav.clone()).unwrap();
     assert!(locations::all().iter().any(|l| l.str_field("name") == Some("shelf")), "it is still listed: it is the user's, and removing it is their decision");
     let refused = within("connect to a dav location", Duration::from_secs(10), move || locations::connect(&dav, "browse", None).map(|_| ()));

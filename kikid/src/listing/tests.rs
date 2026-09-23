@@ -1,7 +1,7 @@
 //! The listing's tests: sorting, filtering, windows, watching and the cache.
 
-use crate::listing::*;
 use crate::listing::deco;
+use crate::listing::*;
 use std::time::Duration;
 
 fn temp_tree(n: usize) -> PathBuf {
@@ -165,9 +165,7 @@ fn the_view_sorts_filters_and_seeks() {
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
 
-    let names = |l: &std::sync::Arc<Listing>| -> Vec<String> {
-        l.window(1, 1, 0, 50, None).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect()
-    };
+    let names = |l: &std::sync::Arc<Listing>| -> Vec<String> { l.window(1, 1, 0, 50, None).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect() };
 
     // Folders first, then case-insensitive natural order; dot-files are out of the way.
     assert_eq!(names(&l), vec!["Zed", "apple.txt", "Banana.md", "cherry.txt"]);
@@ -598,10 +596,7 @@ fn a_folder_of_projects_gives_every_project_its_branch_and_its_state() {
 
     let (l, _) = open(&Uri::from_path(&base)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
-    let rows = rows_until(&l, |rows| {
-        rows.iter().filter(|r| r.get("git").and_then(|g| g.get("root")).is_some()).count() == 2
-            && row_named(rows, "dirty-one").get("git").unwrap().str_field("state") == Some("modified")
-    });
+    let rows = rows_until(&l, |rows| rows.iter().filter(|r| r.get("git").and_then(|g| g.get("root")).is_some()).count() == 2 && row_named(rows, "dirty-one").get("git").unwrap().str_field("state") == Some("modified"));
 
     let g = row_named(&rows, "clean-one").get("git").unwrap();
     assert_eq!(g.get("root").and_then(Value::as_bool), Some(true));
@@ -674,14 +669,10 @@ fn a_folder_of_projects_lists_no_slower_than_a_folder_of_folders() {
     };
     // Twelve gits in a row would be a tenth of a second and more; the listing must not have
     // waited for one of them.
-    assert!(
-        with < without + Duration::from_millis(60),
-        "listing {n} projects took {with:?} against {without:?} for the same folders without a .git in them: git is on the listing's path"
-    );
+    assert!(with < without + Duration::from_millis(60), "listing {n} projects took {with:?} against {without:?} for the same folders without a .git in them: git is on the listing's path");
     forget(&uri);
     std::fs::remove_dir_all(&base).unwrap();
 }
-
 
 /// A worker picks its rows with the listing locked and pushes them once it has let go. If the
 /// folder shrank in between — a rescan deals the indexes again, into a shorter table — the push
@@ -727,4 +718,3 @@ fn opening_a_folder_of_projects_again_asks_them_again() {
     forget(&uri);
     std::fs::remove_dir_all(&base).unwrap();
 }
-

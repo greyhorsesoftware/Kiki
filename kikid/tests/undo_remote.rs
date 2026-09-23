@@ -220,11 +220,7 @@ fn a_copy_to_a_server_is_taken_back_exactly_and_only_where_it_is_still_the_copy(
     assert_eq!(toast(&rx), "Undid copy — 1 item deleted from lab (permanently), 2 items left because they had changed");
     let left = tree(&s, "/empty");
     assert_eq!(left.get("a.txt"), None, "the one that was still the copy's is gone");
-    assert_eq!(
-        (left.get("b.txt").map(String::as_str), left.get("c.txt").map(String::as_str)),
-        (Some("BBB"), Some("ccccccc")),
-        "the two that changed are left exactly as they were changed to"
-    );
+    assert_eq!((left.get("b.txt").map(String::as_str), left.get("c.txt").map(String::as_str)), (Some("BBB"), Some("ccccccc")), "the two that changed are left exactly as they were changed to");
     gone(&s, "/empty/b.txt");
     gone(&s, "/empty/c.txt");
 

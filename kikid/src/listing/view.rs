@@ -33,7 +33,6 @@ fn parallel_sort<F: Fn(&u32, &u32) -> std::cmp::Ordering + Sync>(v: &mut Vec<u32
 }
 
 impl Listing {
-
     pub fn sort(self: &Arc<Self>, role: SortRole, asc: bool, waiter: Option<(Sender<Value>, u64)>) -> u64 {
         let mut inner = self.inner.lock().unwrap();
         // Clients state the order they want on every open, because a cached listing carries the
@@ -129,11 +128,9 @@ impl Listing {
         }
         n
     }
-
 }
 
 impl Inner {
-
     /// Order of two pool entries under the current name or kind sort (folders first).
     pub(super) fn order(&self, a: u32, b: u32) -> std::cmp::Ordering {
         let pool = &self.pool;
@@ -224,5 +221,4 @@ impl Inner {
         }
         self.view = view;
     }
-
 }

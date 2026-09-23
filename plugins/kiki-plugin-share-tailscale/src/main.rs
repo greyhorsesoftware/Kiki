@@ -102,8 +102,8 @@ mod tests {
     fn peers_are_named_by_their_short_name_and_sorted_online_first() {
         let t = peers_from(STATUS).unwrap();
         assert_eq!(t.len(), 2);
-        assert_eq!(t[0].name, "phone");          // online before offline
-        assert_eq!(t[0].id, "phone");            // the DNS name without the tailnet
+        assert_eq!(t[0].name, "phone"); // online before offline
+        assert_eq!(t[0].id, "phone"); // the DNS name without the tailnet
         assert!(t[0].online);
         assert_eq!(t[0].detail, "android");
         assert_eq!(t[1].name, "laptop");
@@ -112,8 +112,11 @@ mod tests {
 
     #[test]
     fn a_peer_is_called_what_the_tailnet_calls_it() {
-        let t = peers_from(br#"{"Peer":{"a":{"HostName":"localhost","DNSName":"iphone-12-pro.tail1234.ts.net.","Online":true,"OS":"iOS"},
-                                       "b":{"HostName":"nas","DNSName":"","Online":true,"OS":"linux"}}}"#).unwrap();
+        let t = peers_from(
+            br#"{"Peer":{"a":{"HostName":"localhost","DNSName":"iphone-12-pro.tail1234.ts.net.","Online":true,"OS":"iOS"},
+                                       "b":{"HostName":"nas","DNSName":"","Online":true,"OS":"linux"}}}"#,
+        )
+        .unwrap();
         assert_eq!(t.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["iphone-12-pro", "nas"]);
     }
 

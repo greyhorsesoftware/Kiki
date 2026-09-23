@@ -216,9 +216,7 @@ fn the_rules_round_trip_and_no_rules_is_not_the_same_as_the_defaults() {
     let built_in = ["matches .git", "matches .gitignore", "matches .DS_Store", "matches .env", "matches .idea", "matches .vscode", "matches Thumbs.db", "matches node_modules", "matches __pycache__"];
     // What the dialog's "Restore defaults" shows: the daemon's own list, sent with every answer
     // rather than kept a second time in the shell.
-    let default_kinds = |v: &Value| {
-        v.get("defaultRules").and_then(Value::as_arr).unwrap().iter().map(|r| format!("{} {}", r.str_field("kind").unwrap(), r.str_field("value").unwrap())).collect::<Vec<_>>()
-    };
+    let default_kinds = |v: &Value| v.get("defaultRules").and_then(Value::as_arr).unwrap().iter().map(|r| format!("{} {}", r.str_field("kind").unwrap(), r.str_field("value").unwrap())).collect::<Vec<_>>();
 
     // Nothing written down: the defaults, and the answer says they are the defaults.
     let (rules, defaults) = filters();
@@ -323,10 +321,7 @@ fn the_default_rules_skip_the_eight_names_and_mirror_the_rest() {
     let map = scan_side(&side, &default_rules(), &mut n, &cancel).unwrap();
     let mut got: Vec<&str> = map.iter().map(|(rel, _)| rel).collect();
     got.sort();
-    assert_eq!(
-        got,
-        [".htaccess", ".nojekyll", ".user.ini", ".well-known", ".well-known/acme-challenge", ".well-known/acme-challenge/token", "src", "src/main.rs", "visible.txt"]
-    );
+    assert_eq!(got, [".htaccess", ".nojekyll", ".user.ini", ".well-known", ".well-known/acme-challenge", ".well-known/acme-challenge/token", "src", "src/main.rs", "visible.txt"]);
     assert_eq!(n, 8, "the eight names — a skipped folder is counted once, not per file");
 
     // And the pattern that used to be the default is still there for whoever wants it: adding it
@@ -623,13 +618,25 @@ fn the_guards_refuse_before_anything_is_deleted() {
 
     // A relative path that climbs out of the replica is refused whatever the user confirmed.
     let mut plan = diff(&m, &r, &s, Detector::SizeOnly, 0).unwrap();
-    plan.actions.push(Action { rel: "../outside".into(), kind: ActionKind::Delete, reason: Reason::Extra, master: None, replica: Some(e("x", false, 1, 1).1), bytes: 0, checked: true, state: State::Pending, progress: 0, error: None });
+    plan.actions.push(Action {
+        rel: "../outside".into(),
+        kind: ActionKind::Delete,
+        reason: Reason::Extra,
+        master: None,
+        replica: Some(e("x", false, 1, 1).1),
+        bytes: 0,
+        checked: true,
+        state: State::Pending,
+        progress: 0,
+        error: None,
+    });
     let err = execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("a path climbing out of the replica is refused");
     assert!(err.message().contains("outside the replica root"), "{}", err.message());
 
     // And so is an absolute one.
     let mut plan = diff(&m, &r, &s, Detector::SizeOnly, 0).unwrap();
-    plan.actions.push(Action { rel: "/etc/passwd".into(), kind: ActionKind::Delete, reason: Reason::Extra, master: None, replica: None, bytes: 0, checked: true, state: State::Pending, progress: 0, error: None });
+    plan.actions
+        .push(Action { rel: "/etc/passwd".into(), kind: ActionKind::Delete, reason: Reason::Extra, master: None, replica: None, bytes: 0, checked: true, state: State::Pending, progress: 0, error: None });
     assert!(execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("an absolute path is refused").message().contains("outside the replica root"));
 
     let _ = std::fs::remove_dir_all(&d);

@@ -176,9 +176,9 @@ pub mod deco;
 mod rows;
 mod scan;
 mod stats;
-mod view;
 #[cfg(test)]
 mod tests;
+mod view;
 
 pub use cache::{changed, find, forget, gone, invalidate_authority, mark_stale, open, poll_repo_rows, still_there, under};
 pub use rows::{iso, meta_json};

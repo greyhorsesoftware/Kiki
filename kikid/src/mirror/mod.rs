@@ -335,9 +335,9 @@ mod tests;
 
 pub use detect::{auto_offset, is_changed, pick_detector};
 pub use diff::diff;
-pub use execute::{execute, ExecCtx, Outcome, part_name};
+pub use execute::copy_file;
+pub use execute::{execute, part_name, ExecCtx, Outcome};
 pub use filters::{check_rules, default_rules, filtered, filtered_rel, filters, filters_json, load_filters, restore_default_filters, set_filters, Rule};
 pub use report::{action_json, report};
 pub use scan::{scan, scan_counting, scan_side};
-pub use execute::copy_file;
 pub use store::{run_finished, store, stored, unview, view, Stored, KEEP};

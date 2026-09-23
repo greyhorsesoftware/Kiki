@@ -142,7 +142,8 @@ impl Client {
                 // changed shape. One that names no version is taken at its word (scripts, tests).
                 if let Some(theirs) = b.u64_field("version") {
                     if theirs != proto::PROTOCOL_VERSION {
-                        return self.reply(id, Err(("Version", format!("this kikid speaks protocol {}, the client {theirs}: restart kiki after an upgrade (systemctl --user restart kikid.service)", proto::PROTOCOL_VERSION))));
+                        return self
+                            .reply(id, Err(("Version", format!("this kikid speaks protocol {}, the client {theirs}: restart kiki after an upgrade (systemctl --user restart kikid.service)", proto::PROTOCOL_VERSION))));
                     }
                 }
                 if b.str_field("client") == Some("kiki") {
@@ -349,7 +350,10 @@ impl Client {
                 Some(s) => {
                     let text = crate::mirror::report(&s.spec, &s.plan.lock().unwrap());
                     let saved: Result<(), (&'static str, String)> = match b.str_field("saveTo") {
-                        Some(to) => Uri::parse(to).map_err(|e| ("Protocol", e.0.to_string())).and_then(|uri| crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message()))).and_then(|path| std::fs::write(&path, &text).map_err(|e| ("Io", format!("{}: {e}", path.display())))),
+                        Some(to) => Uri::parse(to)
+                            .map_err(|e| ("Protocol", e.0.to_string()))
+                            .and_then(|uri| crate::ops::local_path(&uri).map_err(|e| (e.code(), e.message())))
+                            .and_then(|path| std::fs::write(&path, &text).map_err(|e| ("Io", format!("{}: {e}", path.display())))),
                         None => Ok(()),
                     };
                     saved.map(|_| Some(Value::obj().s("text", text).done()))

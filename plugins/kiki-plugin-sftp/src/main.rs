@@ -179,11 +179,7 @@ fn auth_failure(tried: &[String], unusable: &[String], password_tried: bool) -> 
     if password_tried {
         offered.push("the password".to_string());
     }
-    let mut msg = if offered.is_empty() {
-        "nothing to sign in with: no usable key was found and no password was given".to_string()
-    } else {
-        format!("the server refused {}", offered.join(" and "))
-    };
+    let mut msg = if offered.is_empty() { "nothing to sign in with: no usable key was found and no password was given".to_string() } else { format!("the server refused {}", offered.join(" and ")) };
     if !unusable.is_empty() {
         msg.push_str(&format!(" — could not use {}", unusable.join("; ")));
     }
@@ -287,7 +283,10 @@ fn discover_keys() -> Vec<FoundKey> {
         found.push(FoundKey { path: path.to_string_lossy().to_string(), algorithm, comment, encrypted });
     }
     const USUAL: [&str; 4] = ["id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"];
-    let rank = |k: &FoundKey| { let n = k.path.rsplit('/').next().unwrap_or(""); USUAL.iter().position(|u| *u == n).unwrap_or(USUAL.len()) };
+    let rank = |k: &FoundKey| {
+        let n = k.path.rsplit('/').next().unwrap_or("");
+        USUAL.iter().position(|u| *u == n).unwrap_or(USUAL.len())
+    };
     found.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.path.cmp(&b.path)));
     found
 }
@@ -584,7 +583,13 @@ impl Handler for Sftp {
         if field != "identityFile" {
             return Err(PluginError::unsupported());
         }
-        Ok(discover_keys().into_iter().map(|k| { let label = k.label(); (k.path, label) }).collect())
+        Ok(discover_keys()
+            .into_iter()
+            .map(|k| {
+                let label = k.label();
+                (k.path, label)
+            })
+            .collect())
     }
 
     fn describe(&self) -> Describe {

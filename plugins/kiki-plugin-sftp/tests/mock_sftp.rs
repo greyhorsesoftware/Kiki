@@ -564,12 +564,7 @@ fn start_auth(exec: ExecMode, fail: ExecFail, page: usize, auth: AuthMode) -> Mo
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
             use russh::server::Server as _;
-            let config = Arc::new(russh::server::Config {
-                auth_rejection_time: Duration::from_millis(1),
-                auth_rejection_time_initial: Some(Duration::ZERO),
-                keys: vec![host_private],
-                ..Default::default()
-            });
+            let config = Arc::new(russh::server::Config { auth_rejection_time: Duration::from_millis(1), auth_rejection_time_initial: Some(Duration::ZERO), keys: vec![host_private], ..Default::default() });
             let listener = tokio::net::TcpListener::from_std(std_listener).unwrap();
             let mut server = server;
             let _ = server.run_on_socket(config, &listener).await;
@@ -1081,7 +1076,7 @@ fn an_encrypted_key_needs_its_passphrase_and_says_so() {
 fn the_password_signs_in_when_every_key_is_refused() {
     let _g = SSH_ENV.lock().unwrap_or_else(|p| p.into_inner());
     let Some((dir, _)) = ssh_dir_with("fallback", &[("id_ed25519", "")]) else { return };
-    let m = start(ExecMode::Gnu, ExecFail::None, 100);           // knows no keys at all
+    let m = start(ExecMode::Gnu, ExecFail::None, 100); // knows no keys at all
     let mut p = plugin_with_ssh_dir(&dir);
     let r = connect_with(&mut p, m.port, Some(&dir.join("id_ed25519").to_string_lossy()), Value::obj().s("password", "secret").done());
     assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
@@ -1107,7 +1102,7 @@ fn a_password_answers_a_keyboard_interactive_server() {
 #[test]
 fn nothing_to_sign_in_with_says_so() {
     let m = start(ExecMode::Gnu, ExecFail::None, 100);
-    let mut p = Plugin::spawn();                                  // no keys to find, no password
+    let mut p = Plugin::spawn(); // no keys to find, no password
     let r = connect_with(&mut p, m.port, None, Value::obj().done());
     assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("nothing to sign in with"), "{}", json::to_string(&r));
 }
@@ -1146,7 +1141,7 @@ fn the_password_tab_offers_no_key_and_the_key_tab_sends_no_password() {
     assert!(OFFERED.lock().unwrap().is_empty(), "the Password tab offers no key");
 
     // The Key tab with a wrong key for this server and the RIGHT password lying about: refused.
-    let m2 = start(ExecMode::Gnu, ExecFail::None, 100);          // knows no keys; would take "secret"
+    let m2 = start(ExecMode::Gnu, ExecFail::None, 100); // knows no keys; would take "secret"
     let mut q = plugin_with_ssh_dir(&dir);
     let r = connect(&mut q, m2.port, "key", Value::obj().s("password", "secret").done());
     let err = r.get("err").unwrap_or_else(|| panic!("the Key tab must not fall back to the password: {}", json::to_string(&r)));

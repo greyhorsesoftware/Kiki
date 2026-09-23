@@ -71,11 +71,7 @@ pub fn rule_json(r: &Rule) -> Value {
 /// A copy in the shell is a copy that drifts the first time this one is edited.
 pub fn filters_json() -> Value {
     let (rules, defaults) = filters();
-    Value::obj()
-        .v("rules", Value::Arr(rules.iter().map(rule_json).collect()))
-        .b("defaults", defaults)
-        .v("defaultRules", Value::Arr(default_rules().iter().map(rule_json).collect()))
-        .done()
+    Value::obj().v("rules", Value::Arr(rules.iter().map(rule_json).collect())).b("defaults", defaults).v("defaultRules", Value::Arr(default_rules().iter().map(rule_json).collect())).done()
 }
 
 /// Every rule checked before any of it is written, so a file is never half a save: the kind must

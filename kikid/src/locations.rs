@@ -242,17 +242,23 @@ pub fn connect_cancellable(location: &Value, role: &str, secrets: Option<Value>,
     let config = location.get("config").cloned().unwrap_or(Value::Obj(BTreeMap::new()));
     let secrets = secrets.unwrap_or_else(|| secrets_for(location));
     let pinned = config.str_field("trustedFingerprint").map(str::to_string);
-    let reply = plugin.request_cancellable(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done(), cancel).map_err(|e| match unaccepted_fingerprint(&e) {
-        Some(fp) => VfsError::Io(format!("{UNVERIFIED_PREFIX}{fp}")),
-        None => e,
-    })?;
+    let reply =
+        plugin.request_cancellable(Value::obj().s("type", "Connect").s("location", name.clone()).s("role", role).v("config", config).v("secrets", secrets).done(), cancel).map_err(|e| {
+            match unaccepted_fingerprint(&e) {
+                Some(fp) => VfsError::Io(format!("{UNVERIFIED_PREFIX}{fp}")),
+                None => e,
+            }
+        })?;
     // A location added without being checked has never had its server's key looked at.
     match key_verdict(pinned.as_deref(), reply.str_field("fingerprint"), reply.get("knownHost").and_then(Value::as_bool).unwrap_or(false)) {
         KeyVerdict::Proceed => {}
         KeyVerdict::Pin(fp) => {
             let mut pinned_location = location.clone();
             if let Value::Obj(m) = &mut pinned_location {
-                let mut c = match m.get("config").cloned() { Some(Value::Obj(c)) => c, _ => BTreeMap::new() };
+                let mut c = match m.get("config").cloned() {
+                    Some(Value::Obj(c)) => c,
+                    _ => BTreeMap::new(),
+                };
                 c.insert("trustedFingerprint".into(), Value::Str(fp));
                 m.insert("config".into(), Value::Obj(c));
             }
@@ -361,7 +367,10 @@ pub fn save(location: Value, secrets: &Value, trust: Option<&str>, check: bool) 
     let pinned = location.get("config").and_then(|c| c.str_field("trustedFingerprint")).map(str::to_string);
     // Check with what was typed, over what is already in the keyring: editing a saved location
     // (or verifying one that was added unchecked) does not mean typing its password again.
-    let mut for_test = match secrets_for(&location) { Value::Obj(m) => m, _ => BTreeMap::new() };
+    let mut for_test = match secrets_for(&location) {
+        Value::Obj(m) => m,
+        _ => BTreeMap::new(),
+    };
     if let Value::Obj(given) = secrets {
         for (k, v) in given {
             for_test.insert(k.clone(), v.clone());
@@ -371,7 +380,7 @@ pub fn save(location: Value, secrets: &Value, trust: Option<&str>, check: bool) 
     if let Some(fp) = &seen {
         if pinned.is_none() {
             if !known_host {
-                return Ok(Some(fp.clone()));   // the user has not accepted this key yet
+                return Ok(Some(fp.clone())); // the user has not accepted this key yet
             }
             // ssh already knows this host and this key. That is the same verification, done
             // once, by hand; pin it rather than asking the question a second time.
@@ -430,16 +439,21 @@ pub(crate) fn key_verdict(pinned: Option<&str>, offered: Option<&str>, known_hos
 /// the green dot on the sidebar's row.
 pub fn json_list() -> Value {
     let live = connected_names();
-    Value::Arr(all().into_iter().map(|l| {
-        let on = l.str_field("name").map(|n| live.iter().any(|c| c == n)).unwrap_or(false);
-        match l {
-            Value::Obj(mut m) => {
-                m.insert("connected".into(), Value::Bool(on));
-                Value::Obj(m)
-            }
-            other => other,
-        }
-    }).collect())
+    Value::Arr(
+        all()
+            .into_iter()
+            .map(|l| {
+                let on = l.str_field("name").map(|n| live.iter().any(|c| c == n)).unwrap_or(false);
+                match l {
+                    Value::Obj(mut m) => {
+                        m.insert("connected".into(), Value::Bool(on));
+                        Value::Obj(m)
+                    }
+                    other => other,
+                }
+            })
+            .collect(),
+    )
 }
 
 /// A browse session came or went: the sidebar's dots follow.
@@ -479,7 +493,7 @@ mod key_verdict_tests {
     #[test]
     fn a_pinned_location_and_a_plugin_with_no_keys_just_connect() {
         assert_eq!(key_verdict(Some("SHA256:abc"), Some("SHA256:abc"), false), KeyVerdict::Proceed);
-        assert_eq!(key_verdict(None, None, false), KeyVerdict::Proceed);      // FTPS: no fingerprint reported
+        assert_eq!(key_verdict(None, None, false), KeyVerdict::Proceed); // FTPS: no fingerprint reported
     }
 }
 

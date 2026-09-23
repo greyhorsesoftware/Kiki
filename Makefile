@@ -36,6 +36,8 @@ test-rust:
 ## own pointer and windows cannot make a test flaky; QT_QPA_PLATFORM in the environment wins.
 test-qml: export QT_QPA_PLATFORM ?= offscreen
 test-qml:
+	@# tst_LocationImage writes its swatch under target/, which only a cargo build makes.
+	@mkdir -p target
 	$(QMLTESTRUNNER) -import tests/qml/stubs -input tests/qml
 	@# Real drags: `offscreen` ends every drag the moment it starts, `minimal` performs one.
 	QT_QPA_PLATFORM=minimal $(QMLTESTRUNNER) -import tests/qml/stubs -input tests/qml-drag

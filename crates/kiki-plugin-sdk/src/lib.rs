@@ -275,7 +275,11 @@ thread_local! {
 pub fn current_role() -> String {
     ROLE.with(|r| {
         let r = r.borrow();
-        if r.is_empty() { "browse".to_string() } else { r.clone() }
+        if r.is_empty() {
+            "browse".to_string()
+        } else {
+            r.clone()
+        }
     })
 }
 

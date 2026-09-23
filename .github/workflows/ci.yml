@@ -58,7 +58,12 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Install Qt
-        run: sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed make qt6-base qt6-declarative xorg-server-xvfb
+        # Beyond Qt itself: the SVG plugin the icons are drawn with, QtMultimedia and its ffmpeg
+        # backend for the info panel's video player, and a font — a bare container has none, and
+        # text with no metrics reports a pixel size of -1 and lays out on top of its neighbours.
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed make xorg-server-xvfb \
+            qt6-base qt6-declarative qt6-svg qt6-multimedia qt6-multimedia-ffmpeg ttf-liberation
       - uses: actions/checkout@v4
       - name: Run qmltestrunner
         run: |
