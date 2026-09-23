@@ -37,6 +37,17 @@ TestCase {
     }
     function cleanup() { gallery.pane = null; pane.destroy(); fake.destroy() }
 
+    // A real picture, from the fixtures folder, whose name has a space in it: `a%20b.jpg` in the
+    // pane's URI and `a b.jpg` read back from the frame. Compared as strings, the stage decided the
+    // decoded frame was not the one it had asked for and never faded it in.
+    function test_a_picture_whose_name_has_a_space_reaches_the_stage() {
+        const dir = Qt.resolvedUrl("fixtures").toString()
+        fake.tree = { [dir]: [fake.file("small copy.png", { kind: "image" })] }
+        pane.open(dir)
+        tryVerify(() => gallery.stats().ready, 4000, "the picture never became the stage's front frame: " + JSON.stringify(gallery.stats()))
+        verify(gallery.stats().decodes >= 1)
+    }
+
     function test_the_pill_shows_only_with_the_pointer_on_the_picture() {
         const pill = findChild(gallery, "gallery-pill")
         const play = findChild(gallery, "gallery-play")

@@ -12,6 +12,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 out="$here/out"; mkdir -p "$out"
 
+# The desktop mode (below) hands the daemon and the shell a runtime directory of their own, but
+# hyprctl and the screen recorder must keep looking in the real one; the demo flow uses these.
+export KIKI_E2E_REAL_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+desktop_display="$KIKI_E2E_REAL_RUNTIME_DIR/${WAYLAND_DISPLAY:-wayland-1}"
 work="$(mktemp -d /tmp/kiki-e2e-XXXXXX)"
 export XDG_RUNTIME_DIR="$work/run"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
 export KIKI_CONFIG_DIR="$work/config"; mkdir -p "$KIKI_CONFIG_DIR"
@@ -173,7 +177,41 @@ run_daemon_only() {
   return $rc
 }
 
-if command -v cage >/dev/null; then
+run_on_desktop() {
+  # The same client script as run_in_cage, on the compositor this shell is already in: for the
+  # demo recording (flows/demo.py), which wants the real renderer, the real theme and the real
+  # screen. The private runtime directory keeps this daemon and shell apart from the user's own,
+  # which means the Wayland socket has to be named by its full path.
+  export WAYLAND_DISPLAY="${desktop_display}"
+  unset WLR_BACKENDS WLR_LIBINPUT_NO_DEVICES WLR_RENDERER
+  # A real pointer (wlrctl's virtual one, which Hyprland serves): the window is full screen at
+  # the origin, and Hyprland can say where the cursor is, so aiming corrects itself.
+  export KIKI_E2E_POINTER_ORIGIN="0,0"
+  export KIKI_E2E_CURSORPOS_CMD="env XDG_RUNTIME_DIR=$KIKI_E2E_REAL_RUNTIME_DIR hyprctl cursorpos"
+  # The shell's HOME is the fixture, so the breadcrumb starts at the home icon and the sidebar's
+  # home is the demo's; the theme is read from HOME too, so the real one's is linked in.
+  mkdir -p "$HOME_FIXTURE/.local/state/omarchy" "$HOME_FIXTURE/.config"
+  ln -s "$HOME/.local/state/omarchy/current" "$HOME_FIXTURE/.local/state/omarchy/current" 2>/dev/null || true
+  for d in omarchy gtk-3.0 gtk-4.0 fontconfig; do
+    [ -e "$HOME/.config/$d" ] && ln -s "$HOME/.config/$d" "$HOME_FIXTURE/.config/$d" 2>/dev/null || true
+  done
+  bash -c "
+    set -e
+    '$work/start-kikid' & kikid_pid=\$!
+    for i in \$(seq 100); do [ -S '$XDG_RUNTIME_DIR/kiki.sock' ] && break; sleep 0.05; done
+    HOME='$HOME_FIXTURE' qs -p '$qs_conf/shell.qml' >'$out/shell.log' 2>&1 & qs_pid=\$!
+    for i in \$(seq 200); do qs -p '$qs_conf/shell.qml' ipc call shell state >/dev/null 2>&1 && break; sleep 0.05; done
+    python3 -u '$here/driver.py' '$XDG_RUNTIME_DIR/kiki.sock' '$out' $* 2>&1 | tee '$out/driver.log'
+    rc=\${PIPESTATUS[0]}
+    kill \$qs_pid \$kikid_pid 2>/dev/null || true
+    wait \$qs_pid 2>/dev/null || true
+    exit \$rc
+  "
+}
+
+if [ -n "${KIKI_E2E_DESKTOP:-}" ]; then
+  run_on_desktop "$@"
+elif command -v cage >/dev/null; then
   run_in_cage "$@"
 else
   echo "cage is not installed: running the flows that need only the daemon." >&2

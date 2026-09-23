@@ -276,7 +276,7 @@ fn pump() {
                     ),
                 );
                 let result = run(&job);
-                let inverse = match result {
+                let (ended, inverse) = match result {
                     Ok(inv) => {
                         // Stopped early is cancelled, whatever it returned: a trash or a delete
                         // leaves its loop quietly so that its inverse still reaches the journal.
@@ -296,34 +296,37 @@ fn pump() {
                             let st = job.status.lock().unwrap();
                             crate::joblog::say(job.id, "info", format!("{}: {} of {} items, {} bytes", if ended == State::Done { "finished" } else { "cancelled" }, st.done, st.total, st.bytes));
                         }
-                        job.status.lock().unwrap().state = ended;
-                        inv
+                        (ended, inv)
                     }
                     Err(e) => {
-                        if job.cancel.load(Ordering::Relaxed) {
+                        let ended = if job.cancel.load(Ordering::Relaxed) {
                             crate::joblog::say(job.id, "warn", "cancelled");
-                            job.status.lock().unwrap().state = State::Cancelled;
+                            State::Cancelled
                         } else {
                             crate::joblog::say(job.id, "error", format!("failed: {}", e.message()));
                             crate::joblog::keep_failure(job.id, &job.title, &e.message());
-                            job.status.lock().unwrap().state = State::Failed(e.message());
-                        }
+                            State::Failed(e.message())
+                        };
                         // What it got done before it stopped — and only what is really there: a copy
                         // names its target before it starts on it, so one that failed at once has
                         // an inverse that would delete nothing, which is no inverse at all.
-                        job.partial.lock().unwrap().take().and_then(something_to_undo)
+                        (ended, job.partial.lock().unwrap().take().and_then(something_to_undo))
                     }
                 };
-                let finished_well = job.status.lock().unwrap().state == State::Done;
-                // The end is said only once the journal has it. It used to be said first, and a
-                // client quick enough to answer "done" with `Undo` — a script, never a hand — took
-                // back whatever was done before this instead.
+                let finished_well = ended == State::Done;
+                // The end is said only once the journal has it — the event AND the status. The
+                // event used to be said first, and a client quick enough to answer "done" with
+                // `Undo` — a script, never a hand — took back whatever was done before this
+                // instead. Then the status alone went to Done first, and a test polling it (or
+                // a script on `JobStatus`) could start its next job in the gap: that one's
+                // inverse reached the journal first, and `Undo` took back the wrong job. Seen on
+                // a CI runner twice as slow as the machine it was written on, never here.
                 let undoable_now = inverse.is_some();
+                // A copy that landed on a server is taken back by deleting it there, and a
+                // server has no trash (plan 07): the line that offers the undo says so, while
+                // there is still a choice about clicking it.
+                let permanent = inverse.as_ref().and_then(|inv| (inv.str_field("op") == Some("deleteCopies")).then(|| inv.str_field("dest").and_then(|d| Uri::parse(d).ok()).map(|u| u.authority).unwrap_or_default()));
                 if let Some(inv) = inverse {
-                    // A copy that landed on a server is taken back by deleting it there, and a
-                    // server has no trash (plan 07): the line that offers the undo says so, while
-                    // there is still a choice about clicking it.
-                    let permanent = (inv.str_field("op") == Some("deleteCopies")).then(|| inv.str_field("dest").and_then(|d| Uri::parse(d).ok()).map(|u| u.authority).unwrap_or_default());
                     let mut q = queue().lock().unwrap();
                     q.journal.push(Value::obj().u("job", job.id).s("title", job.title.clone()).v("inverse", inv).v("redo", job.op.clone()).done());
                     if q.journal.len() > JOURNAL_CAP {
@@ -331,21 +334,19 @@ fn pump() {
                     }
                     q.redo.clear();
                     save_journal(&q.journal);
-                    drop(q);
-                    job.announce();
-                    if matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
-                        // A job that stopped half way did not do what its title says: the toast
-                        // offers to take back the part that it did, and says that is what it is.
-                        let mut text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
-                        if let Some(host) = permanent {
-                            text.push_str(&format!(" — Undo deletes {} from {}, permanently", if job.about.count > 1 { "them" } else { "it" }, server_name(&host)));
-                        }
-                        broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", true).done());
-                    }
-                } else {
-                    job.announce();
                 }
-                if !undoable_now && matches!(job.kind.as_str(), "delete" | "emptyTrash") && job.status.lock().unwrap().state == State::Done {
+                job.status.lock().unwrap().state = ended;
+                job.announce();
+                if undoable_now && matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
+                    // A job that stopped half way did not do what its title says: the toast
+                    // offers to take back the part that it did, and says that is what it is.
+                    let mut text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
+                    if let Some(host) = permanent {
+                        text.push_str(&format!(" — Undo deletes {} from {}, permanently", if job.about.count > 1 { "them" } else { "it" }, server_name(&host)));
+                    }
+                    broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", true).done());
+                }
+                if !undoable_now && matches!(job.kind.as_str(), "delete" | "emptyTrash") && finished_well {
                     broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", false).done());
                 }
                 queue().lock().unwrap().running -= 1;

@@ -198,13 +198,19 @@ Item {
                  ready: root.front.status === Image.Ready && root.front.opacity > 0 }
     }
 
+    /// `source` as a url, which is what an Image gives back: a name with a space in it is
+    /// `a%20b.jpg` in the string and `a b.jpg` read back from the frame, and comparing the two
+    /// as strings said "not the one I asked for" of every picture with a space in its name —
+    /// decoded, never faded in, the placeholder card left on the stage.
+    property url wanted: ""
     onSourceChanged: showSource()
     function showSource() {
         slowTimer.stop(); preview.opacity = 0
         if (!wantPicture()) { frameA.opacity = 0; frameB.opacity = 0; return }
-        if (front.source == root.source && front.opacity === 1) return
+        root.wanted = root.source
+        if (front.source == root.wanted && front.opacity === 1) return
         root._asked = Date.now()
-        back.source = root.source
+        back.source = root.wanted
         if (back.status === Image.Ready) { arrived(back); return }
         // Nothing on the stage yet: the thumbnail stands in at once. Something on it: the old
         // picture stays, and the thumbnail comes over it only if the new one is slow (a big
@@ -214,10 +220,10 @@ Item {
     }
     /// The picture that was asked for is taking its time: its thumbnail, blown up soft, is
     /// better than the last picture for a second, and far better than nothing.
-    property Timer slowTimer: Timer { interval: 180; onTriggered: if (root.back.source == root.source && root.back.status !== Image.Ready) preview.opacity = 1 }
+    property Timer slowTimer: Timer { interval: 180; onTriggered: if (root.back.source == root.wanted && root.back.status !== Image.Ready) preview.opacity = 1 }
     /// A frame finished decoding. If it is the one waiting to come in, it becomes the picture.
     function arrived(f) {
-        if (f !== root.back || !wantPicture() || f.source != root.source) return
+        if (f !== root.back || !wantPicture() || f.source != root.wanted) return
         if (root._asked > 0) {
             root.lastMs = Date.now() - root._asked
             root.decodeMs += root.lastMs
