@@ -1,5 +1,10 @@
 name: CI
 
+# Every push and pull request: format, lint, tests, and a package per architecture, kept as
+# artifacts. Nothing here publishes anything — a release is a deliberate act, `release.yml`,
+# run by hand: it takes a CI run's packages, drives one under a compositor, tags the commit they
+# were built from and publishes them. What ships is what CI built and tested, and no commit
+# becomes a release on its own.
 on:
   push:
     branches: [main]
@@ -85,12 +90,15 @@ jobs:
           key: cargo-registry-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
       - name: makepkg
         # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
-        # and the rust job this depends on has just run it on this commit. Building by hand, and
-        # the release workflow, still run it.
+        # and the rust job this depends on has just run it on this commit. Building by hand
+        # still runs it.
         run: |
           chown -R builder . /home/builder/.cargo 2>/dev/null || true
           sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
+          cd packaging && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
       - uses: actions/upload-artifact@v7
         with:
           name: kiki-package-${{ matrix.arch }}
-          path: packaging/kiki-*.pkg.tar.zst
+          path: |
+            packaging/kiki-*.pkg.tar.zst
+            packaging/kiki-*.pkg.tar.zst.sha256

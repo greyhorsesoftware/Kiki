@@ -1,85 +1,90 @@
 name: Release
 
+# Run by hand, from the Actions tab. Takes the packages a CI run built (the newest green run on
+# main unless told otherwise), drives the x86_64 one under a compositor, then tags the commit
+# those packages were built from and publishes them. Nothing is built here: what is released is
+# byte for byte what CI tested. The version is the code's — `pkgver` in that commit's PKGBUILD —
+# and a version already tagged is refused, so releasing is: bump `pkgver` (and the workspace
+# version), push, wait for green, run this.
 on:
-  push:
-    tags: ['v*']
-  # By hand, from the Actions tab: builds and drives the package without publishing anything.
   workflow_dispatch:
-
-permissions:
-  contents: write
+    inputs:
+      run_id:
+        description: 'CI run whose packages to publish. Empty: the newest successful run on main.'
+        required: false
+      publish:
+        description: 'Tag and publish. Off: just drive the package and stop.'
+        type: boolean
+        default: true
 
 jobs:
-  build:
-    name: Build kiki package (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
-          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
+  pick:
+    name: Pick the CI run
+    runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.ver.outputs.version }}
+      run_id: ${{ steps.pick.outputs.run_id }}
+      sha: ${{ steps.pick.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Install build tools
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo glib2 gvfs gvfs-smb
-          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
-      - uses: actions/checkout@v7
-      - name: Set version from tag
-        id: ver
-        run: |
-          # A tag names the version; a run by hand keeps the PKGBUILD's own.
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-            sed -i "s/^pkgver=.*/pkgver=${VERSION}/" packaging/PKGBUILD
+          if [ -n "${{ inputs.run_id }}" ]; then
+            run="${{ inputs.run_id }}"
           else
-            VERSION="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
+            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "FILE=kiki-${VERSION}-1-${{ matrix.arch }}.pkg.tar.zst" >> "$GITHUB_ENV"
-      - name: makepkg
-        run: |
-          chown -R builder .
-          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm'
-          ls -l packaging/*.pkg.tar.zst
-      - name: Checksum
-        run: cd packaging && sha256sum "$FILE" > "$FILE.sha256"
-      - uses: actions/upload-artifact@v7
+          [ -n "$run" ] || { echo "no successful CI run on main to release"; exit 1; }
+          sha="$(gh run view --repo "$GITHUB_REPOSITORY" "$run" --json headSha --jq .headSha)"
+          echo "run_id=$run" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
         with:
-          name: package-${{ matrix.arch }}
-          path: |
-            packaging/${{ env.FILE }}
-            packaging/${{ env.FILE }}.sha256
+          ref: ${{ steps.pick.outputs.sha }}
+          fetch-tags: true
+      - id: version
+        name: The version is the code's, and not one already released
+        run: |
+          version="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
+          [ -n "$version" ] || { echo "no pkgver in packaging/PKGBUILD"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already a tag: bump pkgver in packaging/PKGBUILD (and the workspace version) and push first"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "releasing CI run ${{ steps.pick.outputs.run_id }}, commit ${{ steps.pick.outputs.sha }}, as v$version"
 
   # The package, installed and used: the daemon and the shell it ships, driven under a headless
-  # compositor through twenty-five flows (tests/e2e). Every push runs the unit, QML and package
-  # jobs (ci.yml); this is the release's proof that what they built starts and works together.
-  # x86_64 only for now; the same on ARM is a follow-up.
+  # compositor through twenty-five flows (tests/e2e), from the commit the package was built at.
+  # x86_64 only for now.
   drive:
     name: Install the package and drive it (x86_64, under cage)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
       options: --privileged
-    needs: build
+    needs: pick
     steps:
       - name: Install runtime
         # Quickshell comes from `extra` (0.3.1 as of 2026-09-23): the package the PKGBUILD
-        # depends on and the one the owner runs. It was built from the AUR until then, which had
-        # gone stale at 0.2.1.
+        # depends on and the one the owner runs.
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed git sudo cage wtype grim dbus \
             xdg-desktop-portal gnome-keyring openssh vsftpd ffmpeg python nodejs npm \
             qt6-base qt6-declarative qt6-wayland quickshell
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.pick.outputs.sha }}
       - uses: actions/download-artifact@v8
         with:
-          name: package-x86_64
+          name: kiki-package-x86_64
           path: pkg
+          run-id: ${{ needs.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: The package carries the version
+        run: ls "pkg/kiki-${{ needs.pick.outputs.version }}-1-x86_64.pkg.tar.zst" || { echo "CI run ${{ needs.pick.outputs.run_id }} built:"; ls pkg; echo "not ${{ needs.pick.outputs.version }}, the pkgver of its own commit — that should not happen"; exit 1; }
       - name: Install the package
         run: pacman -U --noconfirm --overwrite '*' pkg/kiki-*.pkg.tar.zst
       - name: Run the flows under cage
@@ -98,20 +103,33 @@ jobs:
           name: e2e-diffs
           path: tests/e2e/out/**
 
-  release:
-    name: Publish GitHub release
+  publish:
+    name: Tag and publish
     runs-on: ubuntu-latest
-    # Both architectures built, and the x86_64 package proven under cage. A run by hand stops here.
-    needs: [build, drive]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [pick, drive]
+    if: inputs.publish
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: package-*
+          pattern: kiki-package-*
           path: dist
           merge-multiple: true
+          run-id: ${{ needs.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Both architectures, both checksums
+        run: |
+          cd dist && ls -l
+          for a in x86_64 aarch64; do
+            f="kiki-${{ needs.pick.outputs.version }}-1-$a.pkg.tar.zst"
+            [ -f "$f" ] && [ -f "$f.sha256" ] || { echo "missing $f or its checksum"; exit 1; }
+            sha256sum -c "$f.sha256"
+          done
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: v${{ needs.pick.outputs.version }}
+          target_commitish: ${{ needs.pick.outputs.sha }}
           files: dist/*
           generate_release_notes: true
           body: |
@@ -120,4 +138,3 @@ jobs:
                 curl -fsSL https://raw.githubusercontent.com/greyhorsesoftware/Kiki/main/install.sh | bash
 
             Or download the package for your architecture below and `sudo pacman -U` it.
-

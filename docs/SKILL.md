@@ -42,7 +42,8 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
   portal FileChooser; `desktop.rs` launches desktop entries; `config.rs` runs
   `udisksctl`/`lsblk`; `locations.rs` stores secrets through `secret-tool`.
 - **Delivery**: `packaging/PKGBUILD` (x86_64 and aarch64), AUR `kiki-bin`, systemd
-  user socket and service, `.github/workflows/ci.yml` and `release.yml`,
+  user socket and service, `.github/workflows/ci.yml` and `release.yml` (by hand;
+  publishes a CI run's artifacts),
   `bench/` baselines from `kikid bench`.
 
 ## Desired Outcomes
