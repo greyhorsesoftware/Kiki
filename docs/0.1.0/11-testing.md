@@ -147,11 +147,11 @@ Quickshell timestamps the events; the driver reads them over IPC.
 
 ## CI
 
-**As built (2026-09-23)**, `.github/workflows/ci.yml` has four jobs: daemon and plugins per architecture (`make lint`, `make test-rust`, the ignored protocol and contract tests); QML under Qt with no compositor; a package build per architecture; and **e2e under `cage` against the *installed* package**. There is no visual, layout or performance job; the benchmark job that existed until 2026-09-23 compared a GitHub runner against the owner's machine and could only fail (plan 26).
+**As built (2026-09-23)**, `.github/workflows/ci.yml` has three jobs on every push: daemon and plugins per architecture (`make lint`, `make test-rust`, the ignored protocol and contract tests); QML under Qt with no compositor; and a package build per architecture. **The e2e flows under `cage` against the *installed* package** moved to `release.yml` the same day (owner): the job "Install the package and drive it" runs on a tag, gates the GitHub release on the x86_64 package proving itself, and runs by hand from the Actions tab (`workflow_dispatch`, which builds and drives but publishes nothing). It was the slowest job by a margin and the one most likely to go red for reasons that were not the code; the three that stay are fast, cached and deterministic. There is no visual, layout or performance job; the benchmark job that existed until 2026-09-23 compared a GitHub runner against the owner's machine and could only fail (plan 26).
 
 - `cargo test` on every push.
 - `qmltestrunner` on every push.
-- ~~e2e, visual, layout and performance in one job under `cage`~~ e2e in one job under `cage`, on every PR, about ten minutes.
+- ~~e2e, visual, layout and performance in one job under `cage`~~ ~~e2e in one job under `cage`, on every PR, about ten minutes.~~ e2e under `cage` on every tag and by hand (release.yml), not on every push.
 - The manual checklist is a PR template item on release branches only.
 
 ## Coverage
