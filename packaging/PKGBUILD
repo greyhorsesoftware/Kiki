@@ -19,24 +19,28 @@ optdepends=('poppler: PDF thumbnails'
             'gvfs-wsdd: find Windows computers on the network'
             'tailscale: share files over Taildrop')
 install=kiki.install
-options=('!lto')
+options=('!lto' '!debug')
 
 _srcdir="${startdir}/.."
 
+# Cargo builds under makepkg's own tree unless the caller has a target directory already —
+# CI does, cached between runs, and a release build from cold is the slowest thing it does.
+_target() { echo "${CARGO_TARGET_DIR:-${srcdir}/target}"; }
+
 build() {
   cd "${_srcdir}"
-  export CARGO_TARGET_DIR="${srcdir}/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo build --release --locked
 }
 
 check() {
   cd "${_srcdir}"
-  export CARGO_TARGET_DIR="${srcdir}/target"
+  export CARGO_TARGET_DIR="$(_target)"
   cargo test --release --locked
 }
 
 package() {
-  local t="${srcdir}/target/release"
+  local t="$(_target)/release"
   install -Dm755 "${t}/kikid"            "${pkgdir}/usr/bin/kikid"
   # The only part of kiki that decodes a file's contents, and so the only part a malformed file
   # can bring down. kikid looks for it beside itself, then here. Without it: no thumbnails.

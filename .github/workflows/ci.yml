@@ -16,8 +16,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Everything cargo, and the package, per architecture: one container, one checkout, one cache.
+  # The package job used to be separate and built the release binaries again from cold; now
+  # makepkg builds into the same cached `target/` the tests use. Cargo runs as `builder`
+  # throughout because makepkg refuses root; root only installs packages.
   rust:
-    name: Daemon and plugins (${{ matrix.arch }})
+    name: Daemon, plugins and package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     strategy:
@@ -26,25 +30,41 @@ jobs:
         include:
           - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
           - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - name: Install toolchain
         run: |
-          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf \
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo \
             openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
       - uses: actions/cache@v6
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /home/builder/.cargo/registry
+            /home/builder/.cargo/git
             target
           key: cargo-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+      - run: chown -R builder . /home/builder
       - name: Format and lint
-        run: make lint
+        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" make lint
       - name: Unit and integration tests
-        run: make test-rust
+        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" make test-rust
       - name: Protocol and plugin contract tests
-        run: cargo test --test '*' -- --include-ignored
+        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo test --test '*' -- --include-ignored
+      - name: makepkg
+        # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
+        # and it has just run above on this commit. Building by hand still runs it.
+        run: |
+          sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
+          cd packaging && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kiki-package-${{ matrix.arch }}
+          path: |
+            packaging/kiki-*.pkg.tar.zst
+            packaging/kiki-*.pkg.tar.zst.sha256
 
   qml:
     name: QML leaf and interaction tests
@@ -66,39 +86,3 @@ jobs:
           # `when: windowShown` and `visible: true`.
           export QT_QPA_PLATFORM=offscreen
           make test-qml
-
-  package:
-    name: Build package (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.image }}
-    needs: [rust]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest,    image: "archlinux:latest" }
-          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "menci/archlinuxarm:base-devel" }
-    steps:
-      - name: Install build tools
-        run: |
-          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo glib2 gvfs gvfs-smb
-          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        with:
-          path: /home/builder/.cargo/registry
-          key: cargo-registry-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: makepkg
-        # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
-        # and the rust job this depends on has just run it on this commit. Building by hand
-        # still runs it.
-        run: |
-          chown -R builder . /home/builder/.cargo 2>/dev/null || true
-          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
-          cd packaging && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
-      - uses: actions/upload-artifact@v7
-        with:
-          name: kiki-package-${{ matrix.arch }}
-          path: |
-            packaging/kiki-*.pkg.tar.zst
-            packaging/kiki-*.pkg.tar.zst.sha256
