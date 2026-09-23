@@ -1,7 +1,7 @@
 name: Release
 
-# Run by hand, from the Actions tab. Takes the packages a CI run built (the newest green run on
-# main unless told otherwise), drives the x86_64 one under a compositor, then tags the commit
+# Run by hand, from the Actions tab. Takes the packages the newest green CI run on main built,
+# drives the x86_64 one under a compositor, then tags the commit
 # those packages were built from and publishes them. Nothing is built here: what is released is
 # byte for byte what CI tested. The version is the code's — `pkgver` in that commit's PKGBUILD —
 # and a version already tagged is refused, so releasing is: bump `pkgver` (and the workspace
@@ -9,9 +9,6 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      run_id:
-        description: 'CI run whose packages to publish. Empty: the newest successful run on main.'
-        required: false
       publish:
         description: 'Tag and publish. Off: just drive the package and stop.'
         type: boolean
@@ -30,11 +27,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "${{ inputs.run_id }}" ]; then
-            run="${{ inputs.run_id }}"
-          else
-            run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
-          fi
+          run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           [ -n "$run" ] || { echo "no successful CI run on main to release"; exit 1; }
           sha="$(gh run view --repo "$GITHUB_REPOSITORY" "$run" --json headSha --jq .headSha)"
           echo "run_id=$run" >> "$GITHUB_OUTPUT"
