@@ -13,5 +13,4 @@ path = "src/main.rs"
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-pki-types = { version = "1", features = ["std"] }
-webpki-roots = "0.26"
+webpki-roots = "1"

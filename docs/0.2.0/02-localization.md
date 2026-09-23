@@ -1,6 +1,6 @@
-# 33 — Localization: English and Spanish, chosen by the OS
+# 02 — Localization: English and Spanish, chosen by the OS (0.2.0)
 
-**Status:** plan, written 2026-09-21. **Nothing here is built** — checked again on 2026-09-21: no `qml/kiki/i18n/`, no `Kiki.T`, and `qsTr` still appears 0 times in `qml/`. Whether it lands before the 0.1.0 tag or after it is the owner's call; it touches every file with a word in it, so it should not run alongside another phase.
+**Status:** plan, written 2026-09-21. **Nothing here is built** — checked again on 2026-09-21: no `qml/kiki/i18n/`, no `Kiki.T`, and `qsTr` still appears 0 times in `qml/`. ~~Whether it lands before the 0.1.0 tag or after it is the owner's call~~ **0.2.0** (owner, 2026-09-23; moved here from `0.1.0/33-localization.md`); it touches every file with a word in it, so it should not run alongside another phase — after `01-dependencies.md`, on a quiet tree.
 
 Asked for (owner, 2026-09-21): *"create a plan to support localization, implement en, sp localizations … have it key off the OS setting — defaulting to en if not supported."* Spanish is `es` everywhere below (ISO 639-1); "sp" is not a language code and no OS will ever report it.
 

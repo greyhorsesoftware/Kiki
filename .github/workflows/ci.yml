@@ -56,9 +56,11 @@ jobs:
       - name: makepkg
         # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
         # and it has just run above on this commit. Building by hand still runs it.
+        # `PKGEXT`: Arch Linux ARM's makepkg.conf says `.pkg.tar.xz`; the installer and the
+        # release name the file with `.zst` on both architectures, so this does too.
         run: |
-          sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
-          cd packaging && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
+          sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" PKGEXT=.pkg.tar.zst bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
+          cd packaging && ls -l && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
       - uses: actions/upload-artifact@v7
         with:
           name: kiki-package-${{ matrix.arch }}
