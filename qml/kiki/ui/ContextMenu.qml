@@ -83,9 +83,17 @@ Item {
                     readonly property bool hasSub: modelData.items !== undefined && modelData.items.length > 0
                     width: col.width; height: (sep ? 5 : 0) + 26
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
-                    Rectangle {
+                    Item {
                         y: parent.sep ? 5 : 0; width: parent.width; height: 26
-                        color: h.containsMouse && !menu.off(modelData) ? Kiki.Theme.surface : "transparent"
+                        // The highlight is a pill inside the row, not a bar across the box: it
+                        // stops short of the border on both sides and fades in and out.
+                        Rectangle {
+                            objectName: "menu-highlight"
+                            x: 4; y: 1; width: parent.width - 8; height: parent.height - 2; radius: 5
+                            color: Kiki.Theme.surface
+                            opacity: h.containsMouse && !menu.off(modelData) ? 1 : 0
+                            Behavior on opacity { NumberAnimation { duration: 90 } }
+                        }
                         Text { visible: modelData.checked !== undefined; x: 10; anchors.verticalCenter: parent.verticalCenter; text: modelData.checked ? "✓" : ""; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Icon { visible: modelData.icon !== undefined; x: 12; anchors.verticalCenter: parent.verticalCenter; name: modelData.icon || "file"; size: 14; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.accent }
                         Text { x: modelData.icon !== undefined ? 34 : (modelData.checked !== undefined ? 26 : 12); anchors.verticalCenter: parent.verticalCenter; text: modelData.label; color: menu.off(modelData) ? Kiki.Theme.gutter : (modelData.danger ? Kiki.Theme.danger : Kiki.Theme.fg); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
@@ -132,7 +140,14 @@ Item {
                     objectName: "menu-" + modelData.label
                     readonly property bool sep: modelData.sep === true
                     width: subCol.width; height: (sep ? 5 : 0) + 26
-                    color: sh.containsMouse && !menu.off(modelData) ? Kiki.Theme.surface : "transparent"
+                    color: "transparent"
+                    Rectangle {
+                        objectName: "menu-highlight"
+                        x: 4; y: (subRow.sep ? 5 : 0) + 1; width: parent.width - 8; height: 24; radius: 5
+                        color: Kiki.Theme.surface
+                        opacity: sh.containsMouse && !menu.off(modelData) ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 90 } }
+                    }
                     Text { visible: !!modelData.key; anchors.right: parent.right; anchors.rightMargin: 12; y: subRow.sep ? 5 : 0; height: 26; verticalAlignment: Text.AlignVCenter; text: modelData.key || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                     Rectangle { visible: parent.sep; y: 2; width: parent.width; height: 1; color: Kiki.Theme.line }
                     Icon { visible: modelData.icon !== undefined; x: 12; y: (parent.sep ? 5 : 0) + 6; name: modelData.icon || "file"; size: 14; color: menu.off(modelData) ? Kiki.Theme.gutter : Kiki.Theme.accent }
