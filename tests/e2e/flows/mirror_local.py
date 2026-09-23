@@ -51,9 +51,12 @@ def open_pair(ctx, spec):
 
 
 def preflight(sh):
-    """Preflight, and the Review screen it lands on (or Configure again when it refuses)."""
+    """Preflight, and the Review screen it lands on (or Configure again when it refuses) — with
+    its rows in hand. The plan's count arrives with the screen; its rows are a window the shell
+    asks for next, and `rows` in the state is whatever has landed (`WindowCache.row` is null
+    until then). A fast machine never saw the gap; a CI runner read five counts and no rows."""
     ws(sh, "preflight")
-    return wait_ws(sh, lambda s: s.get("screen") in ("review", "configure")) or ws(sh)
+    return wait_ws(sh, lambda s: s.get("screen") == "configure" or (s.get("screen") == "review" and len(s.get("rows") or []) == s.get("planCount"))) or ws(sh)
 
 
 def mirror(sh):

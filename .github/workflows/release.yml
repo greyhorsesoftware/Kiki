@@ -67,11 +67,12 @@ jobs:
     steps:
       - name: Install runtime
         # Quickshell comes from `extra` (0.3.1 as of 2026-09-23): the package the PKGBUILD
-        # depends on and the one the owner runs.
+        # depends on and the one the owner runs. `samba` and `gvfs-smb` are for the `smb` flow:
+        # the harness starts its own unprivileged smbd, and the daemon's gvfsd needs the backend.
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed git sudo cage wtype grim dbus \
             xdg-desktop-portal gnome-keyring openssh vsftpd ffmpeg python nodejs npm \
-            qt6-base qt6-declarative qt6-wayland quickshell
+            qt6-base qt6-declarative qt6-wayland quickshell samba gvfs-smb
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
         with:
