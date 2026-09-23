@@ -14,6 +14,12 @@ on:
         type: boolean
         default: true
 
+# The token needs to read Actions: `gh run list` and pulling another run's artifacts both go
+# through that API, and the repository's default token has contents only.
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   pick:
     name: Pick the CI run
@@ -101,7 +107,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [pick, drive]
     if: inputs.publish
+    # A job's own `permissions` replaces the workflow's, so the read is repeated here.
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/download-artifact@v8
