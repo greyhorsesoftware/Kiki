@@ -174,14 +174,17 @@ class Recorder:
                                capture_output=True, text=True).stdout.strip()
         h = int(probe or 1080)
         size = max(18, round(h / 36))
-        filters = []
+        # A band of its own under the picture, so no caption ever sits over a toast or a footer:
+        # the frame grows by the band (kept even, for the encoder).
+        band = (round(size * 1.9) + 1) // 2 * 2
+        filters = [f"pad=iw:ih+{band}:0:0:black"]
         for i, (t, text) in enumerate(self.marks):
             until = self.marks[i + 1][0] if i + 1 < len(self.marks) else end + 1
             # `expansion=none`: the text is what it says, `%` included; only the filter graph's
             # own separators want escaping, and an apostrophe is a right quote instead.
             esc = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
             filters.append(f"drawtext=fontfile='{font}':expansion=none:text='{esc}':fontsize={size}:fontcolor=white@0.95"
-                           f":box=1:boxcolor=black@0.55:boxborderw={size // 2}:x=(w-text_w)/2:y=h-{round(h * 0.085)}-text_h"
+                           f":x=(w-text_w)/2:y={h}+({band}-text_h)/2-{size // 8}"
                            f":enable='between(t,{t:.2f},{until:.2f})'")
         tmp = self.out + ".captioned.mp4"
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "medium", "-crf", "19",
@@ -324,13 +327,13 @@ def run(ctx):
     if DESKTOP:
         desk.enter()
     if pointer:
-        pointer.warp(1100, 640)      # out of the way, bottom right, until it is wanted
+        pointer.warp(24, 560)        # out of the way until it is wanted (see park)
     beat(0.5)
     rec.start(desk.monitor)
 
     def park():
         if pointer:
-            pointer.warp(1190, 668)    # on the status bar, out of every view's way
+            pointer.warp(24, 560)      # the sidebar's empty lower half: nothing there to light up
 
     # -------------------------------------------------------------- the home, three ways
     rec.say("Your home folder, in the list view")
