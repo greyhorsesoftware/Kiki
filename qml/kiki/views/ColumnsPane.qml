@@ -384,6 +384,15 @@ Item {
                     readonly property var modelData: root.columns[index] || ({ uri: "", cache: null, selected: -1 })
                     objectName: "column-" + index
                     width: root.widthOf(index); height: strip.height
+                    // A column that has just opened comes in from the left and fades up, 120 ms;
+                    // the first column, there from the start, does not.
+                    transform: Translate { id: slide; x: 0 }
+                    Component.onCompleted: if (index > 0) { slide.x = -24; opacity = 0; enter.start() }
+                    ParallelAnimation {
+                        id: enter
+                        NumberAnimation { target: slide; property: "x"; to: 0; duration: 120; easing.type: Easing.OutCubic }
+                        NumberAnimation { target: colItem; property: "opacity"; to: 1; duration: 120 }
+                    }
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
                     // The line between two columns is its grip: the system's resize cursor,
                     // nothing drawn, a double click to let the width go — as list view's are.

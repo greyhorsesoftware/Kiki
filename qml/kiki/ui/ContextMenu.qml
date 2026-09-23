@@ -63,7 +63,8 @@ Item {
     Rectangle {
         id: box
         width: 232; height: col.height + 8; radius: 2
-        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
+        Frost { anchors.fill: parent; radius: parent.radius; z: -1 }
         onHeightChanged: if (menu.visible) menu.place()
         focus: true
         Keys.onEscapePressed: menu.close()
@@ -116,7 +117,8 @@ Item {
         id: subBox
         visible: menu.subItems.length > 0
         width: 232; height: subCol.height + 8; radius: 2
-        color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
+        Frost { anchors.fill: parent; radius: parent.radius; z: -1 }
         x: Math.min(box.x + box.width - 2, menu.width - width - 4)
         y: Math.max(0, Math.min(box.y + menu.subY, menu.height - height - 4))
         MouseArea { anchors.fill: parent }

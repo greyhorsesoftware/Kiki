@@ -6,8 +6,17 @@ Rectangle {
     id: t
     property var toast: Kiki.Jobs.toast
     visible: toast !== null
+    // It rises 10 px and fades up as it comes, rather than appearing.
+    onVisibleChanged: if (visible) { rise.stop(); lift.y = 10; opacity = 0; rise.start() }
+    transform: Translate { id: lift; y: 0 }
+    ParallelAnimation {
+        id: rise
+        NumberAnimation { target: lift; property: "y"; to: 0; duration: 160; easing.type: Easing.OutCubic }
+        NumberAnimation { target: t; property: "opacity"; to: 1; duration: 160 }
+    }
     width: row.width + 20; height: 36; radius: 2; z: 50
-    color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+    color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
+    Frost { anchors.fill: parent; radius: parent.radius; z: -1 }
     Row {
         id: row; anchors.verticalCenter: parent.verticalCenter; x: 14; spacing: 14
         Text { anchors.verticalCenter: parent.verticalCenter; text: t.toast ? t.toast.text : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

@@ -53,6 +53,9 @@ Singleton {
     /// The desktop's icon theme: Omarchy names one per theme, and elsewhere GTK's setting is the
     /// nearest thing to a system answer. Empty means nobody said, so kiki draws its own.
     property string iconTheme: ""
+    /// The window's content — what `ui/Frost` blurs behind a floating thing. The shell sets it;
+    /// under a test it stays null and the frost is a flat tint.
+    property Item behind: null
     /// Theme-icon paths already resolved, keyed `name|size`, dropped when the theme changes.
     ///
     /// The daemon caches these too, but a round trip is a frame or three — long enough that every

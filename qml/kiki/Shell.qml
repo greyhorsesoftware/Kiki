@@ -60,7 +60,10 @@ FloatingWindow {
     readonly property int sidebarFull: Math.min(Kiki.Theme.sidebarWidth, Math.floor(win.width * 0.32))
     // The rail reserves only its own width; widening on hover floats over the files rather than
     // shoving them sideways every time the pointer passes.
-    readonly property int sidebarSpace: sidebarPanel.visible ? (sidebarRail ? 44 : sidebarFull) : 0
+    readonly property int sidebarSpaceWanted: sidebarPanel.visible ? (sidebarRail ? 44 : sidebarFull) : 0
+    // Eased: pinning or hiding the panel slides the panes over rather than snapping them.
+    property int sidebarSpace: sidebarSpaceWanted
+    Behavior on sidebarSpace { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
     // Side by side is how many folders the WINDOW shows; `Pane.view` is only how one pane draws
     // its folder. (It used to be a view — `left.view === "mirror"` — which left the left pane
     // without a view of its own and wrote "mirror" into views.toml as the folder's preference.)
@@ -365,7 +368,7 @@ FloatingWindow {
     function shareMenu() {
         if (!selectedUris().length) return
         const items = shareItems()
-        menuUnder(toolbar.viewButton, items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }])
+        menuUnder(toolbar.viewButton, items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }], true)
     }
     /// Share without asking anything first. If the plugin needs more than the files — an SMTP
     /// account wants a recipient — it says so, and the sheet opens to collect it.
@@ -375,7 +378,7 @@ FloatingWindow {
         })
     }
     /// For scripts (`shell share <plugin>`): the targets as a menu of their own.
-    function shareTargets(p, uris) { shareTargetItems(p, uris, items => menuUnder(toolbar.viewButton, items)) }
+    function shareTargets(p, uris) { shareTargetItems(p, uris, items => menuUnder(toolbar.viewButton, items, true)) }
     /// A share plugin's targets as menu items: online ones first as the plugin sorted them,
     /// offline ones greyed, and the reason when there are none.
     function shareTargetItems(p, uris, fill) {
@@ -485,8 +488,11 @@ FloatingWindow {
     function copyPath() { ops.copyPath(win.selectedUris()) }
     // View menu (plan 02): one toolbar button, the three views, then hidden files.
     // A menu hung under the toolbar item that opened it, in window coordinates.
-    function menuUnder(item, items) {
-        const p = item.mapToItem(menu.parent, 0, item.height + 4)
+    /// A menu hung under `item`. The toolbar's buttons stand at the right edge, so their menus
+    /// hang with their right edge on the button's (owner, 2026-09-23); the path's hang from the
+    /// left, where the crumb is. `place()` still keeps the box inside the window either way.
+    function menuUnder(item, items, alignRight) {
+        const p = item.mapToItem(menu.parent, alignRight ? item.width - menu.box.width : 0, item.height + 4)
         menu.open(items, Qt.point(p.x, p.y))
     }
     // Clicking the path offers the folders above this one, and the way into typing one.
@@ -510,7 +516,7 @@ FloatingWindow {
             { label: "About kiki…", sep: true, action: () => aboutDlg.open() },
         ]
     }
-    function gearMenu() { menuUnder(toolbar.gearButton, gearItems()) }
+    function gearMenu() { menuUnder(toolbar.gearButton, gearItems(), true) }
     /// The toolbar folded: every button it hides, as one menu — the views as a submenu, the
     /// gear's rows at the bottom.
     function hamburgerItems() {
@@ -524,7 +530,7 @@ FloatingWindow {
         const gear = win.gearItems(); gear[0].sep = true
         return items.concat(gear)
     }
-    function hamburgerMenu(button) { menuUnder(button, hamburgerItems()) }
+    function hamburgerMenu(button) { menuUnder(button, hamburgerItems(), true) }
     /// The rows and their ticks are `viewmenu.js`'s (tested there); what each does is here.
     /// Ticked for the FOCUSED pane's view, side by side as well — each pane has its own. (The
     /// ticks used to be withheld when split: a leftover from when Mirror was itself a view and
@@ -535,7 +541,7 @@ FloatingWindow {
     }
     function viewMenu() {
         const items = viewMenuItems()
-        menuUnder(toolbar.viewButton, items)
+        menuUnder(toolbar.viewButton, items, true)
     }
     // Sidebar keyboard focus (plan 23): Ctrl+B, then Up/Down/Enter, Esc back to the pane.
     property bool sidebarFocus: false
@@ -572,7 +578,7 @@ FloatingWindow {
             const items = list.length ? list : [{ label: "Nothing to open it with", enabled: false, action: () => {} }]
             if (menu.visible) menu.items = items
             else if (pos) menu.open(items, pos)
-            else menuUnder(toolbar.viewButton, items)
+            else menuUnder(toolbar.viewButton, items, true)
         })
     }
     // Trash view (plan 04): restore to the original path, delete for good, or empty everything.
@@ -1213,8 +1219,12 @@ FloatingWindow {
     // The toolbar spans the window above everything, so the path has the full width to use, and
     // the favorites panel sits under it and can be hidden.
     Column {
+        id: content
         visible: !win.projectMode
         anchors.fill: parent
+        // What the frosted layers (menus, the toast, the activity card, the chooser) blur behind
+        // themselves: the content, and only the content — they are its siblings, never inside it.
+        Component.onCompleted: Kiki.Theme.behind = content
         UI.Toolbar {
             id: toolbar
             objectName: "toolbar"
@@ -1287,7 +1297,7 @@ FloatingWindow {
                 Column {
                     id: leftCol
                     objectName: "pane-left"
-                    width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (inspectorPanel.visible && !win.split ? inspectorPanel.width : 0)); height: parent.height
+                    width: Math.max(0, (win.split ? win.leftPaneWidth(parent.width) : parent.width) - (!win.split ? inspectorSlot.width : 0)); height: parent.height
                     UI.PaneHeader { objectName: "pane-header-left"; visible: win.split; width: parent.width; pane: win.left; view: viewLoader.item; home: win.home; id: leftHeader; onClicked: win.focusPane(win.left); onPathMenu: c => win.paneHeaderPathMenu(win.left, c) }
                     UI.FilterBar {
                         id: leftFilter
@@ -1368,11 +1378,21 @@ FloatingWindow {
                         UI.PaneError { anchors.fill: parent; z: 50; pane: win.right; onRetry: win.right.listing.open(win.right.uri) }
                     }
                 }
+                // The panel slides in from the right and the view slides over to make room, rather
+                // than both snapping (2026-09-23). The slot's width eases; the panel inside keeps its
+                // full width, pinned to the slot's right edge, so it moves rather than squashes.
+                Item {
+                    id: inspectorSlot
+                    readonly property bool shown: win.pane.view !== "columns" && win.inspector
+                    readonly property int full: Math.max(inspectorPanel.minWidth, Math.min(win.inspectorW, Math.floor(parent.width * 0.7)))
+                    width: shown ? full : 0; height: parent.height
+                    visible: width > 0; clip: true
+                    Behavior on width { enabled: !inspectorPanel.resizing; NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                 UI.Inspector {
                     id: inspectorPanel
                     // Columns view supplies its own inspector column; icon and list show it with the selection.
-                    visible: win.pane.view !== "columns" && win.inspector
-                    width: Math.max(minWidth, Math.min(win.inspectorW, Math.floor(parent.width * 0.7))); height: parent.height
+                    anchors.right: parent.right
+                    width: inspectorSlot.full; height: parent.height
                     uri: win.inspectedUri; row: win.inspectedRow; home: win.home
                     onClosed: win.inspectorRequested = false
                     // Dragging the grip leftwards makes the panel wider.
@@ -1381,6 +1401,7 @@ FloatingWindow {
                     onEdit: (u, line) => win.editAt(u, line)
                     onOpen: u => win.openExternal(u)
                     onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
+                }
                 }
             }
         }

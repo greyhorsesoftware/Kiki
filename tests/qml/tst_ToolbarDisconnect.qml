@@ -184,4 +184,23 @@ TestCase {
         compare(b.opacity, 1)
         shell.inspectedUri = ""
     }
+
+    // The toolbar's menus hang with their right edge on their button's; the path's from the left.
+    function test_toolbar_menus_hang_right_aligned_to_their_button() {
+        const bar = findChild(shell.contentItem, "toolbar"), m = shell.contentItem.children.find(c => c.box !== undefined)
+        // The window is never shown here, so the box is clamped into a 0 × 0 window: what is
+        // checked is the point asked for (`at`), which is where the box goes when there is room.
+        shell.gearMenu()
+        const g = bar.gearButton.mapToItem(shell.contentItem, bar.gearButton.width, 0)
+        verify(Math.abs((m.at.x + m.box.width) - g.x) <= 1, "gear menu right edge " + (m.at.x + m.box.width) + " vs button " + g.x)
+        m.close()
+        shell.viewMenu()
+        const v = bar.viewButton.mapToItem(shell.contentItem, bar.viewButton.width, 0)
+        verify(Math.abs((m.at.x + m.box.width) - v.x) <= 1, "view menu right edge " + (m.at.x + m.box.width) + " vs button " + v.x)
+        m.close()
+        shell.pathMenu()
+        const c = shell.activeCrumb().mapToItem(shell.contentItem, 0, 0)     // side by side, a pane header's
+        verify(Math.abs(m.at.x - c.x) <= 1, "the path's menu hangs from its left: " + m.at.x + " vs " + c.x)
+        m.close()
+    }
 }

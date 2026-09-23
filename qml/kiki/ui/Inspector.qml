@@ -31,6 +31,8 @@ Rectangle {
     signal resized(real dx)
     /// The drag is over, so the width is worth remembering.
     signal resizeEnded()
+    /// The grip is held: whoever eases the panel's width must not, while it follows the pointer.
+    readonly property bool resizing: grip.pressed
 
     color: Kiki.Theme.bg
     Rectangle { visible: !standalone; width: 1; height: parent.height; color: Kiki.Theme.line }

@@ -551,6 +551,7 @@ TestCase {
         tryVerify(() => findChild(cols, "column-1") !== null && cols.columns.length === 2)
         // The Row places its columns on the next frame; until then the new one sits on the first.
         tryVerify(() => findChild(cols, "column-1").x > 0)
+        wait(150)                                   // and it has finished sliding in over its neighbour's edge
     }
     function test_the_line_between_two_columns_drags_the_one_on_its_left() {
         forgetWidths()

@@ -6,7 +6,9 @@ import "../views" as Views
 Rectangle {
     id: dlg
     visible: false
-    anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.55); z: 95
+    anchors.fill: parent; color: "transparent"; z: 95
+    // The window behind, frosted and darkened: the chooser is over THIS folder, not over nothing.
+    Frost { anchors.fill: parent; radius: 0; tint: "black"; tintOpacity: 0.45; blur: 0.8 }
     property var req: null            // the ShowChooser event
     property string home: ""
     property var favorites: []

@@ -40,7 +40,8 @@ Item {
         height: Math.min(header.height + Math.max(listCol.height, 64) + 2, pop.aimY - 24)
         x: Math.max(8, Math.min(pop.width - width - 8, pop.aimX - width + 28))
         y: pop.aimY - height - 10
-        radius: 12; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        radius: 12; color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
+        Frost { anchors.fill: parent; radius: parent.radius; z: -2 }
         // Swallows what lands on the card, so only a click OUTSIDE closes.
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
 
