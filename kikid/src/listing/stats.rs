@@ -199,7 +199,15 @@ impl Listing {
             // counts them all and `enrich_progress` only finishes when they all have metadata, so
             // queueing the view alone left a filtered listing permanently mid-enrichment — and a
             // `Sort` waiting on it (sort by size, filter typed) never got its reply.
-            let rows: Vec<u32> = (0..inner.meta.len() as u32).filter(|&i| inner.meta[i as usize].is_none() && !inner.queued[i as usize]).collect();
+            //
+            // The view first, in its own order, then what the filter hides — not `0..len`. The
+            // order the rows are stat'ed in is worth 40 per cent: queued in pool (readdir) order,
+            // `flat200k.enrich_ms` went from 140 ms to 240 ms on the baseline machine (plan 26,
+            // 2026-09-23), and came back when the view's name order was restored. What is on
+            // screen getting its metadata first is the order the user wants anyway.
+            let wants = |inner: &Inner, i: u32| inner.meta[i as usize].is_none() && !inner.queued[i as usize];
+            let mut rows: Vec<u32> = inner.view.iter().copied().filter(|&i| wants(&inner, i)).collect();
+            rows.extend((0..inner.meta.len() as u32).filter(|&i| inner.pos[i as usize] == u32::MAX && wants(&inner, i)));
             for &i in &rows {
                 inner.queued[i as usize] = true;
             }

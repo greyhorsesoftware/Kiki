@@ -79,10 +79,17 @@ jobs:
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo glib2 gvfs gvfs-smb
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: /home/builder/.cargo/registry
+          key: cargo-registry-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
       - name: makepkg
+        # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
+        # and the rust job this depends on has just run it on this commit. Building by hand, and
+        # the release workflow, still run it.
         run: |
-          chown -R builder .
-          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm'
+          chown -R builder . /home/builder/.cargo 2>/dev/null || true
+          sudo -u builder bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
       - uses: actions/upload-artifact@v7
         with:
           name: kiki-package-${{ matrix.arch }}

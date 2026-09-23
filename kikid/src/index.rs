@@ -382,7 +382,9 @@ pub fn query(ix: &Index, q: &str, mode: Mode) -> (Vec<Hit>, bool) {
         if ix.is_root[i as usize] || ix.removed[i as usize] {
             continue;
         }
-        let name = ix.name(i);
+        // The name only where it is looked at: this loop is bound by memory, not arithmetic —
+        // every array it touches per entry is another cache miss over 100,000 of them — and a
+        // prefix query reads the key alone (plan 26, 2026-09-23: a third off `index_query_us`).
         let rank = match mode {
             Mode::Prefix => {
                 if ix.key(i).starts_with(&key) {
@@ -391,8 +393,11 @@ pub fn query(ix: &Index, q: &str, mode: Mode) -> (Vec<Hit>, bool) {
                     None
                 }
             }
-            Mode::Substring => substring_rank(name, &lower),
-            Mode::Fuzzy => substring_rank(name, &lower).or_else(|| fuzzy_rank(name, &lower)),
+            Mode::Substring => substring_rank(ix.name(i), &lower),
+            Mode::Fuzzy => {
+                let name = ix.name(i);
+                substring_rank(name, &lower).or_else(|| fuzzy_rank(name, &lower))
+            }
         };
         if let Some(r) = rank {
             matches += 1;
