@@ -380,4 +380,43 @@ TestCase {
         strip.contentX = 0
         tryVerify(() => wrongTiles().length === 0, 2000, "back at the start: " + wrongTiles())
     }
+
+    // ---------------------------------------------------------------- 2026-09-22: the stage dressed
+    // Under the picture, the picture itself blurred; while a picture is slow, its thumbnail stands
+    // in; the current tile comes forward and the strip glides to it.
+    function test_the_backdrop_is_the_pictures_own_thumbnail() {
+        fake.tree = { "file:///home/p": [fake.file("a.jpg", { kind: "image", thumb: Qt.resolvedUrl("fixtures/small.png").toString().replace("file://", "") }), fake.file("n.txt")] }
+        pane.open("file:///home/p"); wait(50)
+        const backdrop = findChild(gallery, "gallery-backdrop")
+        pane.selection.set(0)
+        tryVerify(() => backdrop.visible, 2000, "no backdrop under a picture with a thumbnail")
+        compare(backdrop.width, findChild(gallery, "gallery-stage").width, "it fills the stage")
+        pane.selection.set(1)
+        tryVerify(() => !backdrop.visible, 2000, "a text file has no backdrop")
+    }
+    function test_a_slow_picture_shows_its_thumbnail_first() {
+        const thumb = Qt.resolvedUrl("fixtures/small.png").toString().replace("file://", "")
+        fake.tree = { "file:///home/p": [fake.file("never.jpg", { kind: "image", thumb: thumb })] }
+        pane.open("file:///home/p"); wait(50)
+        pane.selection.set(0)                       // the file itself does not exist: it never arrives
+        const preview = findChild(gallery, "gallery-preview")
+        tryVerify(() => preview.opacity === 1, 2000, "nothing on the stage yet: the thumbnail should be up at once")
+        verify(String(preview.source).endsWith("small.png"))
+    }
+    function test_the_current_tile_comes_forward_and_the_strip_glides() {
+        const rows = []
+        for (let i = 0; i < 60; i++) rows.push(fake.file("p" + i + ".jpg", { kind: "image", thumb: "/t/" + i + ".png" }))
+        fake.tree = { "file:///home/many": rows }
+        pane.open("file:///home/many"); wait(80)
+        pane.selection.set(0); wait(200)
+        const tile = t => stripTiles().find(x => x.index === t)
+        tryVerify(() => tile(0) && tile(0).scale > 1.05, 1000, "the current tile did not grow")
+        verify(tile(1).scale === 1 && tile(1).opacity < 1, "its neighbour stepped back")
+        const strip = findChild(gallery, "gallery-strip")
+        pane.selection.set(40); gallery.ensureVisible(40)      // as the window does after a key
+        wait(30)
+        const midway = strip.contentX
+        verify(midway > 0 && midway < 40 * gallery.shotPitch - strip.width / 2, "the strip jumped rather than glided: " + midway)
+        tryVerify(() => Math.abs(strip.contentX - (40 * gallery.shotPitch - (strip.width - gallery.shotWidth) / 2)) < 1, 1000, "and it ends centred on the tile")
+    }
 }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import ".." as Kiki
 import "../ui" as UI
 
@@ -21,7 +22,9 @@ Item {
 
     property bool filmstrip: true
     property real zoom: 0                       // 0 = fit the stage
-    readonly property int stripHeight: filmstrip ? 84 : 0
+    // 84 was the bar with 7 px above a tile; the current tile grows, and the owner wanted more
+    // room over it (2026-09-22): 13 px each side, the tile as tall as before.
+    readonly property int stripHeight: filmstrip ? 96 : 0
     /// The slideshow controls float over the middle of the picture while the pointer is on it
     /// (the same as the info panel's video buttons), so they take no room of their own: the
     /// picture has the whole height above the filmstrip.
@@ -115,7 +118,15 @@ Item {
     }
 
     // The shell drives every view through these.
-    function ensureVisible(i) { strip.positionViewAtIndex(i, ListView.Contain) }
+    /// The strip keeps the current tile in view — gliding there, not jumping. `positionViewAtIndex`
+    /// writes `contentX` from C++ where no Behavior sees it, so the target is worked out here and
+    /// animated; the tile is centred when there is room to, so the neighbours read both ways.
+    function ensureVisible(i) {
+        const want = Math.max(0, Math.min(i * shotPitch - (strip.width - shotWidth) / 2, Math.max(0, strip.contentWidth - strip.width)))
+        if (Math.abs(want - strip.contentX) < 1) return
+        glide.stop(); glide.from = strip.contentX; glide.to = want; glide.start()
+    }
+    property NumberAnimation glide: NumberAnimation { target: strip; property: "contentX"; duration: 200; easing.type: Easing.OutCubic }
     readonly property int perRow: 1
     readonly property int pageSize: 1
     function step(d) {
@@ -187,12 +198,21 @@ Item {
 
     onSourceChanged: showSource()
     function showSource() {
+        slowTimer.stop(); preview.opacity = 0
         if (!wantPicture()) { frameA.opacity = 0; frameB.opacity = 0; return }
         if (front.source == root.source && front.opacity === 1) return
         root._asked = Date.now()
         back.source = root.source
-        if (back.status === Image.Ready) arrived(back)
+        if (back.status === Image.Ready) { arrived(back); return }
+        // Nothing on the stage yet: the thumbnail stands in at once. Something on it: the old
+        // picture stays, and the thumbnail comes over it only if the new one is slow (a big
+        // file, a server) — the quick crossfade is kept for the common case.
+        if (front.opacity === 0 || front.status !== Image.Ready) preview.opacity = 1
+        else slowTimer.restart()
     }
+    /// The picture that was asked for is taking its time: its thumbnail, blown up soft, is
+    /// better than the last picture for a second, and far better than nothing.
+    property Timer slowTimer: Timer { interval: 180; onTriggered: if (root.back.source == root.source && root.back.status !== Image.Ready) preview.opacity = 1 }
     /// A frame finished decoding. If it is the one waiting to come in, it becomes the picture.
     function arrived(f) {
         if (f !== root.back || !wantPicture() || f.source != root.source) return
@@ -205,6 +225,7 @@ Item {
         }
         root.bFront = !root.bFront          // f is the front now, and sits above the old one
         f.opacity = 1
+        slowTimer.stop(); preview.opacity = 0
     }
     /// The fade is over: the frame underneath has nothing left to show.
     function faded() { if (root.front.opacity === 1) root.back.opacity = 0 }
@@ -215,6 +236,48 @@ Item {
         width: parent.width; height: root.stageHeight
         contentWidth: Math.max(width, root.front.width); contentHeight: Math.max(height, root.front.height)
         clip: true; boundsBehavior: Flickable.StopAtBounds
+
+        // ---- under the picture: the picture itself, blurred and dimmed, filling the stage.
+        // A portrait no longer floats in a dark box; the mat takes the picture's own colours.
+        // Made from the thumbnail — 128 px stretched over the stage is already most of a blur,
+        // and costs nothing to decode — so it is there before the picture is. Pinned to the
+        // viewport, not the content: it does not pan with a zoomed picture.
+        Item {
+            id: backdrop
+            objectName: "gallery-backdrop"
+            x: stage.contentX; y: stage.contentY; width: stage.width; height: stage.height
+            z: -2
+            visible: root.wantPicture() && thumbSource.status === Image.Ready
+            Image {
+                id: thumbSource
+                anchors.fill: parent; visible: false
+                source: root.row && root.row.thumb ? "file://" + root.row.thumb : ""
+                sourceSize: Qt.size(160, 160); fillMode: Image.PreserveAspectCrop
+                asynchronous: true; smooth: true; cache: true; mipmap: true
+            }
+            MultiEffect {
+                anchors.fill: parent
+                source: thumbSource
+                blurEnabled: true; blur: 1.0; blurMax: 64; blurMultiplier: 2.5
+                saturation: -0.25; brightness: -0.35
+                opacity: 0.85
+            }
+        }
+        // ---- the thumbnail, at the size the picture will be, while the picture is on its way.
+        Image {
+            id: preview
+            objectName: "gallery-preview"
+            z: -1
+            source: thumbSource.source
+            sourceSize: Qt.size(160, 160); smooth: true; cache: true; asynchronous: true
+            readonly property real fit: implicitWidth > 0
+                ? Math.min(Math.max(1, stage.width - 2 * root.inset) / implicitWidth, Math.max(1, stage.height - 2 * root.inset) / implicitHeight)
+                : 1
+            width: Math.round(implicitWidth * fit); height: Math.round(implicitHeight * fit)
+            x: stage.contentX + Math.max(0, (stage.width - width) / 2); y: stage.contentY + Math.max(0, (stage.height - height) / 2)
+            opacity: 0; visible: opacity > 0 && source != ""
+            Behavior on opacity { NumberAnimation { duration: 180 } }
+        }
 
         Image {
             id: frameA
@@ -456,7 +519,9 @@ Item {
             id: strip
             objectName: "gallery-strip"
             // Centred while the pictures fit, filling the bar once they do not.
-            height: parent.height - 12
+            // The strip is the bar's full height and the tiles sit 13 px in from either edge, so
+            // the current tile has room to grow without the strip's clip taking its edges off.
+            height: parent.height
             anchors.verticalCenter: parent.verticalCenter
             anchors.horizontalCenter: parent.horizontalCenter
             width: Math.min(parent.width - 16, Math.max(1, contentWidth))
@@ -501,22 +566,44 @@ Item {
                 onIndexChanged: refresh()
                 Component.onCompleted: refresh()
                 ListView.onReused: refresh()
-                width: root.shotWidth; height: strip.height; radius: 8
+                width: root.shotWidth; height: strip.height - 26; radius: 8
+                // 13 px down from the bar's top. A horizontal ListView writes its delegates' `y`
+                // itself (0), so a `y:` here is overwritten; a transform is left alone.
+                transform: Translate { y: 13 }
                 color: index === root.current ? Kiki.Theme.surface : Qt.rgba(1, 1, 1, 0.03)
                 border.width: index === root.current ? 2 : 1
                 border.color: index === root.current ? Kiki.Theme.accent : Qt.rgba(1, 1, 1, 0.05)
+                // The one on the stage comes forward a little and its neighbours step back; both
+                // ease, so stepping along the strip is a movement and not a blink.
+                readonly property bool current: index === root.current
+                scale: current ? 1.12 : 1
+                z: current ? 2 : 0
+                opacity: current || root.current < 0 ? 1 : 0.72
+                Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: 160 } }
                 Connections {
                     target: root && root.pane ? root.pane.listing : null
                     function onRowsUpdated(first, n) { if (shot.index >= first && shot.index < first + n) shot.refresh() }
                     function onReset() { shot.refresh() }
                 }
-                Image {
+                // The thumbnail fills its tile, cropped, with the tile's corners: a strip of
+                // photographs rather than a row of letterboxed icons.
+                Item {
                     objectName: "strip-thumb"
                     visible: !!(shot.r && shot.r.thumb)
-                    anchors.fill: parent; anchors.margins: 5
-                    source: shot.r && shot.r.thumb ? "file://" + shot.r.thumb : ""
-                    sourceSize: Qt.size(144, 144); fillMode: Image.PreserveAspectFit
-                    asynchronous: true; smooth: true
+                    anchors.fill: parent; anchors.margins: 4
+                    property string source: shot.r && shot.r.thumb ? "file://" + shot.r.thumb : ""
+                    readonly property int status: tileImage.status
+                    Image {
+                        id: tileImage
+                        anchors.fill: parent; visible: false
+                        source: parent.source
+                        sourceSize: Qt.size(144, 144); fillMode: Image.PreserveAspectCrop
+                        asynchronous: true; smooth: true
+                    }
+                    Item { id: tileMask; anchors.fill: parent; visible: false; layer.enabled: true; layer.smooth: true
+                        Rectangle { anchors.fill: parent; radius: 5; color: "black"; antialiasing: true } }
+                    MultiEffect { anchors.fill: parent; visible: tileImage.status === Image.Ready; source: tileImage; maskEnabled: true; maskSource: tileMask; maskThresholdMin: 0.5; maskSpreadAtMin: 1.0 }
                 }
                 UI.KindIcon {
                     visible: !(shot.r && shot.r.thumb)
