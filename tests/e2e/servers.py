@@ -252,7 +252,12 @@ class Servers:
         if made.returncode != 0:
             raise RuntimeError(f"pdbedit could not make the account: {made.stdout}{made.stderr}")
         log = open(os.path.join(d, "smbd.out"), "w")
-        p = subprocess.Popen([smbd_bin(), "-F", "-s", conf, "--debug-stdout"], stdout=log, stderr=subprocess.STDOUT)
+        # A pipe for its stdin, held open for as long as the server is wanted: in the foreground
+        # smbd takes EOF on stdin as "the parent has gone" and exits (`Server exit (EOF on
+        # stdin)`). On a developer's machine stdin is the terminal and never closes; under CI it
+        # is closed or /dev/null, and the server was gone the moment it said "waiting for
+        # connections". Closing the pipe is also the polite way to stop it (see `stop`).
+        p = subprocess.Popen([smbd_bin(), "-F", "-s", conf, "--debug-stdout"], stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
         self.procs.append(p)
         remember(p.pid)
 
@@ -272,6 +277,11 @@ class Servers:
 
     def stop(self):
         for p in self.procs:
+            if p.stdin:
+                try:
+                    p.stdin.close()      # smbd: EOF on stdin is its own cue to leave
+                except OSError:
+                    pass
             p.terminate()
         for p in self.procs:
             # Waited for, and killed if it will not go: a server left behind holds its port and
