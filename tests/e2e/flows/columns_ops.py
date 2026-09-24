@@ -237,6 +237,9 @@ def run(ctx):
 
     # ------------------------------------------------ the filter follows the keyboard (0.1.1)
     # `/` narrows the column the keyboard is in, not the first; leaving the column clears it.
+    # The pane's count is read once its listing is done, or a scan finishing between the two
+    # reads looks like the filter touching it (seen once, 2026-09-24).
+    sh.wait_state(lambda s: s.get("done") is True)
     count_before = sh.state().get("count")
     sh.call("columns", "down"); sh.call("columns", "up")            # the key column's first row
     chosen = (sh.state().get("selection") or [""])[0]

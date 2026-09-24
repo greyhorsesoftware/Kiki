@@ -266,7 +266,10 @@ def run(ctx):
             c.check(f"{tag}: and holds what was done on the server for it: the part file written, then renamed into place",
                     any("logo.bin.kiki-part" in l["text"] and l["text"].startswith("write ") for l in theirs) and any(l["text"].startswith("rename ") and "logo.bin" in l["text"] for l in theirs), [l["text"][:60] for l in theirs][:6])
             c.check(f"{tag}: on a session of that job's own", any(f"(job-{job})" in l["text"] for l in theirs), [l["text"] for l in theirs if "connect" in l["text"]])
-            c.check(f"{tag}: a story, not a packet dump", len(lines) < 150, len(lines))
+            # The wire is in it since 0.1.1 — over FTPS every command and reply of the control
+            # channel, a dozen lines a file (TYPE, PASV, STOR, 150/226, RNFR/RNTO, MDTM): 177 for
+            # these six. A packet dump would be thousands.
+            c.check(f"{tag}: a story, not a packet dump", len(lines) < 400, len(lines))
             text = " ".join(l["text"] for l in lines) + " ".join(l["text"] for l in d.ok("LocationLog", location=f"e2e-{tag}")["lines"])
             c.check(f"{tag}: and the password is nowhere in it, nor in the location's own log", FTPS_PASSWORD not in text)
             more = d.ok("JobLog", job=job, **{"from": log["next"]})
