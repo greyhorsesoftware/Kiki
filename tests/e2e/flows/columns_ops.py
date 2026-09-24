@@ -240,8 +240,11 @@ def run(ctx):
     sh.call("columns", "down"); sh.call("columns", "up")            # the key column's first row
     chosen = (sh.state().get("selection") or [""])[0]
     if os.path.isdir(urllib.parse.unquote(chosen[len("file://"):]) if chosen else ""):
-        sh.call("columns", "open")                                  # its column opens…
-        sh.call("columns", "right")                                 # …and the keyboard steps into it
+        # Right opens the folder's column if it has not opened and steps the keyboard into it.
+        # (Not `open`: in columns that is activate — xdg-open on the folder — which on the CI
+        # runner, where kiki is the installed folder handler, came straight back as a `present`
+        # that moved the pane into the folder and emptied the count read below, 2026-09-24.)
+        sh.call("columns", "right")
         col = json.loads(sh.call("columns", "state") or "{}")           # any verb it does not know only reads
         deep = col.get("focusCol", 0)
         if c.check("the keyboard is in a deeper column", deep >= 1, col):
@@ -252,7 +255,10 @@ def run(ctx):
             # exact count is not the measure — the ops above changed this folder, and the
             # watcher's word on that can land during this section; it did on the owner's
             # machine, 2026-09-24.)
-            c.check("the pane's own listing is untouched", (sh.state().get("count") or 0) > 0, sh.state().get("count"))
+            # Waited for, not sampled once: on the CI runner the count read 0 for an instant
+            # (2026-09-24) — a listing reloading recovers within the wait; one filtered to
+            # nothing stays at 0.
+            c.check("the pane's own listing is untouched", sh.wait_state(lambda s: (s.get("count") or 0) > 0, 8) is not None, sh.state().get("count"))
             sh.call("columns", "left")
             c.check("the keyboard leaving the column takes the filter with it",
                     sh.wait_state(lambda s: s.get("filter") == "" and s.get("filterOpen") is False) is not None, sh.state())
