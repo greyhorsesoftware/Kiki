@@ -28,10 +28,24 @@ esac
 
 as_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 
+# `curl … | bash` makes the script pacman's stdin: its "Proceed? [Y/n]" read the end of the
+# script, took that for a no, and the script said "done" over a package that was never
+# installed. Give pacman the terminal when there is one, answer yes when there is none, and
+# then look, rather than trust an exit code, before saying anything.
+install_package() {
+  if ( : </dev/tty ) 2>/dev/null; then
+    as_root pacman -U --needed "$1" </dev/tty
+  else
+    as_root pacman -U --needed --noconfirm "$1"
+  fi
+  pacman -Q kiki >/dev/null 2>&1 || die "pacman did not install kiki (declined, or a dependency it could not resolve — see above)."
+}
+
 if [ -n "${KIKI_PACKAGE:-}" ]; then
   [ -f "$KIKI_PACKAGE" ] || die "${KIKI_PACKAGE}: no such file"
   say "installing ${KIKI_PACKAGE}"
-  as_root pacman -U --needed "$KIKI_PACKAGE"
+  install_package "$KIKI_PACKAGE"
+  say "done. kiki is in the launcher, and 'kiki' starts it."
   exit 0
 fi
 
@@ -64,5 +78,6 @@ have="$(sha256sum "${tmp}/${file}" | cut -d' ' -f1)"
 [ "$want" = "$have" ] || die "checksum mismatch for ${file}: expected ${want}, got ${have}"
 
 say "installing (pacman will ask for your password and confirm the dependencies)"
-as_root pacman -U --needed "${tmp}/${file}"
-say "done. Start kiki from the launcher or with 'kiki'."
+install_package "${tmp}/${file}"
+[ "$(pacman -Q kiki | cut -d' ' -f2)" = "${version}-1" ] || die "kiki is installed, but not ${version}: pacman kept what was there."
+say "done. kiki ${version} is in the launcher, and 'kiki' starts it."

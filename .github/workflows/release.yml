@@ -36,6 +36,16 @@ jobs:
           run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           [ -n "$run" ] || { echo "no successful CI run on main to release"; exit 1; }
           sha="$(gh run view --repo "$GITHUB_REPOSITORY" "$run" --json headSha --jq .headSha)"
+          # The newest green run is not the newest run when main has moved and its CI is still
+          # going, or went red: releasing then quietly ships the commit before the fix. Say so and
+          # stop. (A commit CI skips, docs only, starts no run, so it cannot trip this.)
+          newest="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --limit 1 --json databaseId,headSha,status,conclusion --jq '.[0]')"
+          newest_id="$(jq -r .databaseId <<<"$newest")"
+          if [ "$newest_id" != "$run" ]; then
+            echo "the newest CI run on main is $(jq -r .headSha <<<"$newest") ($(jq -r '.status + (if .conclusion then " / " + .conclusion else "" end)' <<<"$newest")), not the newest green one ($sha)."
+            echo "Wait for it to pass, or fix it, before releasing."
+            exit 1
+          fi
           echo "run_id=$run" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
