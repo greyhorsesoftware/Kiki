@@ -226,7 +226,9 @@ class Servers:
    pid directory = {d}/run
    ncalrpc dir = {d}/ncalrpc
    log file = {d}/log/smbd.log
-   log level = 1
+   # Enough to say why it stopped: at 1, an smbd that fails to start prints "started" and
+   # nothing else before it ends its own process group (status -15). Only smbd.out gets it.
+   log level = 3
    load printers = no
    printing = bsd
    printcap name = /dev/null
@@ -256,7 +258,9 @@ class Servers:
 
         def up():
             if p.poll() is not None:
-                raise RuntimeError(f"smbd did not start (status {p.returncode}): " + open(os.path.join(d, "smbd.out")).read())
+                out = open(os.path.join(d, "smbd.out")).read()
+                # The tail is where the reason is; the head is thirty lines of parameters.
+                raise RuntimeError(f"smbd did not start (status {p.returncode}); its last lines:\n" + "\n".join(out.strip().splitlines()[-25:]))
             try:
                 socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
                 return True
