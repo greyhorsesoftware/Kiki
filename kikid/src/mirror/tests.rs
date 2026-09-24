@@ -424,6 +424,18 @@ fn the_clock_offset_is_the_median_of_matching_pairs() {
     few.insert("a", e("a", false, 4, 10_000).1);
     assert_eq!(auto_offset(&few, &r), 0);
 
+    // Deltas that do not agree are not a clock (2026-09-24): every local file re-stamped by a
+    // checkout at one moment, the replica written over months — the median was days, and
+    // meaningless. Half or fewer within the tolerance of the median: no offset.
+    let mut stamped = SideMap::new();
+    let mut written = SideMap::new();
+    for (rel, dr) in [("a", 1_000u64), ("b", 700_000_000), ("c", 40_000_000), ("d", 300_000_000), ("e", 1_200_000_000)] {
+        stamped.insert(rel, e(rel, false, 4, 1_500_000_000).1);
+        written.insert(rel, e(rel, false, 4, dr).1);
+    }
+    assert_eq!(auto_offset(&stamped, &written), 0, "a checkout's stamps are not a clock");
+    // Two of three agreeing (5000, 7000, 5000) is still a clock, as above; a majority is enough.
+
     // Directories, differing sizes and unknown mtimes are not samples.
     let mut dirs = SideMap::new();
     let mut dirs_r = SideMap::new();

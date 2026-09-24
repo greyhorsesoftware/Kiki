@@ -76,3 +76,9 @@ Newest last.
   Flickable clipped where the bottom bar begins: what does not fit is under the edge and the
   wheel, or a drag, brings it up. `Sidebar.qml` (`sidebar-scroll`);
   `tst_Sidebar::test_a_short_rail_scrolls_to_what_is_below_the_edge`.
+- **The mirror's auto clock offset was 9 days (2026-09-24).** A report read "Clock offset:
+  785736829 ms (auto)": every local file had been re-stamped by a `git checkout` at one moment,
+  the replica was written over months, and the median of the deltas — which is what the auto
+  offset was — was no clock at all, yet was subtracted from every mtime. A real skew moves every
+  pair alike; now the median counts only when more than half the samples agree with it within
+  the tolerance. `mirror/detect.rs`; `mirror::tests::the_clock_offset_is_the_median_of_matching_pairs`.

@@ -49,7 +49,18 @@ pub fn auto_offset(master: &SideMap, replica: &SideMap) -> i64 {
         return 0;
     }
     deltas.sort_unstable();
-    deltas[deltas.len() / 2]
+    let median = deltas[deltas.len() / 2];
+    // A clock that is off moves EVERY pair by the same amount; the deltas agree. A side whose
+    // files were all re-stamped at one moment — a `git checkout`, a copy — against a replica
+    // written over months gives deltas all over the place, and their median is not a clock:
+    // it was 9 days once (2026-09-24), printed in the report and subtracted from every mtime.
+    // Unless more than half the samples sit within the tolerance of the median, there is no
+    // offset to speak of.
+    let agree = deltas.iter().filter(|d| (*d - median).abs() <= TOLERANCE_MS).count();
+    if agree * 2 <= deltas.len() {
+        return 0;
+    }
+    median
 }
 
 pub fn pick_detector(spec: &Spec) -> Detector {
