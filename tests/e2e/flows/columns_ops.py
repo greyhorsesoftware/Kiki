@@ -237,10 +237,6 @@ def run(ctx):
 
     # ------------------------------------------------ the filter follows the keyboard (0.1.1)
     # `/` narrows the column the keyboard is in, not the first; leaving the column clears it.
-    # The pane's count is read once its listing is done, or a scan finishing between the two
-    # reads looks like the filter touching it (seen once, 2026-09-24).
-    sh.wait_state(lambda s: s.get("done") is True)
-    count_before = sh.state().get("count")
     sh.call("columns", "down"); sh.call("columns", "up")            # the key column's first row
     chosen = (sh.state().get("selection") or [""])[0]
     if os.path.isdir(urllib.parse.unquote(chosen[len("file://"):]) if chosen else ""):
@@ -252,7 +248,11 @@ def run(ctx):
             sh.call("search", "zzz-nothing-here")
             st = sh.wait_state(lambda s: s.get("filterColumn") == deep and s.get("filter") == "zzz-nothing-here")
             c.check("the filter is that column's, not the first's", st is not None, sh.state())
-            c.check("the pane's own listing is untouched", sh.state().get("count") == count_before, sh.state().get("count"))
+            # Untouched means not filtered: a filter that matches nothing would empty it. (Its
+            # exact count is not the measure — the ops above changed this folder, and the
+            # watcher's word on that can land during this section; it did on the owner's
+            # machine, 2026-09-24.)
+            c.check("the pane's own listing is untouched", (sh.state().get("count") or 0) > 0, sh.state().get("count"))
             sh.call("columns", "left")
             c.check("the keyboard leaving the column takes the filter with it",
                     sh.wait_state(lambda s: s.get("filter") == "" and s.get("filterOpen") is False) is not None, sh.state())
