@@ -21,8 +21,9 @@ pub fn meta_from(v: &Value) -> Meta {
         mtime_ms: v.u64_field("mtime").unwrap_or(0),
         atime_ms: v.u64_field("atime").unwrap_or(0),
         mode: v.u64_field("mode").map(|m| m as u32).unwrap_or(Meta::NONE),
-        uid: Meta::NONE,
-        gid: Meta::NONE,
+        // The names the backend gave, kept as interned ids (see `listing::names`).
+        uid: v.str_field("owner").map(crate::listing::names::intern).unwrap_or(Meta::NONE),
+        gid: v.str_field("group").map(crate::listing::names::intern).unwrap_or(Meta::NONE),
     }
 }
 

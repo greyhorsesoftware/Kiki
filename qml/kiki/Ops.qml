@@ -134,6 +134,9 @@ QtObject {
     }
     function compress(items, archive, format) { Kiki.Jobs.submit({ op: "compress", items: items, archive: archive, format: format }) }
     function chmod(uri, mode, recursive) { Kiki.Jobs.submit({ op: "chmod", items: [uri], mode: mode, recursive: recursive }) }
+    /// A selection: one job, the bits touched and what they became; the daemon merges them into
+    /// each item's own mode (0.1.1).
+    function chmodMany(uris, mask, bits, recursive) { Kiki.Jobs.submit({ op: "chmod", items: uris, mask: mask, bits: bits, recursive: recursive }) }
     /// Copy or move the selection into another pane's folder (plan 07).
     function transferTo(dest, move) {
         const u = selectedUris(); if (!u.length || !dest) return

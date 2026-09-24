@@ -44,12 +44,17 @@ Rectangle {
     Connections { target: r.pane ? r.pane.selection : null; function onChanged() { r.selected = r.pane.selection.has(r.rowIndex) } }
     onRowIndexChanged: { row = pane.listing.row(rowIndex); selected = pane.selection.has(rowIndex) }
 
-    property color fg: selected ? Kiki.Theme.bg : Kiki.Theme.fgDim
-    property color dim: selected ? Kiki.Theme.bg : Kiki.Theme.muted
+    /// Side by side (0.1.1): the accent is the focused pane's. The other pane's selection is
+    /// kept, in the same grey the columns view gives its trail, and lights up again when the
+    /// focus comes back.
+    readonly property bool active: !pane || pane.focused
+    property color fg: selected && active ? Kiki.Theme.bg : Kiki.Theme.fgDim
+    property color dim: selected && active ? Kiki.Theme.bg : Kiki.Theme.muted
     Rectangle {
+        objectName: "rowmark"
         anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6
         radius: 6
-        color: r.selected ? Kiki.Theme.accent : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
+        color: r.selected ? (r.active ? Kiki.Theme.accent : Kiki.Theme.surface) : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
     }
     Row {
         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
@@ -57,7 +62,7 @@ Rectangle {
             width: r.nameWidth; height: parent.height; spacing: 8
             Item {
                 width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
-                UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
+                UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected && r.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
             Text { objectName: "row-name"; anchors.verticalCenter: parent.verticalCenter; width: Math.max(0, parent.width - 24 - (Kiki.Format.gitMark(r.row) ? 20 : 0) - (capsule.visible ? capsule.width + 8 : 0)); elide: Text.ElideRight; text: r.row ? r.row.name : ""; color: r.row ? (Kiki.Format.gitDimmed(r.row) && !r.selected ? Kiki.Theme.muted : r.fg) : Kiki.Theme.gutter; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }

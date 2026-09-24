@@ -326,6 +326,15 @@ fn net<E: std::fmt::Display>(e: E) -> PluginError {
     PluginError::network(e.to_string())
 }
 
+/// The server's answer to a request just put on the wire (`sdk::wire!`): a refusal goes in the
+/// connection log as the server said it; what a success brought back, the caller says.
+fn answered<T>(r: std::result::Result<T, russh_sftp::client::error::Error>) -> Result<T> {
+    r.map_err(|e| {
+        sdk::wire!("← {e}");
+        sftp_err(e)
+    })
+}
+
 fn sftp_err(e: russh_sftp::client::error::Error) -> PluginError {
     use russh_sftp::protocol::StatusCode;
     match e {
@@ -424,6 +433,7 @@ impl Sftp {
         let mut buf: Vec<u8> = Vec::new();
         let mut entries: Vec<Entry> = Vec::new();
         let gnu = sess.fast() == FastScan::Gnu;
+        sdk::wire!("→ exec {cmd}");
         let status = self.exec(sess, &cmd, |data| {
             buf.extend_from_slice(data);
             while let Some(e) = if gnu { parse_gnu_record(&mut buf, recursive) } else { parse_stat_record(&mut buf, path, recursive) } {
@@ -432,6 +442,7 @@ impl Sftp {
         })?;
         // GNU find exits 1 when some entry could not be read but still prints everything else;
         // that is a listing, not a failure. Anything else (killed, 126, 127) is.
+        sdk::wire!("← exit {status}, {} entries", entries.len());
         if status > 1 || (status == 1 && !buf.is_empty()) {
             return Err(PluginError::io(format!("find exited with {status}")));
         }
@@ -447,11 +458,13 @@ impl Sftp {
     /// delivered in order.
     fn read_pipelined(&self, raw: &Arc<RawSftpSession>, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
         self.rt.block_on(async {
-            let handle = raw.open(path, OpenFlags::READ, Default::default()).await.map_err(sftp_err)?.handle;
+            sdk::wire!("→ OPEN {path} (read, from {offset})");
+            let handle = answered(raw.open(path, OpenFlags::READ, Default::default()).await)?.handle;
             let size = raw.fstat(handle.clone()).await.ok().and_then(|a| a.attrs.size);
             let mut inflight: VecDeque<(u64, Chunk)> = VecDeque::new();
             let mut next = offset;
             let mut eof = false;
+            let (mut total, mut reads) = (0u64, 0u64);
             let issue = |raw: &Arc<RawSftpSession>, handle: &str, off: u64| {
                 let raw = Arc::clone(raw);
                 let h = handle.to_string();
@@ -471,6 +484,8 @@ impl Sftp {
                         Ok(data) if data.is_empty() => eof = true,
                         Ok(data) => {
                             out.write_all(&data).map_err(PluginError::io)?;
+                            total += data.len() as u64;
+                            reads += 1;
                             // Fewer bytes than asked for is not the end of the file: the server
                             // gives what it likes. The chunks after this one are already asked
                             // for at their own offsets, so the rest of THIS one is fetched now,
@@ -486,6 +501,8 @@ impl Sftp {
                                     Ok(more) => {
                                         out.write_all(&more.data).map_err(PluginError::io)?;
                                         got += more.data.len() as u64;
+                                        total += more.data.len() as u64;
+                                        reads += 1;
                                     }
                                     Err(russh_sftp::client::error::Error::Status(st)) if st.status_code == russh_sftp::protocol::StatusCode::Eof => eof = true,
                                     Err(e) => return Err(sftp_err(e)),
@@ -506,6 +523,10 @@ impl Sftp {
             }
             .await;
             let _ = raw.close(handle).await;
+            match &result {
+                Ok(()) => sdk::wire!("← {total} bytes in {reads} READs; CLOSE"),
+                Err(e) => sdk::wire!("← {} after {total} bytes; CLOSE", e.message),
+            }
             result
         })
     }
@@ -778,7 +799,8 @@ impl Handler for Sftp {
         }
         let sftp = &sess.sftp;
         self.rt.block_on(async {
-            let rd = sftp.read_dir(path).await.map_err(sftp_err)?;
+            sdk::wire!("→ OPENDIR {path}");
+            let rd = answered(sftp.read_dir(path).await)?;
             let mut batch = Vec::with_capacity(256);
             let mut n = 0u64;
             for e in rd {
@@ -799,6 +821,7 @@ impl Handler for Sftp {
             if !batch.is_empty() {
                 sink(batch);
             }
+            sdk::wire!("← READDIR {n} names; CLOSE");
             Ok(n)
         })
     }
@@ -806,7 +829,12 @@ impl Handler for Sftp {
     fn stat(&self, location: &str, path: &str) -> Result<Meta> {
         let sess = self.session(location)?;
         let sftp = &sess.sftp;
-        self.rt.block_on(async { sftp.symlink_metadata(path).await.map(|m| to_meta(&m)).map_err(sftp_err) })
+        self.rt.block_on(async {
+            sdk::wire!("→ LSTAT {path}");
+            let m = to_meta(&answered(sftp.symlink_metadata(path).await)?);
+            sdk::wire!("← {} bytes, mode {:o}", m.size, m.mode.unwrap_or(0));
+            Ok(m)
+        })
     }
 
     fn read(&self, location: &str, path: &str, offset: u64, out: &mut Outgoing) -> Result<()> {
@@ -821,7 +849,8 @@ impl Handler for Sftp {
         let mtime = args.mtime_ms;
         let mut args = args;
         rt.block_on(async {
-            let mut f = sftp.create(path).await.map_err(sftp_err)?;
+            sdk::wire!("→ OPEN {path} (write, create)");
+            let mut f = answered(sftp.create(path).await)?;
             let mut buf = vec![0u8; 256 * 1024];
             let mut total = 0u64;
             loop {
@@ -836,9 +865,11 @@ impl Handler for Sftp {
                 total += n as u64;
             }
             f.shutdown().await.map_err(PluginError::io)?;
+            sdk::wire!("← {total} bytes written; CLOSE");
             if let Some(t) = mtime {
                 let attrs = russh_sftp::protocol::FileAttributes { mtime: Some((t / 1000) as u32), atime: Some((t / 1000) as u32), ..Default::default() };
-                let _ = sftp.set_metadata(path, attrs).await;
+                sdk::wire!("→ SETSTAT {path} mtime {}", t / 1000);
+                let _ = answered(sftp.set_metadata(path, attrs).await);
             }
             Ok(total)
         })
@@ -846,22 +877,31 @@ impl Handler for Sftp {
 
     fn mkdir(&self, location: &str, path: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
-        self.rt.block_on(async { sftp.create_dir(path).await.map_err(sftp_err) })
+        self.rt.block_on(async {
+            sdk::wire!("→ MKDIR {path}");
+            answered(sftp.create_dir(path).await)
+        })
     }
 
     fn rename(&self, location: &str, from: &str, to: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
-        self.rt.block_on(async { sftp.rename(from, to).await.map_err(sftp_err) })
+        self.rt.block_on(async {
+            sdk::wire!("→ RENAME {from} → {to}");
+            answered(sftp.rename(from, to).await)
+        })
     }
 
     fn delete(&self, location: &str, path: &str) -> Result<()> {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
-            let md = sftp.symlink_metadata(path).await.map_err(sftp_err)?;
+            sdk::wire!("→ LSTAT {path}");
+            let md = answered(sftp.symlink_metadata(path).await)?;
             if md.file_type() == FileType::Dir {
-                sftp.remove_dir(path).await.map_err(sftp_err)
+                sdk::wire!("→ RMDIR {path}");
+                answered(sftp.remove_dir(path).await)
             } else {
-                sftp.remove_file(path).await.map_err(sftp_err)
+                sdk::wire!("→ REMOVE {path}");
+                answered(sftp.remove_file(path).await)
             }
         })
     }
@@ -870,7 +910,8 @@ impl Handler for Sftp {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
             let attrs = russh_sftp::protocol::FileAttributes { mtime: Some((mtime_ms / 1000) as u32), atime: Some((mtime_ms / 1000) as u32), ..Default::default() };
-            sftp.set_metadata(path, attrs).await.map_err(sftp_err)
+            sdk::wire!("→ SETSTAT {path} mtime {}", mtime_ms / 1000);
+            answered(sftp.set_metadata(path, attrs).await)
         })
     }
 
@@ -878,7 +919,8 @@ impl Handler for Sftp {
         let sftp = &self.session(location)?.sftp;
         self.rt.block_on(async {
             let attrs = russh_sftp::protocol::FileAttributes { permissions: Some(mode), ..Default::default() };
-            sftp.set_metadata(path, attrs).await.map_err(sftp_err)
+            sdk::wire!("→ SETSTAT {path} mode {mode:o}");
+            answered(sftp.set_metadata(path, attrs).await)
         })
     }
 }

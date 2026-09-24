@@ -1,5 +1,5 @@
 import os
-OUT = "/Users/david/Documents/GitHub/kiki/docs/design"
+OUT = os.path.dirname(os.path.abspath(__file__))
 
 # ---------- Tokyo Night palette ----------
 BG="#1a1b26"; BGD="#16161e"; HL="#292e42"; LINE="#292e42"; GUT="#3b4261"
@@ -48,6 +48,7 @@ def ico(name, size=16, color="currentColor", sw=1.5):
         "check": '<path d="m3 8.5 3.5 3.5L13 4.5"></path>',
         "warn": '<path d="M8 2.5 14 13H2z"></path><path d="M8 6.5v3"></path><path d="M8 11.3v.2"></path>',
         "sort-up": '<path d="m4 9 4-4 4 4"></path>',
+        "undo": '<g transform="scale(0.6667)"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></g>',
     }
     if name not in paths:
         name = ALIASES.get(name, name)
@@ -252,6 +253,11 @@ def inspector_header(tab, it):
   </div>
   <div style="display: flex; gap: 20px; border-bottom: 1px solid {LINE};">{t("General", tab == "general")}{t("Permissions", tab == "permissions")}</div>"""
 
+OPEN_BUTTONS = (f'<div style="display: flex; gap: 8px;">\n'
+                f'    <div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; background: {BLUE}; color: {BG}; font-weight: 600; border-radius: 2px;">Open</div>\n'
+                f'    <div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; border: 1px solid {GUT}; color: {FGD}; border-radius: 2px;">Open with…</div>\n'
+                f'  </div>')
+
 def inspector_general(it):
     pv = "".join(f'<div style="white-space: pre;">{l}</div>' for l in it["preview"])
     return f"""<div style="display: flex; flex-direction: column; height: 150px; padding: 10px 12px; background: {BGD}; border: 1px solid {LINE}; border-radius: 2px; font-size: 11px; line-height: 1.5; color: {FGD}; box-sizing: border-box; overflow: hidden;">{pv}</div>
@@ -281,23 +287,22 @@ def inspector_permissions():
                 f'<div style="display: flex; justify-content: center;">{checkbox(w)}</div><div style="display: flex; justify-content: center;">{checkbox(x)}</div></div>')
     head = (f'<div style="display: grid; grid-template-columns: 88px 56px 56px 56px; align-items: center; height: 24px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: {CM};">'
             f'<span></span><span style="text-align: center;">Read</span><span style="text-align: center;">Write</span><span style="text-align: center;">Exec</span></div>')
-    return f"""<div style="display: flex; flex-direction: column; gap: 2px;">
+    return f"""<div style="display: flex; align-items: center; justify-content: space-between;"><div style="display: flex; flex-direction: column; gap: 2px;">
     {head}
     {prow("Owner", True, True, False)}
     {prow("Group", True, False, False)}
     {prow("World", True, False, False)}
-  </div>
+  </div>{ico("undo", size=16, color=BLUE)}</div>
   <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid {LINE};">
     {field("Octal", "644")}
     {field("Symbolic", "-rw-r--r--")}
     {field("Owner", "david")}
     {field("Group", "david")}
   </div>
-  <div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {CM};">{checkbox(False)}<span>Apply to contained items</span></div>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: {CM};">{checkbox(False)}<span>Apply to contained items</span></div>
   <div style="flex-grow: 1;"></div>
-  <div style="display: flex; gap: 8px;">
+  <div style="display: flex; justify-content: center; gap: 8px;">
     <div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; background: {BLUE}; color: {BG}; font-weight: 600; border-radius: 2px;">Apply</div>
-    <div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; border: 1px solid {GUT}; color: {FGD}; border-radius: 2px;">Revert</div>
   </div>"""
 
 
@@ -412,7 +417,7 @@ def pane(badge_icon, badge_color, badge, path, items, focused, selected=None):
     rows = ""
     for n, k, m, sz in items:
         icon, color = KIND[k]
-        sel = n == selected
+        sel = n == selected or (not isinstance(selected, str) and selected is not None and n in selected)
         bg = BLUE if sel else "transparent"; fg = BG if sel else FGD; ic = BG if sel else color; dim = BG if sel else CM
         rows += (f'<div style="display: grid; grid-template-columns: minmax(0, 1fr) 150px 70px; align-items: center; gap: 12px; height: 28px; padding: 0 12px; background: {bg}; color: {fg};">'
                  f'<div style="display: flex; align-items: center; gap: 8px; min-width: 0;">{ico(icon, color=ic)}<span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{n}</span></div>'
@@ -960,8 +965,195 @@ trash_bar = f"""<div style="display: flex; align-items: center; gap: 10px; heigh
 trash_main = f'<div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-height: 0; overflow: hidden;">{trash_bar}{trash_head}<div style="display: flex; flex-direction: column; padding: 4px 0;">{"".join(trash_row(*r) for r in TRASH_ROWS)}</div>{TRASH_MENU}</div>'
 TRASH = window(sidebar("trash"), toolbar(["Trash"], "list", "Search Trash") + trash_main + statusbar("5 items · 1 selected", keys=[("Enter","restore"),("Del","delete permanently"),("^A","select all"),("?","all keys")]))
 
-files = {"Main.dc.html": MAIN, "Settings.dc.html": SETTINGS, "ShareSheet.dc.html": SHARE, "TrashView.dc.html": TRASH, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
+# ---------- Info popover (0.1.1): the inspector in side by side ----------
+# In side by side there is no room for a docked panel: the file's details come up as a callout
+# beside the selected row of the focused pane, pointing at it like the activity popover points
+# at the orb — General and Permissions only, no preview — and go on Ctrl+I, Escape or a click
+# anywhere else. It follows the focused pane's selection while it is up.
+ROW_H = 28; ROWS_TOP = 34 + 4      # a pane's header, then the rows' padding
+def row_centre(i): return ROWS_TOP + i * ROW_H + ROW_H // 2
+
+def mixed_box():
+    return (f'<div style="display: flex; align-items: center; justify-content: center; width: 14px; height: 14px; border: 1px solid {GUT}; border-radius: 2px; background: {BGD};">'
+            f'<div style="width: 6px; height: 2px; background: {FGD};"></div></div>')
+
+def info_popover(tab="general", row=4, multi=False):
+    """The card beside row `row` of the pane it sits in, its pointer on that row's centre."""
+    def t(label, on):
+        c = FG if on else CM; b = BLUE if on else "transparent"
+        return f'<div style="display: flex; align-items: center; height: 30px; padding: 0 2px; margin-bottom: -1px; color: {c}; border-bottom: 2px solid {b};">{label}</div>'
+    if multi:
+        # A little fan of the kinds in place of the icon: the panel's fan, at header size.
+        mini = "".join(f'<div style="position: absolute; left: 50%; top: 50%; width: 24px; height: 30px; margin: -15px 0 0 -12px; transform: translateX({dx}px) translateY({dy}px) rotate({rot}deg); '
+                       f'display: flex; align-items: center; justify-content: center; background: {HL}; border-radius: 4px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); z-index: {2 if rot == 0 else 1};">{ico(i, size=14, color=c, sw=1.2)}</div>'
+                       for i, c, rot, dx, dy in [("code", FGD, -18, -13, 3), ("doc", CYAN, 0, 0, 0), ("doc", CYAN, 18, 13, 3)])
+        head = (f'<div style="position: relative; width: 56px; height: 36px; flex: none;">{mini}</div>'
+                f'<div style="font-size: 13px; font-weight: 600; color: {FG}; flex-grow: 1;">3 items</div>')
+        general = f"""<div style="display: flex; flex-direction: column; gap: 8px;">
+    {field("Kinds", "2 Markdown documents, 1 Code")}
+    {field("Host", "local")}
+    {field("Location", "~/Projects/kiki")}
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid {LINE};">
+    {field("Size", "5.8 KB (5,936 bytes)")}
+    {field("Modified", "12 Sep 2026 23:58 (newest)")}
+    {field("Owner/Group", "david · david")}
+    {field("Git", "1 modified, 2 clean", YELLOW)}
+  </div>"""
+        def prow(label, r, w, x):
+            cell = lambda v: f'<div style="display: flex; justify-content: center;">{mixed_box() if v is None else checkbox(v)}</div>'
+            return (f'<div style="display: grid; grid-template-columns: 88px 56px 56px 56px; align-items: center; height: 28px; font-size: 12px;">'
+                    f'<span style="color: {CM};">{label}</span>{cell(r)}{cell(w)}{cell(x)}</div>')
+        head_row = (f'<div style="display: grid; grid-template-columns: 88px 56px 56px 56px; align-items: center; height: 24px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: {CM};">'
+                    f'<span></span><span style="text-align: center;">Read</span><span style="text-align: center;">Write</span><span style="text-align: center;">Exec</span></div>')
+        perms = f"""<div style="display: flex; align-items: center; justify-content: space-between;"><div style="display: flex; flex-direction: column; gap: 2px;">
+    {head_row}
+    {prow("Owner", True, True, None)}
+    {prow("Group", True, False, None)}
+    {prow("World", True, False, False)}
+  </div>{ico("undo", size=16, color=BLUE)}</div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid {LINE};">
+    {field("Octal", "mixed (644, 755)")}
+    {field("Owner/Group", "david · david")}
+  </div>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; color: {CM};">{checkbox(False)}<span>Apply to contained items</span></div>
+  <div style="display: flex; justify-content: center; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 24px; padding: 0 12px; background: {BLUE}; color: {BG}; font-weight: 600; font-size: 12px; border-radius: 2px;">Apply</div>
+  </div>"""
+    else:
+        head = (f'{ico("doc", size=24, color=CYAN, sw=1.25)}'
+                f'<div style="font-size: 13px; font-weight: 600; color: {FG}; flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">PLAN.md</div>')
+        general = f"""<div style="display: flex; flex-direction: column; gap: 8px;">
+    {field("Type", "Markdown document")}
+    {field("Host", "local")}
+    {field("Location", "~/Projects/kiki")}
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid {LINE};">
+    {field("Size", "4.1 KB (4,198 bytes)")}
+    {field("Modified", "12 Sep 2026 23:58")}
+    {field("Owner/Group", "david · david")}
+    {field("Git", "modified, unstaged", YELLOW)}
+  </div>"""
+        perms = (inspector_permissions().replace(field("Owner", "david") + "\n    " + field("Group", "david"), field("Owner/Group", "david · david"))
+                 .replace(f"""<div style="display: flex; align-items: center; justify-content: center; height: 30px; padding: 0 16px; background: {BLUE}; color: {BG}; font-weight: 600; border-radius: 2px;">Apply</div>""", f"""<div style="display: flex; align-items: center; justify-content: center; height: 24px; padding: 0 12px; background: {BLUE}; color: {BG}; font-weight: 600; font-size: 12px; border-radius: 2px;">Apply</div>"""))
+    body = general if tab == "general" else perms
+    # The card beside the row, centred on it, the pointer at its middle on the row's centre.
+    cy = row_centre(row)
+    bg = "rgba(22, 22, 30, 0.96)"
+    return f"""<div style="position: absolute; right: 16px; top: {cy}px; transform: translateY(-50%); width: 320px; display: flex; flex-direction: column; gap: 14px; padding: 14px 16px 16px; box-sizing: border-box;
+    background: {bg}; border: 1px solid {GUT}; border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); font-size: 12px; z-index: 5;">
+  <div style="position: absolute; left: -8px; top: calc(50% - 7px); width: 14px; height: 14px; transform: rotate(45deg); background: {bg}; border-left: 1px solid {GUT}; border-bottom: 1px solid {GUT}; box-sizing: border-box;"></div>
+  <div style="display: flex; align-items: center; gap: 12px;">
+    {head}
+    <div style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 11px; color: {CM};">{ico("x", size=12, color=CM)}</div>
+  </div>
+  <div style="display: flex; gap: 20px; border-bottom: 1px solid {LINE};">{t("General", tab == "general")}{t("Permissions", tab == "permissions")}</div>
+  {body}
+</div>"""
+
+split_info_body = f"""{mirror_bar}<div style="position: relative; display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
+  {pane("hdd", FGD, "local", "~/Projects/kiki", LOCAL_KIKI, focused=True, selected="PLAN.md")}
+  <div style="width: 1px; flex: none; background: {LINE};"></div>
+  {pane("server", GREEN, "homelab", "/srv/kiki", REMOTE_KIKI, focused=False)}
+  <div style="position: absolute; left: 0; top: 0; width: calc(50% - 1px); height: 100%;">{info_popover()}</div>
+</div>"""
+INFO_POPOVER = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True) + split_info_body + split_status)
+split_perm_body = split_info_body.replace(info_popover(), info_popover("permissions"))
+INFO_POPOVER_PERMS = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True) + split_perm_body + split_status)
+# Three rows selected: the card counts them, sums and merges their fields, and points at the
+# row the keyboard is on (the last one chosen).
+split_multi_body = f"""{mirror_bar}<div style="position: relative; display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
+  {pane("hdd", FGD, "local", "~/Projects/kiki", LOCAL_KIKI, focused=True, selected={"Cargo.toml", "PLAN.md", "README.md"})}
+  <div style="width: 1px; flex: none; background: {LINE};"></div>
+  {pane("server", GREEN, "homelab", "/srv/kiki", REMOTE_KIKI, focused=False)}
+  <div style="position: absolute; left: 0; top: 0; width: calc(50% - 1px); height: 100%;">{info_popover("permissions", row=5, multi=True)}</div>
+</div>"""
+INFO_POPOVER_MULTI = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True) + split_multi_body + split_status)
+
+# Two alternatives for the same question (docs/0.1.1/01-info-popover.md).
+# A sheet that slides up from the bottom of the focused pane, its width, fields side by side.
+def info_sheet():
+    def t(label, on):
+        c = FG if on else CM; b = BLUE if on else "transparent"
+        return f'<div style="display: flex; align-items: center; height: 26px; padding: 0 2px; margin-bottom: -1px; color: {c}; border-bottom: 2px solid {b};">{label}</div>'
+    col = lambda rows: f'<div style="display: flex; flex-direction: column; gap: 7px; flex: 1 1 0; min-width: 0;">{"".join(rows)}</div>'
+    return f"""<div style="position: absolute; left: 0; right: 0; bottom: 0; height: 196px; display: flex; flex-direction: column; gap: 10px; padding: 8px 16px 14px; box-sizing: border-box;
+    background: rgba(22, 22, 30, 0.96); border-top: 1px solid {GUT}; box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.4); font-size: 12px; z-index: 5;">
+  <div style="display: flex; justify-content: center;"><div style="width: 36px; height: 3px; border-radius: 2px; background: {GUT};"></div></div>
+  <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+    {ico("doc", size=20, color=CYAN, sw=1.2)}
+    <span style="font-size: 13px; font-weight: 600; color: {FG}; white-space: nowrap;">PLAN.md</span>
+    <span style="font-size: 11px; color: {CM}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">~/Projects/kiki/PLAN.md</span>
+    <span style="flex-grow: 1;"></span>
+    <div style="display: flex; gap: 16px; border-bottom: 1px solid {LINE};">{t("General", True)}{t("Permissions", False)}</div>
+    <div style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: {CM};">{ico("x", size=12, color=CM)}</div>
+  </div>
+  <div style="display: flex; gap: 28px;">
+    {col([field("Type", "Markdown document"), field("Host", "local"), field("Location", "~/Projects/kiki"), field("Git", "modified, unstaged", YELLOW)])}
+    {col([field("Size", "4.1 KB (4,198 bytes)"), field("Modified", "12 Sep 2026 23:58"), field("Owner", "david"), field("Group", "david")])}
+  </div>
+</div>"""
+
+split_sheet_body = f"""{mirror_bar}<div style="position: relative; display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
+  {pane("hdd", FGD, "local", "~/Projects/kiki", LOCAL_KIKI, focused=True, selected="PLAN.md")}
+  <div style="width: 1px; flex: none; background: {LINE};"></div>
+  {pane("server", GREEN, "homelab", "/srv/kiki", REMOTE_KIKI, focused=False)}
+  <div style="position: absolute; left: 0; top: 0; width: calc(50% - 1px); height: 100%;">{info_sheet()}</div>
+</div>"""
+INFO_SHEET = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True) + split_sheet_body + split_status)
+
+# The panel as it is, slid in from the right beside both panes: a third column, both panes narrower.
+split_side_body = f"""{mirror_bar}<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;">
+  {pane("hdd", FGD, "local", "~/Projects/kiki", LOCAL_KIKI, focused=True, selected="PLAN.md")}
+  <div style="width: 1px; flex: none; background: {LINE};"></div>
+  {pane("server", GREEN, "homelab", "/srv/kiki", REMOTE_KIKI, focused=False)}
+  {inspector("general", it={**README, "name": "PLAN.md", "path": "~/Projects/kiki/PLAN.md", "size": "4.1 KB (4,198 bytes)", "modified": "12 Sep 2026 23:58"}, side=True).replace(OPEN_BUTTONS, "")}
+</div>"""
+INFO_SIDE = window(sidebar("homelab"), toolbar(["homelab", "srv", "kiki"], "mirror", "Search homelab", merged=True, inspector=True) + split_side_body + split_status)
+
+# The docked panel with three files selected: the same merged face as the popover's, with the
+# preview box given over to the kinds in the selection.
+def inspector_multi_side():
+    def t(label, on):
+        c = FG if on else CM; b = BLUE if on else "transparent"
+        return f'<div style="display: flex; align-items: center; height: 32px; padding: 0 2px; margin-bottom: -1px; color: {c}; border-bottom: 2px solid {b};">{label}</div>'
+    # The kinds fanned out like a hand of cards — no box, no border — each icon on a card of
+    # the panel's darker ground so the overlap reads, the last one chosen on top.
+    cards = [("doc", CYAN, -16, -44, 8), ("doc", RED, 0, 0, 0), ("image", PURPLE, 16, 44, 8)]
+    fan = "".join(f'<div style="position: absolute; left: 50%; top: 50%; width: 64px; height: 80px; margin: -40px 0 0 -32px; transform: translateX({dx}px) translateY({dy}px) rotate({rot}deg); '
+                  f'display: flex; align-items: center; justify-content: center; background: {HL}; border-radius: 8px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5); z-index: {2 if rot == 0 else 1};">{ico(i, size=36, color=c, sw=1)}</div>'
+                  for i, c, rot, dx, dy in cards)
+    return f"""<div style="display: flex; flex-direction: column; gap: 16px; width: 300px; flex: none; border-left: 1px solid {LINE}; padding: 16px 20px; box-sizing: border-box; overflow: hidden;">
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <div style="display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border-radius: 8px; background: {HL}; color: {FG}; font-size: 16px; font-weight: 600;">3</div>
+    <div style="font-size: 15px; font-weight: 600; color: {FG}; flex-grow: 1;">3 items</div>
+    <div style="display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: {CM};">{ico("x", size=12, color=CM)}</div>
+  </div>
+  <div style="position: relative; height: 112px;">{fan}</div>
+  <div style="display: flex; gap: 20px; border-bottom: 1px solid {LINE};">{t("General", True)}{t("Permissions", False)}</div>
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    {field("Kinds", "Markdown, PDF, PNG")}
+    {field("Host", "local")}
+    {field("Location", "~")}
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid {LINE};">
+    {field("Size", "1.5 MB (1,585,562 bytes)")}
+    {field("Modified", "12 Sep 2026 13:58 (newest)")}
+    {field("Owner", "david")}
+    {field("Group", "david")}
+  </div>
+</div>"""
+
+multi_rows = "".join(lrow(n, k, m, sz, selected=(n in {"notes.md", "omarchy-cheatsheet.pdf", "screenshot-2026-09-12.png"})) for n, k, m, sz in HOME if n != "wallpapers.zip")
+panel_multi_body = f'<div style="display: flex; flex-grow: 1; min-height: 0; overflow: hidden;"><div style="position: relative; display: flex; flex-direction: column; flex-grow: 1; min-width: 0; overflow: hidden;">{lhead}<div style="display: flex; flex-direction: column; padding: 4px 0;">{multi_rows}</div></div>{inspector_multi_side()}</div>'
+INFO_PANEL_MULTI = window(sidebar("home"), toolbar(["~"], "list", "Search Home", inspector=True) + panel_multi_body + statusbar("11 items · 3 selected"))
+
+files = {"InfoPanelMulti.dc.html": INFO_PANEL_MULTI, "InfoPopover.dc.html": INFO_POPOVER, "InfoPopoverPermissions.dc.html": INFO_POPOVER_PERMS, "InfoPopoverMulti.dc.html": INFO_POPOVER_MULTI, "InfoSheet.dc.html": INFO_SHEET, "InfoSide.dc.html": INFO_SIDE, "Main.dc.html": MAIN, "Settings.dc.html": SETTINGS, "ShareSheet.dc.html": SHARE, "TrashView.dc.html": TRASH, "OpenDialog.dc.html": OPEN, "InspectorPermissions.dc.html": INSPECTOR_PERMS, "IconView.dc.html": ICON, "ListView.dc.html": LIST, "SplitView.dc.html": SPLIT, "SearchEverywhere.dc.html": SEARCH, "SearchFolder.dc.html": SEARCH_FOLDER, "ProjectMode.dc.html": PROJECT, "MirrorConfigure.dc.html": MIRROR_CONFIGURE, "MirrorReview.dc.html": MIRROR_REVIEW, "MirrorRunning.dc.html": MIRROR_RUNNING, "AddLocationSFTP.dc.html": SFTP, "AddLocationFTPS.dc.html": FTPS}
+# `python3 gen.py InfoPopover.dc.html …` writes only those; with no names, every board.
+only = set(__import__("sys").argv[1:])
 for name, body in files.items():
+    if only and name not in only:
+        continue
     with open(os.path.join(OUT, name), "w") as f:
         f.write(doc(body))
 print("wrote", ", ".join(files))

@@ -38,7 +38,6 @@ Rectangle {
     signal disconnect()
     signal toggleSplit()
     // Search lives in the header: the glass expands into a field over the path.
-    signal toggleSearch()
     property var locations: []
     property var repo: null
     signal viewMenu()
@@ -52,7 +51,6 @@ Rectangle {
     property alias mirrorButton: mirrorBtn
     property alias disconnectButton: disconnectBtn
     property alias gearButton: gearBtn
-    property alias searchButton: searchBtn
     // Favorites panel toggle (far left).
     property bool sidebarShown: true
     signal toggleSidebar()
@@ -125,7 +123,7 @@ Rectangle {
         // when the window is too narrow for it.
         readonly property int fixedCount: bar.compact ? 2 : 4 + (viewButton.visible ? 1 : 0) + (sbsSlot.visible ? 1 : 0)
         readonly property int fixedWidth: sidebarBtn.width + (bar.compact ? menuBtn.width
-            : infoBtn.width + (viewButton.visible ? viewButton.width : 0) + (sbsSlot.visible ? sbsSlot.width : 0) + searchBtn.width + gearBtn.width)
+            : infoBtn.width + (viewButton.visible ? viewButton.width : 0) + (sbsSlot.visible ? sbsSlot.width : 0) + gearBtn.width)
         readonly property int freeWidth: Math.max(0, width - fixedWidth - spacing * fixedCount)
         // Open, the field grows out of the glass and the path gives up the room; it never takes
         // the path's place entirely.
@@ -148,13 +146,7 @@ Rectangle {
             onNavigate: uri => bar.navigate(uri)
             onPathMenu: bar.pathMenu()
         }
-        ToggleButton {
-            id: searchBtn
-            visible: !bar.compact
-            anchors.verticalCenter: parent.verticalCenter
-            icon: "search"; tip: "Search everywhere (Ctrl+Shift+F)"
-            onClicked: bar.toggleSearch()
-        }
+        // Search everywhere lives on the rail (0.1.1); the magnifier that stood here is gone.
         // The info panel, opened and closed (owner, 2026-09-22). The same toggle as Ctrl+I and
         // the menu's Get info; lit while the panel is up.
         ToggleButton {

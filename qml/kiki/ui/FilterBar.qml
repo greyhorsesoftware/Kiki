@@ -7,9 +7,16 @@ Rectangle {
     id: bar
     property Kiki.Pane pane
     property int total: 0            // rows before filtering, for the "n of m" count
+    /// How many rows the filtered listing shows now. The pane's listing's count, unless the
+    /// view says otherwise: in columns it is the focused column's (0.1.1).
+    property int count: pane ? pane.listing.count : 0
+    /// "Filter this folder", or the folder's name when the view filters a column of its own.
+    property string placeholder: "Filter this folder"
     property alias text: input.text
     signal promote(string text)
     signal closed()
+    /// The text, debounced: the shell applies it where the view says (`Shell.applyFilter`).
+    signal apply(string text)
 
     height: 34
     color: Kiki.Theme.bg
@@ -36,13 +43,13 @@ Rectangle {
         Text {
             visible: !input.text.length
             anchors.verticalCenter: parent.verticalCenter
-            text: "Filter this folder"; color: Kiki.Theme.muted; font: input.font
+            text: bar.placeholder; color: Kiki.Theme.muted; font: input.font
         }
     }
     Text {
         id: count
         anchors.right: closeBtn.left; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter
-        text: bar.pane && bar.pane.filterText ? bar.pane.listing.count + " of " + bar.total : ""
+        text: bar.pane && bar.pane.filterText ? bar.count + " of " + bar.total : ""
         color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
     }
     ToggleButton {
@@ -51,5 +58,5 @@ Rectangle {
         icon: "x"; tip: "Close filter (Esc)"
         onClicked: bar.closed()
     }
-    Timer { id: debounce; interval: Kiki.Settings.timers.searchDebounceMs; onTriggered: if (bar.pane) bar.pane.setFilter(input.text) }
+    Timer { id: debounce; interval: Kiki.Settings.timers.searchDebounceMs; onTriggered: bar.apply(input.text) }
 }

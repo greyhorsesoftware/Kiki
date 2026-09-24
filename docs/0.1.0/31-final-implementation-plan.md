@@ -611,7 +611,7 @@ Asked about a translucent info panel; answered no — it is docked, and nothing 
 - A session's shell log free of plan 29 F's warnings (or the portal one recorded as not ours).
 - Release notes: what ships; what is hand-verified only (gio; FTPS mirroring if pyftpdlib was absent; the physical drag); what is not in 0.1.0. ~~Tag.~~ **Release (2026-09-23)**: `pkgver` and the workspace version already say 0.1.0; push, wait for CI green, then Actions → Release → Run workflow (no inputs needed). It reads 0.1.0 from the PKGBUILD, drives the x86_64 package under cage, tags the CI run's commit `v0.1.0` and publishes both packages with their checksums — the tag is made by the release, not pushed by hand. Then the install one-liner on a clean machine.
 
-**After the tag, 0.1.1**: 30 W6–W8 on a quiet tree, one commit each, before/after screenshots identical. **0.2.0 is planned under `docs/0.2.0/`** (2026-09-23): `01-dependencies.md` — `rustix` out of the daemon, then SFTP through the system `ssh` (agent and `~/.ssh/config` for free, ~190 crates gone), D-Bus without `zbus` only if the build time still bites — and `02-localization.md`, plan 33 moved there as written.
+**After the tag, 0.1.1**: 30 W6–W8 on a quiet tree, one commit each, before/after screenshots identical.
 
 ## Size
 

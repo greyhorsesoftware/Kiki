@@ -1,8 +1,6 @@
 # 01 — Dependencies (0.2.0)
 
-**Status:** planned 2026-09-23, after the survey below. Not started; nothing here is for 0.1.0.
-
-Builds on: `../0.1.0/06-remote-locations.md` (the plugin API and the SFTP plugin as built), `../0.1.0/09-omarchy-integration.md` (the D-Bus plugin), `../0.1.0/25-smb.md` (the GIO plugin), `../0.1.0/11-testing.md` (what has to stay green), `../0.1.0/30-code-health.md` (W6–W8, the other after-the-tag work).
+**Status:** planned 2026-09-23, after the survey below. Not started.
 
 ## Goal
 
@@ -24,12 +22,11 @@ The rule for what goes: a dependency is replaced only where the replacement is *
 
 Trees overlap (`tokio`, `rustls`, `ring`), which is why the total is 294 and not the sum. Done the same day, no behaviour change: `webpki-roots` 0.26 → 1 (the 0.26 line had become a shim over 1.0 and the lock carried both), and an unused `rustls-pki-types` line out of mail's manifest.
 
-## 1. `rustix` out of the daemon (½ day) — first
+## 1. `rustix` out of the daemon — moved to 0.1.1
 
-`kikid` does syscalls through both `libc` and `rustix`. `rustix` is used four times: `process::getuid` twice, one `fs::` call, and the inotify wrapper in `watch.rs`. `libc` does all of it; inotify by hand is `inotify_init1(IN_NONBLOCK | IN_CLOEXEC)`, `inotify_add_watch`, a `read` into a buffer and a walk of `inotify_event` structs (`wd, mask, cookie, len, name[len]`), about forty lines. Gone with it: `rustix` 0.38, `linux-raw-sys`, `errno` and a second copy of `bitflags` — and the second `rustix` beside `zbus`'s 1.1.
-
-- The watch tests (`kikid/tests/watch.rs`, plan 01's 100 ms budget) are the whole safety net; they run unchanged.
-- Nothing else changes. `Cargo.toml` loses the `[target.'cfg(target_os = "linux")'.dependencies]` table.
+Small enough for a patch release (owner, 2026-09-24): it is a 0.1.1 plan now — four
+call sites (`getuid` twice, the stat pool's `statx`, the inotify watcher), `libc` for all of
+them, half a day, −4 crates.
 
 ## 2. SFTP through the system `ssh` (4–5 days) — the one with a payoff
 
@@ -56,12 +53,12 @@ After: the plugin is ~1,200 lines of Rust with **no dependencies** beyond the SD
 ## 4. Not doing
 
 - **GVfs through the `gio` command** (−45). `gio mount|list|info|copy|cat|save|remove|mkdir` cover the plugin's calls, but mount password prompts come through the CLI's own stdin prompts and structured `IOErrorEnum` errors become string matching. Medium risk, no user-visible gain, and `glib2` stays a runtime dependency anyway.
-- **Thumbnails through `ffmpeg`** (−30, `image` and `png`). `ffmpeg` is already required and decodes every still format we list, but a process per thumbnail is ~30–50 ms against ~5 ms in-process, and a thousand photographs on first paint would feel it. The thumber's own process (plan 31 phase 4b) is the isolation that matters.
-- **`rustls`/`ring`**: the alternative is OpenSSL, which is more surface, not less. `tokio` where `zbus` needs it. `log`: eleven hundred lines, and how the SDK keeps what a library says about a transfer with the job it was said about (plan 32).
+- **Thumbnails through `ffmpeg`** (−30, `image` and `png`). `ffmpeg` is already required and decodes every still format we list, but a process per thumbnail is ~30–50 ms against ~5 ms in-process, and a thousand photographs on first paint would feel it. The thumber's own process is the isolation that matters.
+- **`rustls`/`ring`**: the alternative is OpenSSL, which is more surface, not less. `tokio` where `zbus` needs it. `log`: eleven hundred lines, and how the SDK keeps what a library says about a transfer with the job it was said about.
 
 ## Order and verification
 
-1. `rustix` (½ day). `cargo test -p kikid`, `make test-e2e`'s `listing_live`; lock file down four.
+1. `rustix` — in 0.1.1.
 2. SFTP (4–5 days), on a branch: the protocol module with its tests first, against `sshd`; then the plugin over it; `mock_sftp.rs` cases ported one by one; then `tests/e2e/run.sh --flow remote_transfers mirror_sftp` against the real server, and the by-hand sign-in against the owner's real host that phase 8 did. The old plugin is deleted in the same change, not kept beside the new one.
 3. D-Bus: decide after 2, by measuring a cold `cargo build --release` before and after.
 
@@ -71,7 +68,7 @@ Each item is its own commit with the lock-file delta in the message. `make lint`
 
 | Item | Days | Crates |
 |---|---|---|
-| 1 `rustix` | ½ | −4 |
+| 1 `rustix` | in 0.1.1 | −4 |
 | 2 SFTP over `ssh` | 4–5 | −~190 |
 | 3 D-Bus (conditional) | 3 | −~70 |
 

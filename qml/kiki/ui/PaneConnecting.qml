@@ -23,7 +23,7 @@ Rectangle {
     onWaitingChanged: { if (waiting) wait.restart(); else { wait.stop(); shown = false } }
     Component.onCompleted: if (waiting) wait.restart()
     Timer { id: wait; interval: pc.delay; onTriggered: pc.shown = pc.waiting }
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }   // nothing underneath is there to be clicked
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: wheel => wheel.accepted = true }   // nothing underneath is there to be clicked
     Column {
         anchors.centerIn: parent; width: Math.min(parent.width - 48, 460); spacing: 12
         // A ring, and a bead going round it: drawn from what the theme has, since the icon set

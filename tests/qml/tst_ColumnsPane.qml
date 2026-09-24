@@ -31,6 +31,7 @@ TestCase {
         fake = fakeC.createObject(tc)
         fake.tree = { "file:///home/t": [fake.dir("Projects"), fake.file("a.txt"), fake.file("b.txt")] }
         pane = paneC.createObject(tc)
+        pane.focused = true                         // the one pane in a window is the focused one
         pane.listing.daemon = fake
         cols.pane = pane
         pane.open("file:///home/t")
@@ -553,6 +554,28 @@ TestCase {
         tryVerify(() => findChild(cols, "column-1").x > 0)
         wait(150)                                   // and it has finished sliding in over its neighbour's edge
     }
+    // Two columns dragged to a width, a file chosen in the second, a wide window: the info column
+    // sat after the second column at its own width and the rest of the strip was blank — 400 px
+    // of nothing on a full-screen window. The last column takes what the others and the panel
+    // leave; its hand-set width is a floor.
+    function test_the_last_column_fills_to_the_info_column_at_the_strips_edge() {
+        Kiki.Settings.set("view", "columnsWidths", ({ c0: 255, c1: 203 }))
+        twoColumns()
+        const first = findChild(cols, "column-0"), second = findChild(cols, "column-1")
+        compare(first.width, 255, "a dragged width is kept")
+        compare(second.width, cols.width - 255, "with no panel up, the last column reaches the edge")
+        const deep = findChild(cols, "colrow-1-0")
+        wait(600)
+        mouseClick(deep, deep.width / 2, deep.height / 2)
+        tryVerify(() => cols.inspectedUri !== "")
+        const panel = findChild(cols, "inspector-column")
+        tryCompare(second, "width", cols.width - 255 - cols.inspectorWidth, 1000, "the last column gives the panel its width and keeps the rest")
+        verify(second.width >= 203, "never narrower than it was dragged to")
+        compare(cols.stripWidth, cols.width, "nothing blank past the panel")
+        tryCompare(panel, "x", cols.width - cols.inspectorWidth, 1000, "the panel meets the strip's right edge")
+        forgetWidths()
+    }
+
     function test_the_line_between_two_columns_drags_the_one_on_its_left() {
         forgetWidths()
         twoColumns()
@@ -582,10 +605,97 @@ TestCase {
     function test_a_width_belongs_to_the_place_not_the_folder() {
         forgetWidths()
         cols.setColumnWidth(0, 333); cols.endColumnResize()
-        fake.tree["file:///home/u"] = [fake.file("other.txt")]
+        // Another folder in the first place, and a column after it: alone, the first column is
+        // also the last, and the last column fills to the strip's edge (its 333 a floor).
+        fake.tree["file:///home/u"] = [fake.dir("Sub"), fake.file("other.txt")]
+        fake.tree["file:///home/u/Sub"] = [fake.file("inner.txt")]
         pane.open("file:///home/u"); cols.rebuild(); wait(50)
-        compare(findChild(cols, "column-0").width, 333)
+        verify(findChild(cols, "column-0").width >= 333, "alone, at least what it was dragged to")
+        const folder = findChild(cols, "colrow-0-0")
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        tryVerify(() => findChild(cols, "column-1") !== null && cols.columns.length === 2)
+        tryCompare(findChild(cols, "column-0"), "width", 333, 1000, "the place keeps its width whatever folder is in it")
         forgetWidths()
+    }
+
+    // ------------------------------------------- the info column over a selection (0.1.1)
+    // Several rows chosen in the first column — the pane's own listing — and the info column
+    // shows the selection as the window's panel does: a count, the kinds fanned out, and Apply
+    // sending one job for all of them.
+    function test_the_info_column_counts_a_selection_and_applies_to_all_of_it() {
+        openInShell("file:///home/t")
+        const file = shellRow(0, 1)
+        mouseClick(file, file.width / 2, file.height / 2)             // a.txt: the info column comes up
+        tryVerify(() => shellCols().inspectedUri !== "")
+        shell.pane.selection.setMany([1, 2], 1)                       // a.txt and b.txt
+        const panel = findChild(shellCols(), "inspector-column")
+        tryCompare(panel, "many", true, 2000, "the column shows the selection")
+        compare(findChild(panel, "inspector-title").children[0].text, "2 items")
+        verify(findChild(panel, "inspector-fan").visible)
+        panel.tab = "permissions"; wait(20)
+        Wire.reset()
+        mouseClick(findChild(panel, "perm-owner-1"))
+        mouseClick(findChild(panel, "perm-apply"))
+        tryVerify(() => Wire.count("Submit") === 1, 2000, "one job")
+        const job = Wire.last("Submit").op
+        compare(job.op, "chmod")
+        compare(job.items.length, 2)
+        compare(job.mask, 0o100); compare(job.bits, 0o100)
+        shell.pane.selection.set(1)
+        tryCompare(panel, "many", false, 2000, "one row again: the row itself")
+    }
+
+    // ---------------------------------------------------------------- the filter (0.1.1)
+    // `/` narrows the column the keyboard is in, not the first; the bar names that folder; the
+    // keyboard leaving the column takes the filter with it; a filter that hides the chosen folder
+    // closes the columns it had opened.
+        function test_the_filter_narrows_the_column_the_keyboard_is_in() {
+        fake.tree["file:///home/t/Projects"] = [fake.file("deep.txt"), fake.file("other.txt")]
+        openInShell("file:///home/t")
+        const folder = shellRow(0, 0)
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        tryVerify(() => tc.shellRow(1, 0) !== null)
+        shellCols().focusRight()
+        compare(shellCols().focusCol, 1)
+        Wire.reset()
+        shell.openFilter()
+        compare(shell.filterPlaceholder(), "Filter Projects", "the bar says which folder it narrows")
+        shell.applyFilter("deep")
+        const c1 = shellCols().columns[1].cache, c0 = shellCols().columns[0].cache
+        compare(fake._open[c1.lid].filter, "deep", "the second column's listing is what was filtered")
+        verify(!fake._open[c0.lid].filter, "not the first's")
+        tryCompare(c1, "count", 1)
+        compare(c0.count, 3, "the first column is whole")
+        compare(shell.filterTarget(), c1)
+        // The keyboard leaves the column: the filter goes with it.
+        shellCols().focusLeft()
+        tryVerify(() => !shell.filterOpen)
+        tryCompare(c1, "count", 2, 5000, "every row again")
+        shell.closeFilter()
+    }
+    function test_in_the_first_column_it_is_the_old_behaviour() {
+        openInShell("file:///home/t")
+        Wire.reset()
+        shell.openFilter()
+        compare(shell.filterPlaceholder(), "Filter t")
+        shell.applyFilter("a.")
+        compare(fake._open[shell.pane.listing.lid].filter, "a.")
+        tryCompare(shell.pane.listing, "count", 1)
+        shell.closeFilter()
+        tryCompare(shell.pane.listing, "count", 3)
+    }
+    function test_a_filter_that_hides_the_chosen_folder_closes_its_columns() {
+        fake.tree["file:///home/t/Projects"] = [fake.file("deep.txt")]
+        openInShell("file:///home/t")
+        const folder = shellRow(0, 0)
+        mouseClick(folder, folder.width / 2, folder.height / 2)
+        tryVerify(() => shellCols().columns.length === 2)
+        shellCols().focusLeft(); compare(shellCols().focusCol, 0)
+        shell.openFilter()
+        shell.applyFilter("a.txt")
+        tryVerify(() => shellCols().columns.length === 1, 5000, "Projects is filtered out, so its column goes")
+        compare(shellCols().inspectedUri, "")
+        shell.closeFilter()
     }
 
     // ---------------------------------------------------------------- the wheel, sideways
@@ -703,9 +813,11 @@ TestCase {
     // window's panel keeps — not at its widest.
     function test_the_info_column_starts_at_the_remembered_width() {
         const was = Kiki.Settings.view.inspectorWidth
-        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { inspectorWidth: 300 })
+        // Above the panel's minimum (the grid and the revert mark at its right, 324): a
+        // narrower remembered width is floored, not kept.
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { inspectorWidth: 340 })
         cols.inspectorW = Kiki.Settings.view.inspectorWidth || 0
-        compare(cols.inspectorWidth, 300)
+        compare(cols.inspectorWidth, 340)
         Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { inspectorWidth: was })
         cols.inspectorW = 0
     }

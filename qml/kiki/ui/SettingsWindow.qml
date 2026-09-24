@@ -110,6 +110,10 @@ Rectangle {
         property string hint: ""            // shown on hover rather than crowding the row
         readonly property real avail: parent ? parent.width : 400
         readonly property real labelWidth: Math.max(90, Math.min(240, avail * 0.55))
+        /// What is left for the control beside the label: a field sized to this, and no wider
+        /// than it wants, stays inside the page at half a window (owner, 2026-09-24: "settings
+        /// panels are cut off when window is half sized").
+        readonly property real slot: Math.max(110, avail - labelWidth - spacing)
         width: avail; clip: true
         spacing: 14; height: Math.max(32, implicitHeight)
         Text { width: labelWidth; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: label; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
@@ -200,10 +204,10 @@ Rectangle {
     Component { id: search; Column { spacing: 12
         Text { text: (sw.index.entries || 0).toLocaleString() + " names indexed · " + Kiki.Format.bytes(sw.index.bytes || 0) + (sw.index.refreshing ? " · refreshing" : ""); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
         Column { spacing: 4; Repeater { model: sw.index.roots || []; delegate: Text { required property string modelData; text: Kiki.Format.display(modelData, Quickshell.env("HOME")); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 } } }
-        Row2 { label: "Roots (one per line)"; Rectangle { width: 420; height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        Row2 { label: "Roots (one per line)"; Rectangle { width: Math.min(420, parent.slot); height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextEdit { anchors.fill: parent; anchors.margins: 8; text: (sw.index.roots || []).map(r => Kiki.Format.display(r, Quickshell.env("HOME"))).join("\n"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
                 onEditingFinished: { const roots = text.split("\n").map(s => s.trim()).filter(s => s).map(s => "file://" + encodeURI(s.replace(/^~/, Quickshell.env("HOME")))); Kiki.Daemon.request("SetIndexRoots", { roots: roots }, () => { sw.saved(); sw.reload() }) } } } }
-        Row2 { label: "Excludes (names, one per line)"; Rectangle { width: 420; height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        Row2 { label: "Excludes (names, one per line)"; Rectangle { width: Math.min(420, parent.slot); height: 70; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextEdit { anchors.fill: parent; anchors.margins: 8; text: (Kiki.Settings.index && Kiki.Settings.index.excludes ? Kiki.Settings.index.excludes : [".cache", ".git", "node_modules", "__pycache__", ".Trash", "target"]).join("\n"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
                 onEditingFinished: { const ex = text.split("\n").map(s => s.trim()).filter(s => s); Kiki.Daemon.request("SetSettings", { patch: { index: { excludes: ex } } }, () => { Kiki.Settings.load(); Kiki.Daemon.request("IndexRebuild", {}); sw.saved() }) } } } }
         Button { text: "Rebuild index"; onClicked: { Kiki.Daemon.request("IndexRebuild", {}); sw.saved() } }
@@ -223,12 +227,12 @@ Rectangle {
                 { id: "portal", label: "Open / Save dialogs (portal)", file: sw.integration.portals },
             ]
             delegate: Row2 { required property var modelData; label: modelData.label
-                Text { width: 90; anchors.verticalCenter: parent.verticalCenter; text: sw.integration[modelData.id] ? "on" : "off"; color: sw.integration[modelData.id] ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-                Button { text: sw.integration[modelData.id] ? "Remove" : "Apply"; onClicked: Kiki.Daemon.request(sw.integration[modelData.id] ? "Unintegrate" : "Integrate", { parts: [modelData.id] }, ok => { if (ok) { sw.integration = ok.status; const r = ok.results[0]; sw.flash = r.ok ? r.message : "Failed: " + r.message; flashTimer.restart() } }) }
-                Text { anchors.verticalCenter: parent.verticalCenter; text: modelData.file || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+                Text { width: 36; anchors.verticalCenter: parent.verticalCenter; text: sw.integration[modelData.id] ? "on" : "off"; color: sw.integration[modelData.id] ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                Button { id: act; text: sw.integration[modelData.id] ? "Remove" : "Apply"; onClicked: Kiki.Daemon.request(sw.integration[modelData.id] ? "Unintegrate" : "Integrate", { parts: [modelData.id] }, ok => { if (ok) { sw.integration = ok.status; const r = ok.results[0]; sw.flash = r.ok ? r.message : "Failed: " + r.message; flashTimer.restart() } }) }
+                Text { width: Math.max(0, parent.slot - 36 - act.width - 2 * parent.spacing); elide: Text.ElideMiddle; anchors.verticalCenter: parent.verticalCenter; text: modelData.file || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
         }
         Text { visible: !!sw.integration.hyprConfigErrors && sw.integration.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland config errors: " + (sw.integration.hyprConfigErrors || []).join("; "); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-        Row { spacing: 8
+        Flow { spacing: 8; width: parent.width
             Button { text: "Make kiki the default"; primary: true; onClicked: Kiki.Daemon.request("Integrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = ok.results.every(r => r.ok) ? "kiki is the default" : "Some steps failed: " + ok.results.filter(r => !r.ok).map(r => r.part + ": " + r.message).join("; "); flashTimer.restart() } }) }
             Button { text: "Remove kiki from Omarchy"; onClicked: Kiki.Daemon.request("Unintegrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = "integration removed"; flashTimer.restart() } }) }
         }
@@ -247,19 +251,19 @@ Rectangle {
         property var status: ({})
         function refresh() { Kiki.Daemon.request("AiStatus", {}, ok => { if (ok) status = ok }) }
         Component.onCompleted: refresh()
-        Text { text: status.configured ? "\"Open AI here…\" starts " + status.cli + " for " + status.provider + " in a terminal (using its own login)" : "\"Open AI here…\" needs " + (status.cli || "a command-line tool") + " for " + (status.provider || "…") + " on PATH, or a custom command"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WordWrap; width: 560 }
+        Text { text: status.configured ? "\"Open AI here…\" starts " + status.cli + " for " + status.provider + " in a terminal (using its own login)" : "\"Open AI here…\" needs " + (status.cli || "a command-line tool") + " for " + (status.provider || "…") + " on PATH, or a custom command"; color: status.configured ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WordWrap; width: parent.width }
         Row2 { label: "AI"; Choice { objectName: "ai-provider"; options: ["omarchy", "anthropic", "openai", "gemini", "xai", "custom"]; value: Kiki.Settings.jarvis.provider || "omarchy"; onPicked: v => Kiki.Daemon.request("AiConfigure", { provider: v }, () => { Kiki.Settings.load(); refresh(); sw.saved() }) } }
-        Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each started for a conversation."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
-        Row2 { label: "Custom command"; Rectangle { width: 320; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
+        Text { text: "omarchy = the AI in Omarchy's keybinding" + (status.omarchyProvider ? " (currently " + status.omarchyProvider + ")" : " (none detected; falls back to anthropic)") + ". Tools: claude, codex, gemini, grok, each started for a conversation."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
+        Row2 { label: "Custom command"; Rectangle { width: Math.min(320, parent.slot); height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
             TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: Kiki.Settings.jarvis.cliCommand || ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onEditingFinished: Kiki.Daemon.request("AiConfigure", { cliCommand: text }, () => { Kiki.Settings.load(); refresh(); sw.saved() })
                 Text { visible: !parent.text.length && !parent.activeFocus; text: "e.g. mytool --chat {prompt}"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } } }
-        Text { text: "The command is run as written, in a terminal window opened in the folder. {prompt} becomes the opening message naming the selected files; with nothing selected, the word holding it is left out."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: 560 }
+        Text { text: "The command is run as written, in a terminal window opened in the folder. {prompt} becomes the opening message naming the selected files; with nothing selected, the word holding it is left out."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; wrapMode: Text.WordWrap; width: parent.width }
     } }
     Component { id: sharePage; Column { spacing: 10
         Repeater { model: sw.sharePlugins; delegate: Column { required property var modelData; spacing: 6; width: parent.width
             Row { spacing: 14; height: 30
                 Switch { anchors.verticalCenter: parent.verticalCenter; on: modelData.enabled !== false; onToggled: { Kiki.Daemon.request("ShareConfigure", { plugin: modelData.id, config: Object.assign({}, modelData.config || {}, { enabled: !on }), secrets: {} }, () => sw.reload()); sw.saved() } }
-                Text { width: 200; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                Text { width: Math.min(200, Math.max(80, parent.parent.width * 0.4)); elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "targets: " + modelData.targets + " · v" + modelData.version; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
             // The plugin's own form (mail's SMTP fields). The field is the inner repeater's
             // `modelData`, and the plugin is the outer one's, kept under a name of its own —
@@ -276,16 +280,16 @@ Rectangle {
         Item { width: 1; height: 10 }
         Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
         Item { width: 1; height: 2 }
-        Text { text: "Every kiki-plugin-* binary found, with its kind and whether it is running now."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Text { width: parent.width; wrapMode: Text.WordWrap; text: "Every kiki-plugin-* binary found, with its kind and whether it is running now."; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         Repeater { model: sw.plugins; delegate: Row { required property var modelData; spacing: 12; height: 30
             Rectangle { width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.gutter }
-            Text { width: 170; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+            Text { width: Math.min(170, Math.max(90, parent.parent.width * 0.3)); elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter; text: modelData.name; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { width: 70; anchors.verticalCenter: parent.verticalCenter; text: modelData.kind; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Text { width: 80; anchors.verticalCenter: parent.verticalCenter; text: modelData.describe ? "v" + (modelData.describe.version || "?") : ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-            Text { width: 120; anchors.verticalCenter: parent.verticalCenter; text: modelData.running ? "running" : "idle"; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { width: 56; anchors.verticalCenter: parent.verticalCenter; text: modelData.running ? "running" : "idle"; color: modelData.running ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Button { height: 24; text: "Ping"; onClicked: Kiki.Daemon.request("PluginPing", { name: modelData.name }, (ok, err) => { const r = Object.assign({}, sw.pingResult); r[modelData.name] = ok ? ok.ms + " ms" : (err ? err.message : "?"); sw.pingResult = r }) }
             Text { anchors.verticalCenter: parent.verticalCenter; text: sw.pingResult[modelData.name] || ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
-        Text { visible: sw.plugins.length === 0; text: "No plugins found. Directories: " + (sw.about.pluginDir || ""); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; width: 560 }
+        Text { visible: sw.plugins.length === 0; text: "No plugins found. Directories: " + (sw.about.pluginDir || ""); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12; wrapMode: Text.WrapAnywhere; width: parent.width }
         Item { width: 1; height: 10 }
         Button { objectName: "reset-all"; text: "Reset all settings"; onClicked: Kiki.Daemon.request("ResetSettings", {}, () => sw.reload()) }
     } }

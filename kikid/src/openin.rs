@@ -129,7 +129,9 @@ pub fn socket_dir() -> std::io::Result<std::path::PathBuf> {
     if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
         return Ok(rt.into());
     }
-    private_dir(&std::env::temp_dir().join(format!("kiki-{}", rustix::process::getuid().as_raw())))
+    // `getuid` takes nothing, touches nothing of ours and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    private_dir(&std::env::temp_dir().join(format!("kiki-{uid}")))
 }
 
 fn private_dir(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
@@ -141,7 +143,8 @@ fn private_dir(dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
     }
     // Not followed: a symlink planted under this name is not a directory of ours.
     let md = std::fs::symlink_metadata(dir)?;
-    let mine = md.uid() == rustix::process::getuid().as_raw();
+    // As above: `getuid` cannot fail.
+    let mine = md.uid() == unsafe { libc::getuid() };
     if !md.is_dir() || !mine || md.permissions().mode() & 0o077 != 0 {
         return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("{} is not a private directory of this user", dir.display())));
     }

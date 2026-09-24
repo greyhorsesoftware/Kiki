@@ -127,24 +127,57 @@ pub struct Listing {
     inner: Mutex<Inner>,
 }
 
-mod names {
+/// Owner and group names. A local `Meta` holds the uid and gid, resolved here through `passwd`
+/// and `group` and cached. A remote one holds a name the backend gave (SFTP's `djclark`, FTP's
+/// listing column), interned into the same two u32s above `REMOTE` so 200k entries stay small;
+/// `user` and `group` answer both. (Until 2026-09-24 `meta_from` dropped the remote names, so an
+/// SFTP row had no owner or group even though the plugin sent them.)
+pub(crate) mod names {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
 
-    type NameCache = Mutex<(HashMap<u32, Option<String>>, HashMap<u32, Option<String>>)>;
-    fn cache() -> &'static NameCache {
-        static C: OnceLock<NameCache> = OnceLock::new();
-        C.get_or_init(|| Mutex::new((HashMap::new(), HashMap::new())))
+    /// Ids at or above this are interned remote names, not local uids or gids. No real uid is
+    /// up here (`nobody` is 65534), and `Meta::NONE` (`u32::MAX`) is filtered out before a lookup.
+    const REMOTE: u32 = 0x8000_0000;
+
+    #[derive(Default)]
+    struct Names {
+        users: HashMap<u32, Option<String>>,
+        groups: HashMap<u32, Option<String>>,
+        remote: Vec<String>,
+        ids: HashMap<String, u32>,
+    }
+    fn cache() -> &'static Mutex<Names> {
+        static C: OnceLock<Mutex<Names>> = OnceLock::new();
+        C.get_or_init(|| Mutex::new(Names::default()))
+    }
+
+    /// The id for a name a remote backend gave; the same name gets the same id.
+    pub fn intern(name: &str) -> u32 {
+        let mut c = cache().lock().unwrap();
+        if let Some(&id) = c.ids.get(name) {
+            return id;
+        }
+        let id = REMOTE + c.remote.len() as u32;
+        c.remote.push(name.to_string());
+        c.ids.insert(name.to_string(), id);
+        id
     }
 
     pub fn user(uid: u32) -> Option<String> {
         let mut c = cache().lock().unwrap();
-        c.0.entry(uid).or_insert_with(|| super::local::user_name(uid)).clone()
+        if uid >= REMOTE {
+            return c.remote.get((uid - REMOTE) as usize).cloned();
+        }
+        c.users.entry(uid).or_insert_with(|| super::local::user_name(uid)).clone()
     }
 
     pub fn group(gid: u32) -> Option<String> {
         let mut c = cache().lock().unwrap();
-        c.1.entry(gid).or_insert_with(|| super::local::group_name(gid)).clone()
+        if gid >= REMOTE {
+            return c.remote.get((gid - REMOTE) as usize).cloned();
+        }
+        c.groups.entry(gid).or_insert_with(|| super::local::group_name(gid)).clone()
     }
 }
 

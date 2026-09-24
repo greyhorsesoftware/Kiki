@@ -49,7 +49,8 @@ var paths = {
   "equals": "<path d=\"M3 6h10\"></path><path d=\"M3 10h10\"></path>",
   "check": "<path d=\"m3 8.5 3.5 3.5L13 4.5\"></path>",
   "warn": "<path d=\"M8 2.5 14 13H2z\"></path><path d=\"M8 6.5v3\"></path><path d=\"M8 11.3v.2\"></path>",
-  "sort-up": "<path d=\"m4 9 4-4 4 4\"></path>"
+  "sort-up": "<path d=\"m4 9 4-4 4 4\"></path>",
+  "undo": "<g transform=\"scale(0.6667)\"><path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"></path><path d=\"M3 3v5h5\"></path></g>"
 };
 
 var aliases = { share: "arr-u", mail: "doc", message: "doc", phone: "hdd", terminal: "code", sparkle: "info" };

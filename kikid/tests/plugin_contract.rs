@@ -17,7 +17,9 @@ fn setup() -> std::path::PathBuf {
     std::fs::create_dir_all(dir.join("plugins")).unwrap();
     std::fs::copy(&bin, dir.join("plugins/kiki-plugin-stub")).unwrap();
     std::env::set_var("KIKI_PLUGIN_DIR", dir.join("plugins"));
-    assert_eq!(plugin::inventory().len(), 1);
+    // The inventory also walks `/usr/lib/kiki/plugins`: on a machine with kiki installed it
+    // holds the shipped plugins too, so what is asserted is that the stub is among them.
+    assert!(plugin::inventory().iter().any(|(kind, _)| kind == "stub"), "{:?}", plugin::inventory());
     std::env::set_var("KIKI_CONFIG_DIR", dir.join("config"));
     // The mirror it runs writes an audit log; not into the developer's own state directory.
     std::env::set_var("KIKI_STATE_DIR", dir.join("state"));
@@ -37,11 +39,11 @@ fn setup() -> std::path::PathBuf {
 fn stub_plugin_end_to_end() {
     let dir = setup();
     // Discovery and Describe
-    assert_eq!(plugin::available(), vec!["stub".to_string()]);
+    // Among whatever this machine has (an installed kiki brings its own kinds), the stub.
+    assert!(plugin::available().contains(&"stub".to_string()), "{:?}", plugin::available());
     let described = plugin::describe_all();
-    assert_eq!(described.len(), 1);
-    assert_eq!(described[0].str_field("scheme"), Some("stub"));
-    assert_eq!(described[0].get("form").unwrap().as_arr().unwrap().len(), 2);
+    let stub = described.iter().find(|d| d.str_field("scheme") == Some("stub")).expect("the stub describes itself");
+    assert_eq!(stub.get("form").unwrap().as_arr().unwrap().len(), 2);
 
     // Validate rejects a missing name with the field named
     let p = plugin::get("stub").unwrap();

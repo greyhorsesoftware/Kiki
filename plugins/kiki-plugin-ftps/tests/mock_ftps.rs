@@ -584,14 +584,29 @@ struct Plugin {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
+    /// The wire lines the plugin logged (`KIKI_PLUGIN_LOG`), kept out of `req`'s frames.
+    log: Vec<String>,
 }
 
 impl Plugin {
     fn spawn() -> Plugin {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_kiki-plugin-ftps")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
+        Plugin::spawn_all(false)
+    }
+
+    /// With the library log asked for, as the daemon asks: `Log` events between the frames.
+    fn spawn_logging() -> Plugin {
+        Plugin::spawn_all(true)
+    }
+
+    fn spawn_all(log: bool) -> Plugin {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_kiki-plugin-ftps"));
+        if log {
+            cmd.env("KIKI_PLUGIN_LOG", "1");
+        }
+        let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Plugin { child, stdin, stdout, next: 1 }
+        Plugin { child, stdin, stdout, next: 1, log: Vec::new() }
     }
 
     /// Sends a request; returns (streamed JSON frames, final reply).
@@ -607,6 +622,12 @@ impl Plugin {
             let (kind, payload) = read_frame(&mut self.stdout).unwrap().expect("plugin closed its stdout");
             assert_eq!(kind, 0, "unexpected binary frame");
             let f = json::parse(&payload).unwrap();
+            if f.str_field("event") == Some("Log") {
+                if f.str_field("target") == Some("wire") {
+                    self.log.push(f.str_field("message").unwrap_or("").to_string());
+                }
+                continue;
+            }
             if f.get("ok").is_some() || f.get("err").is_some() {
                 assert_eq!(f.u64_field("id"), Some(id));
                 return (frames, f);
@@ -853,6 +874,28 @@ fn reads_are_exact_and_resume_with_rest() {
     // The control connection survives all of that.
     assert_eq!(p.scan("/docs").len(), 2);
     m.assert_passive_only();
+}
+
+// The connection log carries the control channel (owner, 2026-09-24): every command sent and
+// every reply, as suppaftp traces them — with the password redacted before it leaves the plugin.
+#[test]
+fn the_connection_log_carries_the_control_channel() {
+    let m = start(false);
+    let mut p = Plugin::spawn_logging();
+    let fp = fingerprint();
+    let r = p.connect(m.port, "secret", false, Some(&fp));
+    assert!(r.get("ok").is_some(), "connect: {}", json::to_string(&r));
+    p.scan("/docs");
+    let log = p.log.clone();
+    assert!(log.iter().any(|l| l.starts_with("→ USER ")), "{log:?}");
+    assert!(log.contains(&"→ PASS [redacted]".to_string()), "the password is redacted, not sent on: {log:?}");
+    assert!(!log.iter().any(|l| l.contains("secret")), "no secret on the wire: {log:?}");
+    assert!(log.iter().any(|l| l.starts_with("← 2")), "the server's replies, code first: {log:?}");
+    assert!(log.iter().any(|l| l.starts_with("→ PASV") || l.starts_with("→ EPSV")), "{log:?}");
+    assert!(log.iter().any(|l| l.starts_with("→ MLSD") || l.starts_with("→ LIST")), "{log:?}");
+    let firsts: Vec<&String> = log.iter().filter(|l| l.starts_with("← ")).collect();
+    assert!(firsts.windows(2).all(|w| w[0] != w[1]), "a reply line is logged once, not twice: {log:?}");
+    drop(m);
 }
 
 #[test]

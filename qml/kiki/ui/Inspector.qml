@@ -18,15 +18,83 @@ Rectangle {
     /// comes from. (It used to ask the daemon to `Stat` a URI with no meta yet, which on a
     /// server's folder answered NotFound and, on anything, showed nothing the row would not.)
     property var meta: row ? row.meta : null
-    /// The narrowest the panel may be dragged: the Permissions grid (88 + 3 × 56) inside the
-    /// panel's margins, whole. Both the window's panel and columns view's info column keep to it.
-    readonly property int minWidth: 88 + 3 * 56 + 20 + 16
+    /// The narrowest the panel may be dragged: the Permissions grid (88 + 3 × 56) and the revert
+    /// mark at its right inside the panel's margins, whole. Both the window's panel and columns
+    /// view's info column keep to it.
+    readonly property int minWidth: 88 + 3 * 56 + 8 + 24 + 20 + 16
     property bool standalone: false
     /// False where the panel is part of the view rather than something you opened: the info
     /// column in Miller columns follows the selection and has nothing to close to.
     property bool closable: true
     signal closed()
     signal chmod(int mode, bool recursive)
+    /// Over a selection: the bits touched (`mask`) and what they were set to (`bits`), for one
+    /// job over every item — the daemon merges them into each file's own mode (0.1.1).
+    signal chmodMany(int mask, int bits, bool recursive)
+    /// The popover's shape (0.1.1): no preview, no grip, tighter header; the card is as tall
+    /// as its content (`naturalHeight`).
+    property bool compact: false
+    /// The selection, when it is more than one row: the panel then shows the selection —
+    /// a count, the kinds fanned out, fields summed and merged, a permissions grid that says
+    /// where the items differ — instead of the current row alone.
+    property var rows: []
+    readonly property bool many: rows && rows.length > 1
+    function kindsSummary() {
+        const counts = {}
+        for (const r of rows) { const k = Kiki.Format.kindLabel(r && r.kind ? r.kind : "file"); counts[k] = (counts[k] || 0) + 1 }
+        const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
+        const named = names.slice(0, 2).map(k => counts[k] + " " + k + (counts[k] > 1 ? "s" : ""))
+        return named.join(", ") + (names.length > 2 ? ", and " + (names.length - 2) + " more" : "")
+    }
+    function sizeSummary() {
+        let total = 0, measured = 0, unmeasured = 0
+        for (const r of rows) { if (r && r.meta && !r.isDir) { total += r.meta.size; measured++ } else unmeasured++ }
+        if (!measured) return unmeasured ? "—" : "0 B"
+        return Kiki.Format.bytes(total) + " (" + total.toLocaleString(Qt.locale(), "f", 0) + " bytes)" + (unmeasured ? ", " + unmeasured + " unmeasured" : "")
+    }
+    function newestModified() {
+        let t = 0
+        for (const r of rows) if (r && r.meta && r.meta.mtime > t) t = r.meta.mtime
+        return t ? Kiki.Format.date(t) + " (newest)" : "…"
+    }
+    /// A meta field every item shares, or "mixed".
+    function common(field) {
+        let v = null
+        for (const r of rows) { const x = r && r.meta ? r.meta[field] : undefined; if (x === undefined || x === null || x === "") return "—"; if (v === null) v = x; else if (v !== x) return "mixed" }
+        return v === null ? "—" : String(v)
+    }
+    function gitSummary() {
+        const counts = {}
+        for (const r of rows) { const st = r && r.git ? r.git.state : "clean"; counts[st] = (counts[st] || 0) + 1 }
+        return Object.keys(counts).map(k => counts[k] + " " + k).join(", ")
+    }
+    readonly property bool anyGit: rows.some(r => r && r.git)
+    /// The grid over a selection: a bit is on for all, off for all, or mixed; clicking a mixed
+    /// or off bit sets it for every item, clicking an on bit clears it for every item, and only
+    /// the bits touched go into the job.
+    readonly property int allBits: rows.length ? rows.reduce((acc, r) => acc & (r && r.meta && r.meta.mode !== undefined && r.meta.mode !== null ? r.meta.mode & 0o777 : 0o777), 0o777) : 0
+    readonly property int anyBits: rows.reduce((acc, r) => acc | (r && r.meta && r.meta.mode !== undefined && r.meta.mode !== null ? r.meta.mode & 0o777 : 0), 0)
+    property int touchedMask: 0
+    property int touchedBits: 0
+    onRowsChanged: { touchedMask = 0; touchedBits = 0 }
+    function bitState(bit) {          // "on" | "off" | "mixed", as shown
+        if (touchedMask & bit) return (touchedBits & bit) ? "on" : "off"
+        if (allBits & bit) return "on"
+        return (anyBits & bit) ? "mixed" : "off"
+    }
+    function toggleBit(bit) {
+        const on = bitState(bit) === "on"
+        touchedMask |= bit
+        touchedBits = on ? (touchedBits & ~bit) : (touchedBits | bit)
+    }
+    function octalSummary() {
+        const modes = []
+        for (const r of rows) { if (r && r.meta && r.meta.mode !== undefined && r.meta.mode !== null) { const o = (r.meta.mode & 0o777).toString(8).padStart(3, "0"); if (modes.indexOf(o) < 0) modes.push(o) } }
+        if (!modes.length) return "—"
+        return modes.length === 1 ? modes[0] : "mixed (" + modes.slice(0, 3).join(", ") + (modes.length > 3 ? ", …" : "") + ")"
+    }
+    /// What the compact card is tall enough for: header, tabs, the tab's content, the margins.
+    readonly property int naturalHeight: body.anchors.topMargin + headerRow.height + body.spacing + tabStrip.height + body.spacing + Math.max(tabLoader.height, otherTab.height) + body.anchors.bottomMargin
     /// Dragging the leading edge: `dx` is the movement, positive to the right.
     signal resized(real dx)
     /// The drag is over, so the width is worth remembering.
@@ -40,7 +108,7 @@ Rectangle {
     MouseArea {
         id: grip
         objectName: "inspector-grip"
-        visible: !insp.standalone
+        visible: !insp.standalone && !insp.compact
         width: 6; height: parent.height; z: 20
         cursorShape: Qt.SplitHCursor
         hoverEnabled: true
@@ -70,9 +138,18 @@ Rectangle {
         const l = gitInfo ? gitInfo.last : null
         return l ? l.short + " · " + l.author + " · " + Kiki.Format.relative(l.time * 1000) : ""
     }
-    onUriChanged: { preview = null; gitInfo = null; previewPending = uri !== ""; if (uri) reload() }
+    /// The URI the preview and git state were last asked for. Three inspectors follow the
+    /// selection (the docked panel, the card, the columns' info column) and only one is ever
+    /// seen: the unseen ones used to ask the daemon for every selection too — Preview and
+    /// GitStatus three times a click (2026-09-24). Now an inspector asks when it is seen, and one
+    /// that becomes seen with a selection it has not asked about asks then.
+    property string _loadedFor: ""
+    onUriChanged: { preview = null; gitInfo = null; previewPending = uri !== "" && !many; _loadedFor = ""; if (uri && !many && visible) reload() }
+    onVisibleChanged: if (visible && uri && !many && _loadedFor !== uri) reload()
     function reload() {
+        if (many) return
         const u = uri
+        _loadedFor = u
         Kiki.Daemon.request("Preview", { uri: u }, (ok, err) => { if (u === insp.uri) { preview = ok || null; previewPending = false } })
         if (row && row.git) Kiki.Daemon.request("GitStatus", { uri: u }, (ok, err) => { if (u === insp.uri) insp.gitInfo = ok || null })
     }
@@ -100,19 +177,30 @@ Rectangle {
         onClicked: insp.closed()
     }
     Column {
-        anchors.fill: parent; anchors.margins: 16; anchors.leftMargin: 20; spacing: 16
+        id: body
+        anchors.fill: parent; anchors.margins: insp.compact ? 12 : 16; anchors.leftMargin: insp.compact ? 16 : 20; spacing: insp.compact ? 12 : 16
         // Header: icon, name, path
         Row {
+            id: headerRow
             width: parent.width; spacing: 12
-            Icon { objectName: "inspector-title-icon"; name: insp.kind(); size: 40; strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind()) }
+            Icon { visible: !insp.many; objectName: "inspector-title-icon"; name: insp.kind(); size: insp.compact ? 24 : 40; strokeWidth: insp.compact ? 1.25 : 1; color: Kiki.Theme.kindColor(insp.kind()) }
+            // A selection: the count on a card of its own in the panel; in the card, a little
+            // fan of the kinds where the icon would be.
+            Rectangle {
+                visible: insp.many && !insp.compact
+                objectName: "inspector-count"
+                width: 40; height: 40; radius: 8; color: Kiki.Theme.surface
+                Text { anchors.centerIn: parent; text: insp.rows.length; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
+            }
+            KindFan { visible: insp.many && insp.compact; objectName: "inspector-mini-fan"; rows: insp.rows; cardWidth: 24; most: 3; width: 56; height: 36; anchors.verticalCenter: parent.verticalCenter }
             Column {
                 objectName: "inspector-title"
                 // Level with the icon beside it, not hung from the top of the row.
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - 52; spacing: 4
+                width: parent.width - (insp.compact ? (insp.many ? 68 : 36) : 52); spacing: 4
                 // The name alone: the folder it is in is a field under General, and repeating the
                 // whole path here only crowded the header.
-                Text { width: parent.width; elide: Text.ElideRight; text: insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+                Text { width: parent.width; elide: Text.ElideRight; text: insp.many ? insp.rows.length + " items" : insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: insp.compact ? 13 : 15; font.bold: true }
             }
         }
         // The preview is of the file, not of a tab: it stays while the tabs change under it.
@@ -140,11 +228,14 @@ Rectangle {
             // A folder (or anything with no preview) is just its icon: no box around it.
             readonly property bool iconOnly: !isImage && (!insp.preview || insp.preview.children !== undefined)
             width: parent.width
-            height: Math.min(markdown ? 300 : (isImage ? imageHeight : 150), Math.round(insp.height * 0.4))
+            visible: !insp.compact
+            height: insp.compact ? 0 : (insp.many ? 112 : Math.min(markdown ? 300 : (isImage ? imageHeight : 150), Math.round(insp.height * 0.4)))
             radius: 2
-            // A picture is its own frame; the box is for text, where an edge helps.
-            color: (iconOnly || isImage) ? "transparent" : Kiki.Theme.bgDark
-            border.width: (iconOnly || isImage) ? 0 : 1; border.color: Kiki.Theme.line; clip: true
+            // A picture is its own frame; the box is for text, where an edge helps. A selection's
+            // fan has no box at all.
+            color: (iconOnly || isImage || insp.many) ? "transparent" : Kiki.Theme.bgDark
+            border.width: (iconOnly || isImage || insp.many) ? 0 : 1; border.color: Kiki.Theme.line; clip: true
+            KindFan { visible: insp.many; objectName: "inspector-fan"; rows: insp.rows; cardWidth: 64; anchors.fill: parent }
             Text {
                 visible: insp.preview && insp.preview.text !== undefined && !parent.markdown
                 anchors.fill: parent; anchors.margins: 10
@@ -276,12 +367,13 @@ Rectangle {
             // daemon has answered.
             Icon {
                 objectName: "inspector-kind-icon"
-                visible: insp.previewPending ? !!(insp.row && insp.row.isDir) : previewBox.iconOnly
+                visible: !insp.many && (insp.previewPending ? !!(insp.row && insp.row.isDir) : previewBox.iconOnly)
                 anchors.centerIn: parent; name: insp.kind(); size: Math.max(48, Math.min(parent.width, parent.height) - 30); strokeWidth: 1; color: Kiki.Theme.kindColor(insp.kind())
             }
         }
         // Tabs
         Item {
+            id: tabStrip
             width: parent.width; height: 32
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
             Row {
@@ -301,15 +393,29 @@ Rectangle {
         }
         Flickable {
             // Whatever the header, the preview and the tab strip leave.
-            width: parent.width; height: Math.max(0, parent.height - previewBox.height - 120)
+            width: parent.width; height: insp.compact ? tabLoader.height : Math.max(0, parent.height - previewBox.height - 120)
             contentWidth: width; contentHeight: tabLoader.height
             clip: true; boundsBehavior: Flickable.StopAtBounds
             NaturalScroll { }
             Loader { id: tabLoader; width: parent.width; sourceComponent: insp.tab === "general" ? general : permissions }
+            // The other tab, laid out but not shown, so the compact card can be as tall as the
+            // taller of the two and not resize when the tabs change (owner, 2026-09-24).
+            // The other tab, laid out but not seen, so the card is as tall as the taller of the two
+            // and does not resize on a tab switch. Unseen by opacity, not `visible: false`: in a
+            // hidden subtree a row's `visible` change never reaches its Column, so the copy kept
+            // the layout it was created with (the single-file Symbolic row over a selection, a
+            // git-tracked file's rows over a plain one) and the card opened too tall, shrinking
+            // when the tab was switched and the copy remade (2026-09-24).
+            Loader { id: otherTab; objectName: "other-tab"; opacity: 0; enabled: false; active: insp.compact; width: parent.width; sourceComponent: insp.tab === "general" ? permissions : general }
         }
     }
     Item {
     }
+
+    function ownerOf() { return insp.many ? insp.common("owner") : (insp.meta && insp.meta.owner ? insp.meta.owner : "—") }
+    function groupOf() { return insp.many ? insp.common("group") : (insp.meta && insp.meta.group ? insp.meta.group : "—") }
+    /// The card's one line for both (owner, 2026-09-24: "shrink it height-wise").
+    function ownerGroup() { return ownerOf() + " · " + groupOf() }
 
     component Field: Row {
         property string label: ""
@@ -326,18 +432,18 @@ Rectangle {
             spacing: 18
             Column {
                 spacing: 8; width: parent.width
-                Field { label: "Type"; value: Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
+                Field { objectName: "insp-type"; label: insp.many ? "Kinds" : "Type"; value: insp.many ? insp.kindsSummary() : Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
                 Field { label: "Host"; value: insp.uri.startsWith("file://") ? "local" : Kiki.Format.authority(insp.uri) }
                 Field { label: "Location"; value: Kiki.Format.display(insp.uri.slice(0, insp.uri.lastIndexOf("/")) || insp.uri, insp.home) }
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             Column {
                 spacing: 8; width: parent.width
-                Field { label: "Size"; value: insp.meta ? (insp.row && insp.row.isDir ? "—" : Kiki.Format.bytes(insp.meta.size) + " (" + insp.meta.size.toLocaleString(Qt.locale(), "f", 0) + " bytes)") : "…" }
-                Field { label: "Modified"; value: insp.meta ? Kiki.Format.date(insp.meta.mtime) : "…" }
-                Field { label: "Owner"; value: insp.meta && insp.meta.owner ? insp.meta.owner : "—" }
-                Field { label: "Group"; value: insp.meta && insp.meta.group ? insp.meta.group : "—" }
-                Field { objectName: "insp-git"; label: "Git"; value: insp.gitLine() || "—"; valueColor: insp.row && insp.row.git ? Kiki.Format.gitColor(insp.row.git) : Kiki.Theme.fg; visible: !!(insp.row && insp.row.git) }
+                Field { objectName: "insp-size"; label: "Size"; value: insp.many ? insp.sizeSummary() : (insp.meta ? (insp.row && insp.row.isDir ? "—" : Kiki.Format.bytes(insp.meta.size) + " (" + insp.meta.size.toLocaleString(Qt.locale(), "f", 0) + " bytes)") : "…") }
+                Field { objectName: "insp-modified"; label: "Modified"; value: insp.many ? insp.newestModified() : (insp.meta ? Kiki.Format.date(insp.meta.mtime) : "…") }
+                Field { objectName: "insp-owner"; label: insp.compact ? "Owner/Group" : "Owner"; value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
+                Field { objectName: "insp-group"; label: "Group"; visible: !insp.compact; value: insp.groupOf() }
+                Field { objectName: "insp-git"; label: "Git"; value: insp.many ? insp.gitSummary() : (insp.gitLine() || "—"); valueColor: !insp.many && insp.row && insp.row.git ? Kiki.Format.gitColor(insp.row.git) : Kiki.Theme.fg; visible: insp.many ? insp.anyGit : !!(insp.row && insp.row.git) }
                 Field { objectName: "insp-git-branch"; label: "Branch"; value: insp.gitInfo && insp.gitInfo.branch ? insp.gitInfo.branch : ""; visible: value !== "" }
                 Field { objectName: "insp-git-last"; label: "Last commit"; value: insp.lastCommitLine(); visible: value !== "" }
                 Field { objectName: "insp-git-subject"; label: ""; value: insp.gitInfo && insp.gitInfo.last ? insp.gitInfo.last.subject : ""; valueColor: Kiki.Theme.fgDim; visible: value !== "" }
@@ -348,9 +454,14 @@ Rectangle {
     Component {
         id: permissions
         Column {
-            spacing: 14
-            property bool canEdit: insp.meta && insp.meta.mode !== null && insp.meta.mode !== undefined
+            spacing: insp.compact ? 10 : 14
+            property bool canEdit: insp.many ? insp.rows.some(r => r && r.meta && r.meta.mode !== null && r.meta.mode !== undefined) : (insp.meta && insp.meta.mode !== null && insp.meta.mode !== undefined)
+            /// Something changed: the revert mark at the grid's right lights.
+            readonly property bool changed: insp.many ? insp.touchedMask !== 0 : insp.dirty
+            Item {
+            width: parent.width; height: grid.height
             Grid {
+                id: grid
                 columns: 4; columnSpacing: 0; rowSpacing: 2
                 Item { width: 88; height: 24 }
                 Repeater { model: ["Read", "Write", "Exec"]; delegate: Text { required property string modelData; width: 56; height: 24; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; text: modelData.toUpperCase(); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 0.6 } }
@@ -368,27 +479,47 @@ Rectangle {
                                 visible: index > 0
                                 property int bit: [0, 4, 2, 1][index]
                                 objectName: "perm-" + who.who.toLowerCase() + "-" + bit
-                                property bool on: (insp.editMode >> who.shift) & bit
+                                // One file: the bit as edited. A selection: on, off, or mixed across it.
+                                property string state: insp.many ? insp.bitState(bit << who.shift) : (((insp.editMode >> who.shift) & bit) ? "on" : "off")
+                                property bool on: state === "on"
                                 anchors.centerIn: parent; width: 16; height: 16; radius: 2
                                 color: on ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: on ? Kiki.Theme.accent : Kiki.Theme.gutter
                                 Icon { visible: parent.on; anchors.centerIn: parent; name: "check"; size: 10; strokeWidth: 2.5; color: Kiki.Theme.bg }
-                                MouseArea { anchors.fill: parent; onClicked: if (canEdit) insp.editMode ^= (parent.bit << who.shift) }
+                                // The dash: this bit differs across the selection.
+                                Rectangle { visible: parent.state === "mixed"; anchors.centerIn: parent; width: 8; height: 2; color: Kiki.Theme.fgDim }
+                                MouseArea { anchors.fill: parent; onClicked: { if (!canEdit) return; if (insp.many) insp.toggleBit(parent.bit << who.shift); else insp.editMode ^= (parent.bit << who.shift) } }
                             }
                         }
                     }
                 }
             }
+            // Revert, as a mark to the grid's right rather than a button (owner, 2026-09-24): dim
+            // until something is changed, lit once it is; a click puts the grid back to what it
+            // showed when the panel opened — one file's mode as loaded, a selection's own bits —
+            // and sends nothing.
+            Item {
+                objectName: "perm-revert"
+                readonly property bool lit: parent.parent.changed
+                enabled: lit
+                width: 24; height: 24; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                Icon { anchors.centerIn: parent; name: "undo"; size: 16; color: parent.lit ? Kiki.Theme.accent : Kiki.Theme.gutter }
+                Tip { visible: parent.lit && revertHover.containsMouse; text: "Revert" }
+                MouseArea { id: revertHover; anchors.fill: parent; hoverEnabled: true; cursorShape: parent.lit ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: if (insp.many) { insp.touchedMask = 0; insp.touchedBits = 0 } else insp.editMode = insp.meta.mode & 0o777 }
+            }
+            }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             Column {
                 spacing: 8; width: parent.width
-                Field { label: "Octal"; value: canEdit ? insp.editMode.toString(8).padStart(3, "0") : "—" }
-                Field { label: "Symbolic"; value: canEdit ? insp.symbolic(insp.editMode) : "—" }
-                Field { label: "Owner"; value: insp.meta && insp.meta.owner ? insp.meta.owner : "—" }
-                Field { label: "Group"; value: insp.meta && insp.meta.group ? insp.meta.group : "—" }
+                Field { objectName: "perm-octal"; label: "Octal"; value: insp.many ? insp.octalSummary() : (canEdit ? insp.editMode.toString(8).padStart(3, "0") : "—") }
+                Field { label: "Symbolic"; visible: !insp.many; value: canEdit ? insp.symbolic(insp.editMode) : "—" }
+                Field { objectName: "perm-owner"; label: insp.compact ? "Owner/Group" : "Owner"; value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
+                Field { objectName: "perm-group"; label: "Group"; visible: !insp.compact; value: insp.groupOf() }
             }
+            // Centred, with Apply under it, in the card and the panel alike (owner, 2026-09-24).
             Row {
                 id: recursiveRow
-                spacing: 8
+                spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
                 property bool recursive: false
                 Rectangle {
                     objectName: "perm-recursive"
@@ -398,11 +529,11 @@ Rectangle {
                 }
                 Text { anchors.verticalCenter: parent.verticalCenter; text: "Apply to contained items"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
-            Item { width: 1; height: 8 }
+            Item { width: 1; height: insp.compact ? 0 : 8 }
             Row {
-                spacing: 8
-                Button { objectName: "perm-apply"; text: "Apply"; primary: true; enabled: insp.dirty; onClicked: insp.chmod(insp.editMode, recursiveRow.recursive) }
-                Button { objectName: "perm-revert"; text: "Revert"; enabled: insp.dirty; onClicked: insp.editMode = insp.meta.mode & 0o777 }
+                spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
+                Button { objectName: "perm-apply"; text: "Apply"; primary: true; small: insp.compact; enabled: insp.many ? insp.touchedMask !== 0 : insp.dirty
+                         onClicked: if (insp.many) insp.chmodMany(insp.touchedMask, insp.touchedBits, recursiveRow.recursive); else insp.chmod(insp.editMode, recursiveRow.recursive) }
             }
         }
     }

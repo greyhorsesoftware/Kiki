@@ -580,6 +580,8 @@ struct Plugin {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
+    /// The wire lines the plugin logged (`KIKI_PLUGIN_LOG`), kept out of `req`'s frames.
+    log: Vec<String>,
 }
 
 impl Plugin {
@@ -589,7 +591,19 @@ impl Plugin {
 
     /// `known_hosts` points the plugin at a fixture instead of the real `~/.ssh/known_hosts`.
     fn spawn_with(known_hosts: Option<&std::path::Path>) -> Plugin {
+        Plugin::spawn_all(known_hosts, false)
+    }
+
+    /// With the library log asked for, as the daemon asks: `Log` events between the frames.
+    fn spawn_logging() -> Plugin {
+        Plugin::spawn_all(None, true)
+    }
+
+    fn spawn_all(known_hosts: Option<&std::path::Path>, log: bool) -> Plugin {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_kiki-plugin-sftp"));
+        if log {
+            cmd.env("KIKI_PLUGIN_LOG", "1");
+        }
         match known_hosts {
             Some(p) => {
                 cmd.env("KIKI_KNOWN_HOSTS", p);
@@ -604,7 +618,7 @@ impl Plugin {
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Plugin { child, stdin, stdout, next: 1 }
+        Plugin { child, stdin, stdout, next: 1, log: Vec::new() }
     }
 
     /// Sends a request; returns (streamed JSON frames, final reply).
@@ -620,6 +634,12 @@ impl Plugin {
             let (kind, payload) = read_frame(&mut self.stdout).unwrap().expect("plugin closed its stdout");
             assert_eq!(kind, 0, "unexpected binary frame");
             let f = json::parse(&payload).unwrap();
+            if f.str_field("event") == Some("Log") {
+                if f.str_field("target") == Some("wire") {
+                    self.log.push(f.str_field("message").unwrap_or("").to_string());
+                }
+                continue;
+            }
             if f.get("ok").is_some() || f.get("err").is_some() {
                 assert_eq!(f.u64_field("id"), Some(id));
                 return (frames, f);
@@ -848,6 +868,31 @@ fn reads_are_pipelined_and_exact() {
     assert_eq!((kind, payload.len()), (1, 0), "end marker even on failure");
     let (_, payload) = read_frame(&mut p.stdout).unwrap().unwrap();
     assert_eq!(json::parse(&payload).unwrap().get("err").unwrap().str_field("code"), Some("NotFound"));
+}
+
+// The connection log carries the wire (owner, 2026-09-24): what was asked of the server and what
+// it answered, one line each, whether or not a job is running. russh-sftp says nothing usable of
+// its own, so the plugin says it.
+#[test]
+fn the_connection_log_carries_the_wire() {
+    let m = start(ExecMode::Gnu, ExecFail::None, 100);
+    let mut p = Plugin::spawn_logging();
+    let r = p.connect(m.port, "secret");
+    assert!(r.get("ok").is_some(), "connect: {}", json::to_string(&r));
+    p.scan("/", false);
+    assert!(p.log.iter().any(|l| l.starts_with("→ exec find ")), "the fast scan's command: {:?}", p.log);
+    assert!(p.log.iter().any(|l| l.starts_with("← exit 0, ") && l.ends_with(" entries")), "and its answer: {:?}", p.log);
+    p.ok(Value::obj().s("type", "Stat").s("location", "lab").s("path", "/").done());
+    assert!(p.log.contains(&"→ LSTAT /".to_string()), "{:?}", p.log);
+    assert!(p.log.iter().any(|l| l.starts_with("← ") && l.contains("mode 755")), "{:?}", p.log);
+    p.ok(Value::obj().s("type", "Mkdir").s("location", "lab").s("path", "/wired").done());
+    assert!(p.log.contains(&"→ MKDIR /wired".to_string()), "{:?}", p.log);
+    let (_, r) = p.req(Value::obj().s("type", "Stat").s("location", "lab").s("path", "/nope").done());
+    assert!(r.get("err").is_some());
+    let last = p.log.last().cloned().unwrap_or_default();
+    assert!(last.starts_with("← ") && !last.contains("mode"), "a refusal is the server's own words: {last}");
+    assert!(!p.log.iter().any(|l| l.contains("secret")), "no secret on the wire: {:?}", p.log);
+    drop(m);
 }
 
 #[test]

@@ -8,6 +8,8 @@ TestCase {
     visible: true
     width: 600; height: 400
     property int fired: 0
+    // A row-like thing under the menu, lighting under the pointer as the list rows do.
+    Rectangle { x: 300; y: 200; width: 200; height: 100; color: under.containsMouse ? "red" : "grey"; MouseArea { id: under; anchors.fill: parent; hoverEnabled: true } }
     UI.ContextMenu { id: menu }
 
     function test_open_close_and_action() {
@@ -23,6 +25,17 @@ TestCase {
         verify(menu.box.x + menu.box.width <= 600)
         verify(menu.box.y + menu.box.height <= 400)
         menu.close()
+    }
+    // With a menu up nothing under it is under the pointer (owner, 2026-09-24): crossing the
+    // rows while choosing an item used to move their hover highlight.
+    function test_hover_does_not_reach_what_is_under_the_menu() {
+        menu.open([{ label: "A", action: () => {} }], Qt.point(10, 10))
+        mouseMove(this, 400, 250)
+        verify(!under.containsMouse, "the thing under the menu did not light")
+        menu.close()
+        mouseMove(this, 401, 251)
+        tryVerify(() => under.containsMouse, 1000, "and does once the menu is gone")
+        mouseMove(this, 10, 10)
     }
     function test_escape_closes() {
         menu.open([{ label: "A", action: () => {} }], Qt.point(0, 0))

@@ -145,8 +145,13 @@ FloatingWindow {
     function openLocation(loc) {
         lastLocation = loc
         _enterSplit()
-        if (loc.localUri) left.open(loc.localUri)
-        right.open(loc.remoteUri)
+        // Already showing it: the click is a way back to the remote pane, not a request to
+        // open it again — the panes keep their folders and selections (owner, 2026-09-24).
+        // (The daemon reuses a live session either way; what a re-open cost was the pane's
+        // place and selection.)
+        const within = (u, root) => !!u && !!root && (u === root || u.startsWith(root.replace(/\/$/, "") + "/"))
+        if (!within(right.uri, loc.remoteUri)) right.open(loc.remoteUri)
+        if (loc.localUri && !within(left.uri, loc.localUri)) left.open(loc.localUri)
         focusPane(right)
     }
     /// A location that was added without being checked: the daemon will not connect until its
@@ -223,7 +228,14 @@ FloatingWindow {
         if (!win._leftHost || win._leftHost === from || win.sideBySide || win.left.hasPref) return
         if (Kiki.Settings.view.smartView === false) return
         const loc = win.locations.find(l => l.plugin === m[1] && l.name === m[2]); if (!loc) return
-        win.lastLocation = loc; win._enterSplit(); win.right.open(uri); if (loc.localUri) win.left.open(loc.localUri); win.focusPane(win.right) } }
+        // The pane that just listed the server BECOMES the right pane — the objects change
+        // places, as they do on leaving — and the local folder opens in the other. It used to
+        // open the server again in the right pane and the local folder over it in the left:
+        // one listing wasted, and the selection and history the arrival had just made lost.
+        const arrived = win.left
+        win.lastLocation = loc; win._enterSplit()
+        if (win.left === arrived) win._swapPaneObjects()      // `_enterSplit` may have swapped them back already
+        if (loc.localUri) win.left.open(loc.localUri); win.focusPane(win.right) } }
     // Last mirror time per remote root, kept in settings so the bar can say "last mirrored 2 h ago".
     property var lastMirror: Kiki.Settings.mirror && Kiki.Settings.mirror.last ? Kiki.Settings.mirror.last : ({})
     function remoteUri() { return left.uri.startsWith("file://") ? right.uri : left.uri }
@@ -268,14 +280,42 @@ FloatingWindow {
     // Filtering (the strip above the listing) and global search (the overlay) are separate.
     property bool filterOpen: false
     property int filterTotal: 0
+    /// What the filter narrows: the focused column in the columns view (0.1.1), the pane's own
+    /// listing anywhere else. Asked each time rather than kept — the focus moves.
+    function filterTarget() {
+        const v = currentView()
+        return (win.pane.view === "columns" && v && v.focusCache) ? v.focusCache : win.pane.listing
+    }
+    /// Its name for the bar's placeholder: "Filter src" in columns, "Filter this folder" elsewhere.
+    function filterPlaceholder() {
+        const v = currentView()
+        if (win.pane.view === "columns" && v && v.focusUri) return "Filter " + decodeURIComponent(v.focusUri.replace(/\/+$/, "").split("/").pop() || "/")
+        return "Filter this folder"
+    }
+    /// The listing the bar's text is on right now. Kept, not asked for: the focus can move
+    /// between typing a filter and clearing it (Left out of a filtered column), and the clear
+    /// has to reach the listing that was narrowed, not the one the keyboard is in now.
+    property var filteredCache: null
+    function applyFilter(text) {
+        const t = filterTarget()
+        // Already in force: the bar's debounce and a direct call (the `search` IPC, closing the
+        // bar) both land here, and the second used to send the same filter again.
+        if (text === win.pane.filterText && filteredCache === (text ? t : null)) return
+        if (filteredCache && filteredCache !== t && filteredCache.filter) filteredCache.filter("")
+        filteredCache = text ? t : null
+        win.pane.filterText = text
+        t.filter(text)
+    }
     function openFilter() {
-        filterTotal = pane.listing.count
+        filterTotal = filterTarget().count
         filterOpen = true
         const bar = win.pane === win.right ? rightFilter : leftFilter
         bar.focusInput()
     }
-    function closeFilter() { filterOpen = false; leftFilter.clear(); rightFilter.clear(); pane.setFilter(""); keys.forceActiveFocus() }
+    function closeFilter() { filterOpen = false; leftFilter.clear(); rightFilter.clear(); applyFilter(""); keys.forceActiveFocus() }
     function openSearch(seed) { searchOverlay.open(seed !== undefined ? seed : "") }
+    /// The rail's Search entry: up if it is down, and down if it is up.
+    function toggleSearch() { if (searchOverlay.visible) searchOverlay.close(); else openSearch(leftFilter.text) }
     function runSearch(text, scope) {
         searchScope = scope
         if (!text) return
@@ -416,7 +456,16 @@ FloatingWindow {
     property var repo: null
     function loadRepo() { if (!pane.uri.startsWith("file://")) { repo = null; return } Kiki.Daemon.request("Repo", { uri: pane.uri }, ok => { repo = ok || null }) }
     Connections { target: win.pane; function onNavigated(uri) { win.loadRepo(); if (win.filterOpen) win.closeFilter() } }
-    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged") win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
+    // In columns the filter is the focused column's: the keyboard leaving that column takes the
+    // filter with it (0.1.1, D2) — a column never shows fewer rows than it has without the bar.
+    Connections {
+        target: win.pane.view === "columns" ? win.currentView() : null
+        ignoreUnknownSignals: true
+        function onFocusColChanged() { if (win.filterOpen) win.closeFilter() }
+    }
+    // `RepoChanged` comes once per listing that read the repo — the other pane's, every column's —
+    // and each used to reload the same repo state; the pane's own listing's word is enough.
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged" && (!msg.lid || msg.lid === win.pane.listing.lid)) win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
     /// Bring the window to the front of the workspace it is on. Asked for by whatever opened
     /// something in it from outside — a second `kiki`, "Show in folder" from a browser — which
     /// is otherwise answered by a window nobody can see.
@@ -447,15 +496,21 @@ FloatingWindow {
     function setInspectorWidth(w, room) { inspectorW = Math.max(inspectorPanel.minWidth, Math.min(Math.floor(room * 0.7), Math.round(w))) }
     property string inspectedUri: ""
     property var inspectedRow: null
+    /// The rows of a selection of more than one: what the info panel shows instead of the
+    /// current row (0.1.1). Empty for one row or none.
+    property var inspectedRows: []
     Connections {
         target: win.pane.selection
         function onChanged() {
             if (!win.pane) return
             const p = win.pane.selection.current; const r = p >= 0 ? win.pane.listing.row(p) : null
             win.inspectedRow = r; win.inspectedUri = r ? win.pane.childUri(r.name) : ""
+            const ps = win.pane.selection.positions()
+            win.inspectedRows = ps.length > 1 ? ps.map(i => win.pane.listing.row(i)).filter(x => x) : []
         }
     }
     function submitChmod(uri, mode, recursive) { ops.chmod(uri, mode, recursive) }
+    function submitChmodMany(mask, bits, recursive) { ops.chmodMany(win.selectedUris(), mask, bits, recursive) }
 
     // Operations (plan 04) live in Ops.qml, which knows nothing about windows and dialogs, so
     // the interaction tests can drive them; the window supplies the confirmation and wl-copy.
@@ -521,7 +576,6 @@ FloatingWindow {
     /// gear's rows at the bottom.
     function hamburgerItems() {
         const items = [
-            { label: "Search everywhere…", key: keymap.chordFor("search"), action: () => win.openSearch(leftFilter.text) },
             { label: win.inspectorRequested ? "Hide info" : "Show info", key: keymap.chordFor("inspector"), enabled: win.pane.view !== "columns" && win.inspectedUri !== "", action: () => win.inspectorRequested = !win.inspectorRequested },
         ]
         if (win.remoteOpen || win.split) items.push({ label: win.split ? "One pane" : "Side by Side", key: keymap.chordFor("viewMirror"), action: () => win.toggleMirrorView() })
@@ -889,6 +943,7 @@ FloatingWindow {
     // Keymap (plan 02). Every action here is also reachable over IPC.
     Item {
         id: keys
+        objectName: "shell-keys"
         anchors.fill: parent
         focus: !win.filterOpen && !searchOverlay.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
             && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
@@ -933,7 +988,7 @@ FloatingWindow {
             case Qt.Key_Menu: menu.open(win.contextItemsNow(), Qt.point(400, 200)); break
             // The mirror workspace answers Escape itself where it has something to stop — the
             // compare on its Preflight screen — and leaves it alone on its other screens.
-            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (win.mirrorOpen && mirrorWs.escapeKey()) { /* the workspace stopped its compare */ } else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
+            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (infoPopover.visible) win.inspectorRequested = false; else if (win.mirrorOpen && mirrorWs.escapeKey()) { /* the workspace stopped its compare */ } else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
             case Qt.Key_I: if (win.vimKeys) win.inspectorRequested = !win.inspectorRequested; else return; break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
             default:
@@ -1003,8 +1058,14 @@ FloatingWindow {
         function back(): void { win.pane.back() }
         function forward(): void { win.pane.forward() }
         function setView(v: string): void { win.pane.view = v }
-        function search(text: string): void { if (text) win.openFilter(); const bar = win.pane === win.right ? rightFilter : leftFilter; bar.text = text; win.pane.setFilter(text) }
+        function search(text: string): void { if (text) win.openFilter(); const bar = win.pane === win.right ? rightFilter : leftFilter; bar.text = text; win.applyFilter(text) }
         function searchEverywhere(text: string): void { if (searchOverlay.visible && !text) searchOverlay.close(); else win.openSearch(text) }
+        /// A selection of several, by name, comma-separated; the last named is the current row.
+        function selectMany(names: string): void {
+            const want = names.split(","), at = []
+            for (let i = 0; i < win.pane.listing.count; i++) { const r = win.pane.listing.row(i); if (r && want.indexOf(r.name) >= 0) at.push(i) }
+            if (at.length) win.pane.selection.setMany(at, at[at.length - 1])
+        }
         function select(name: string): void {
             for (let i = 0; i < win.pane.listing.count; i++) {
                 const r = win.pane.listing.row(i)
@@ -1097,7 +1158,7 @@ FloatingWindow {
         function state(): string {
             return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.renamingRow(),
                 daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
-                dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, filter: win.pane.filterText, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
+                dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, infoPopover: infoPopover.visible, infoRows: win.inspectedRows.length, filter: win.pane.filterText, filterColumn: (win.pane.view === "columns" && win.currentView()) ? win.currentView().focusCol : -1, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
                 listColumns: win.listColumnWidths() })
         }
         /// Side by side, for scripts and tests: `toggle`; `drag <px>` is what dragging the line
@@ -1251,7 +1312,6 @@ FloatingWindow {
             onPathMenu: win.pathMenu()
             onSettings: win.gearMenu()
             onHamburger: button => win.hamburgerMenu(button)
-            onToggleSearch: win.openSearch(leftFilter.text)
             sidebarShown: win.sidebarShown
             onToggleSidebar: win.sidebarShown = !win.sidebarShown
         }
@@ -1303,6 +1363,8 @@ FloatingWindow {
                         id: leftFilter
                         visible: win.filterOpen && win.pane === win.left
                         width: parent.width; pane: win.left; total: win.filterTotal
+                        count: win.filterTarget().count; placeholder: win.filterPlaceholder()
+                        onApply: text => win.applyFilter(text)
                         onPromote: text => { win.closeFilter(); win.openSearch(text) }
                         onClosed: win.closeFilter()
                     }
@@ -1356,6 +1418,8 @@ FloatingWindow {
                         id: rightFilter
                         visible: win.filterOpen && win.pane === win.right
                         width: parent.width; pane: win.right; total: win.filterTotal
+                        count: win.filterTarget().count; placeholder: win.filterPlaceholder()
+                        onApply: text => win.applyFilter(text)
                         onPromote: text => { win.closeFilter(); win.openSearch(text) }
                         onClosed: win.closeFilter()
                     }
@@ -1383,7 +1447,8 @@ FloatingWindow {
                 // full width, pinned to the slot's right edge, so it moves rather than squashes.
                 Item {
                     id: inspectorSlot
-                    readonly property bool shown: win.pane.view !== "columns" && win.inspector
+                    // Not in side by side: there the info is a popover on the selected row (0.1.1).
+                    readonly property bool shown: !win.split && win.pane.view !== "columns" && win.inspector
                     readonly property int full: Math.max(inspectorPanel.minWidth, Math.min(win.inspectorW, Math.floor(parent.width * 0.7)))
                     width: shown ? full : 0; height: parent.height
                     visible: width > 0; clip: true
@@ -1393,8 +1458,9 @@ FloatingWindow {
                     // Columns view supplies its own inspector column; icon and list show it with the selection.
                     anchors.right: parent.right
                     width: inspectorSlot.full; height: parent.height
-                    uri: win.inspectedUri; row: win.inspectedRow; home: win.home
+                    uri: win.inspectedUri; row: win.inspectedRow; rows: win.inspectedRows; home: win.home
                     onClosed: win.inspectorRequested = false
+                    onChmodMany: (mask, bits, recursive) => win.submitChmodMany(mask, bits, recursive)
                     // Dragging the grip leftwards makes the panel wider.
                     onResized: dx => win.setInspectorWidth(win.inspectorW - dx, parent.width)
                     onResizeEnded: Kiki.Settings.set("view", "inspectorWidth", win.inspectorW)
@@ -1417,6 +1483,9 @@ FloatingWindow {
                 { key: "^?", label: "keys" }])
             statusInset: 38      // the orb stands at the right end
             status: (win.runningShown ? win.runningShown + " running · " : "") + win.countText()
+            toast: Kiki.Jobs.toast
+            onUndo: { Kiki.Jobs.undo(); Kiki.Jobs.dismissToast() }
+            onDismiss: Kiki.Jobs.dismissToast()
         }
 
     }
@@ -1431,6 +1500,8 @@ FloatingWindow {
         width: win.sidebarRail ? 44 : win.sidebarFull
         height: win.height - toolbar.height - bar.height
         favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
+        searchOpen: searchOverlay.visible
+        onSearchRequested: win.toggleSearch()
         onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) })
         onDeviceMenu: dev => menu.open([
             { label: "Open", enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
@@ -1489,7 +1560,6 @@ FloatingWindow {
     UI.KeymapWindow { id: keysWin; parent: win.contentItem; keymap: keymap; onClosed: keys.forceActiveFocus() }
     UI.AboutDialog { id: aboutDlg; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
     UI.ContextMenu { id: menu; parent: win.contentItem; onClosed: keys.forceActiveFocus() }
-    UI.Toast { anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 44 }
     UI.CollisionPrompt { anchors.fill: parent }
     UI.LocationDialog {
         id: locationDialog; anchors.fill: parent; onSaved: win.loadSidebar(); onVisibleChanged: if (!visible) keys.forceActiveFocus()
@@ -1539,6 +1609,21 @@ FloatingWindow {
         open: activity.visible
         onClicked: activity.toggle()
     }
+    // The info panel in side by side (0.1.1): over the focused pane, pointing at its selected row.
+    UI.InfoPopover {
+        id: infoPopover
+        anchors.fill: parent
+        visible: win.split && win.inspector && win.pane.view !== "columns" && !win.mirrorOpen
+        paneItem: win.pane === win.right ? rightCol : leftCol
+        view: win.pane === win.right ? rightLoader.item : viewLoader.item
+        rowIndex: win.pane.selection.current
+        uri: win.inspectedUri; row: win.inspectedRow; rows: win.inspectedRows; home: win.home
+        onClosed: win.inspectorRequested = false
+        onChmod: (mode, recursive) => win.submitChmod(win.inspectedUri, mode, recursive)
+        onChmodMany: (mask, bits, recursive) => win.submitChmodMany(mask, bits, recursive)
+        onEdit: (u, line) => win.editAt(u, line)
+        onOpen: u => win.openExternal(u)
+    }
     UI.ActivityPopover {
         id: activity
         objectName: "activity"
@@ -1555,6 +1640,8 @@ FloatingWindow {
         win.selectCameFrom()
     }
     Component { id: columnsView; Views.ColumnsPane { pane: win.left; home: win.home; onActivate: uri => win.openExternal(uri); onEdit: (u, line) => win.editAt(u, line)
+        onChmod: (uri, mode, recursive) => win.submitChmod(uri, mode, recursive)
+        onChmodMany: (uris, mask, bits, recursive) => ops.chmodMany(uris, mask, bits, recursive)
         onContextMenu: (uri, row, pos) => { win.focusPane(pane); menu.open(win.contextItemsForUri(uri, row), pos) }
         onContextMenuFolder: (uri, pos) => { win.focusPane(pane); menu.open(win.folderItems(uri), pos) } } }
 }

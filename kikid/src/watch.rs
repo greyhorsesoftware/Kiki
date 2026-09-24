@@ -10,10 +10,10 @@ pub const MAX_WATCHES: usize = 64;
 #[cfg(target_os = "linux")]
 mod imp {
     use super::*;
-    use rustix::fs::inotify::{self, CreateFlags, WatchFlags};
     use std::collections::HashMap;
-    use std::os::fd::{AsRawFd, OwnedFd};
-    use std::path::PathBuf;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -38,11 +38,38 @@ mod imp {
     fn state() -> &'static Mutex<State> {
         static S: OnceLock<Mutex<State>> = OnceLock::new();
         S.get_or_init(|| {
-            let fd = inotify::inotify_init(CreateFlags::CLOEXEC).expect("inotify_init");
+            // Blocking, on purpose: the reader polls before every read. The raw descriptor is
+            // ours and nobody else's, so wrapping it hands its close to the `OwnedFd`.
+            let fd = unsafe {
+                let raw = libc::inotify_init1(libc::IN_CLOEXEC);
+                if raw < 0 {
+                    panic!("inotify_init: {}", std::io::Error::last_os_error());
+                }
+                OwnedFd::from_raw_fd(raw)
+            };
             let raw = fd.as_raw_fd();
             std::thread::Builder::new().name("watch".into()).spawn(move || reader(raw)).expect("spawn watcher");
             Mutex::new(State { fd, by_wd: HashMap::new(), by_path: HashMap::new(), repo_by_wd: HashMap::new(), repos: HashMap::new() })
         })
+    }
+
+    /// The watch descriptor for `path`, or why not: a path with a NUL in it is refused here as
+    /// the kernel would refuse it, and the rest (gone, not a directory, out of watches) comes
+    /// back as errno.
+    fn add_watch(fd: &OwnedFd, path: &Path, mask: u32) -> std::io::Result<i32> {
+        let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+        // The path is NUL-terminated and the descriptor is open for as long as `fd` is borrowed.
+        let wd = unsafe { libc::inotify_add_watch(fd.as_raw_fd(), c_path.as_ptr(), mask) };
+        if wd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(wd)
+    }
+
+    fn rm_watch(fd: &OwnedFd, wd: i32) {
+        // A `wd` the kernel has already dropped (IN_IGNORED came first) just answers EINVAL,
+        // which nothing here needs to know.
+        let _ = unsafe { libc::inotify_rm_watch(fd.as_raw_fd(), wd) };
     }
 
     fn watch_repo(s: &mut State, root: PathBuf) {
@@ -54,9 +81,9 @@ mod imp {
                 drop_repo(s, &old);
             }
         }
-        let flags = WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::MOVED_TO | WatchFlags::MOVED_FROM | WatchFlags::MODIFY;
+        let flags = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_TO | libc::IN_MOVED_FROM | libc::IN_MODIFY;
         let git = root.join(".git");
-        let wds: Vec<i32> = [git.clone(), git.join("refs/heads")].iter().filter_map(|d| inotify::inotify_add_watch(&s.fd, d, flags).ok()).collect();
+        let wds: Vec<i32> = [git.clone(), git.join("refs/heads")].iter().filter_map(|d| add_watch(&s.fd, d, flags).ok()).collect();
         for wd in &wds {
             s.repo_by_wd.insert(*wd, root.clone());
         }
@@ -67,7 +94,7 @@ mod imp {
 
     fn drop_repo(s: &mut State, root: &PathBuf) {
         for wd in s.repos.remove(root).unwrap_or_default() {
-            let _ = inotify::inotify_remove_watch(&s.fd, wd);
+            rm_watch(&s.fd, wd);
             s.repo_by_wd.remove(&wd);
         }
     }
@@ -86,15 +113,14 @@ mod imp {
             // Evict the least recently registered watch; its listing becomes stale.
             if let Some((&wd, (path, _))) = s.by_wd.iter().min_by_key(|(_, (_, t))| *t) {
                 let path = path.clone();
-                let _ = inotify::inotify_remove_watch(&s.fd, wd);
+                rm_watch(&s.fd, wd);
                 s.by_wd.remove(&wd);
                 s.by_path.remove(&path);
                 crate::listing::mark_stale(&path);
             }
         }
-        let flags =
-            WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::MOVED_FROM | WatchFlags::MOVED_TO | WatchFlags::MODIFY | WatchFlags::ATTRIB | WatchFlags::DELETE_SELF | WatchFlags::MOVE_SELF | WatchFlags::ONLYDIR;
-        match inotify::inotify_add_watch(&s.fd, &l.path, flags) {
+        let flags = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO | libc::IN_MODIFY | libc::IN_ATTRIB | libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_ONLYDIR;
+        match add_watch(&s.fd, &l.path, flags) {
             Ok(wd) => {
                 s.by_wd.insert(wd, (l.path.clone(), Instant::now()));
                 s.by_path.insert(l.path.clone(), wd);
@@ -106,7 +132,7 @@ mod imp {
     pub fn unwatch(l: &Arc<Listing>) {
         let mut s = state().lock().unwrap();
         if let Some(wd) = s.by_path.remove(&l.path) {
-            let _ = inotify::inotify_remove_watch(&s.fd, wd);
+            rm_watch(&s.fd, wd);
             s.by_wd.remove(&wd);
         }
     }
@@ -227,7 +253,7 @@ mod imp {
         let mut s = state().lock().unwrap();
         if let Some(wd) = s.by_path.remove(path) {
             // Still registered when we worked it out ourselves rather than being told.
-            let _ = inotify::inotify_remove_watch(&s.fd, wd);
+            rm_watch(&s.fd, wd);
             s.by_wd.remove(&wd);
         }
         drop(s);

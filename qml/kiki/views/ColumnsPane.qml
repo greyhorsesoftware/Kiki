@@ -42,7 +42,17 @@ Item {
         const w = live !== undefined ? live : kept
         return w > 0 ? Math.max(columnWidthMin, Math.min(columnWidthMax, w)) : 0
     }
-    function widthOf(i) { return handWidth(i) || columnWidth }
+    function widthOf(i) {
+        const w = handWidth(i) || columnWidth
+        if (i !== columns.length - 1) return w
+        // The last column takes whatever the others and the info column leave, so the info
+        // column sits at the strip's right edge and the strip has no blank end. A width set by
+        // hand is a floor for the last column, not its size: with two columns dragged to 255
+        // and 203 a full-screen window showed them, the panel, and 400 px of nothing.
+        let used = inspectedUri !== "" ? inspectorWidth : 0
+        for (let j = 0; j < i; j++) used += widthOf(j)
+        return Math.max(w, strip.width - used)
+    }
     /// Where each column starts, and — the last entry — where they end.
     readonly property var columnX: {
         const xs = [0]
@@ -70,9 +80,28 @@ Item {
     property var columns: []          // [{ uri, cache, selected }]
     property string inspectedUri: ""
     property var inspectedRow: null
+    /// The info column's Apply: the same signals the window's panel has. (It had none, and Apply
+    /// in the info column did nothing at all — found wiring a selection through it, 0.1.1.)
+    signal chmod(string uri, int mode, bool recursive)
+    signal chmodMany(var uris, int mask, int bits, bool recursive)
+    /// The pane's selection when it is more than one row and the keyboard is in the first
+    /// column — the one column that is the pane's own listing: the info column then shows the
+    /// selection, as the window's panel does.
+    property var selectionRows: []
+    Connections {
+        target: root.pane ? root.pane.selection : null
+        function onChanged() {
+            const ps = root.pane.selection.positions()
+            root.selectionRows = ps.length > 1 ? ps.map(i => root.pane.listing.row(i)).filter(x => x) : []
+        }
+    }
     // Keyboard navigation: the column the arrows act on, and a selection whose row has not
     // arrived from the daemon yet (resolved by onRowsUpdated below).
     property int focusCol: 0
+    /// The column the keyboard is in, for whoever filters or counts it: the filter bar narrows
+    /// this one (0.1.1), not the first, whatever column the selection has walked into.
+    readonly property var focusCache: columns.length ? columns[Math.min(focusCol, columns.length - 1)].cache : null
+    readonly property string focusUri: columns.length ? columns[Math.min(focusCol, columns.length - 1)].uri : ""
     property int pendingIndex: -1
     /// The width the info panel was last dragged to — the window's panel and this column share
     /// the setting — or 0 for "as wide as it may be". It used to start at 0 whatever the setting
@@ -319,9 +348,38 @@ Item {
         if (sel < 0) return
         for (const op of ops) { if (sel < 0) break; sel = op.op === "remove" ? (sel === op.pos ? -1 : sel > op.pos ? sel - 1 : sel) : (sel >= op.pos ? sel + 1 : sel) }
         if (sel === columns[col].selected) return
-        const cols = columns.slice()
+        let cols = columns.slice()
         cols[col] = Object.assign({}, cols[col], { selected: sel })
+        // The chosen row is gone — filtered out, or deleted under us: the columns it had opened
+        // cannot stay beside a parent that no longer shows it, and neither can its info.
+        if (sel < 0) {
+            for (let i = col + 1; i < cols.length; i++) cols[i].cache.destroy()
+            cols = cols.slice(0, col + 1)
+            root.inspectedUri = ""; root.inspectedRow = null
+            focusCol = Math.min(focusCol, col)
+        }
         columns = cols
+    }
+
+    /// A column's rows were dealt again — a filter, a sort, a rescan — and its chosen row may
+    /// have moved or gone. Found again by name; gone, the columns it had opened go with it, as
+    /// `spliceColumn` does for a removal. Judged only when every row is in hand: a chosen row
+    /// past the window's edge is not "gone", it is merely not loaded.
+    function recheckSelection(col) {
+        const c = columns[col]
+        if (!c || c.selected < 0 || !c.cache || !c.cache.done) return
+        const name = col + 1 < columns.length ? decodeURIComponent(columns[col + 1].uri.replace(/\/+$/, "").split("/").pop())
+                   : (inspectedRow ? inspectedRow.name : null)
+        if (name === null) return
+        let at = -1, whole = true
+        for (let i = 0; i < c.cache.count; i++) {
+            const r = c.cache.row(i)
+            if (!r) { whole = false; continue }
+            if (r.name === name) { at = i; break }
+        }
+        if (at === c.selected) return
+        if (at >= 0) { const cols = columns.slice(); cols[col] = Object.assign({}, cols[col], { selected: at }); columns = cols }
+        else if (whole) spliceColumn(col, [{ op: "remove", pos: c.selected }])
     }
 
     // To the right of the last column there is nothing but room: a drop there goes into the
@@ -359,10 +417,14 @@ Item {
         }
         UI.Inspector {
             id: inspectorCol
+            objectName: "inspector-column"
             visible: root.inspectedUri !== ""
             x: root.columnX[root.columns.length]; width: root.inspectorWidth; height: strip.height
             uri: root.inspectedUri; row: root.inspectedRow; home: root.home
+            rows: root.focusCol === 0 ? root.selectionRows : []
             closable: false
+            onChmod: (mode, recursive) => root.chmod(root.inspectedUri, mode, recursive)
+            onChmodMany: (mask, bits, recursive) => root.chmodMany(root.focusCol === 0 ? root.pane.selection.positions().map(i => root.pane.childUri(root.pane.listing.row(i).name)) : [root.inspectedUri], mask, bits, recursive)
             onEdit: (u, line) => root.edit(u, line)
             onOpen: u => root.activate(u)
             onResized: dx => root.inspectorW = root.inspectorWidth - dx
@@ -441,7 +503,7 @@ Item {
                         Component.onCompleted: { root._lists[colIndex] = list; if (modelData.selected >= 0) positionViewAtIndex(modelData.selected, ListView.Contain) }
                         Component.onDestruction: if (root._lists[colIndex] === list) delete root._lists[colIndex]
                         onContentYChanged: if (modelData.cache) modelData.cache.setViewport(Math.max(0, Math.floor(contentY / Kiki.Theme.rowHeight)), Math.ceil(height / Kiki.Theme.rowHeight) + 1)
-                        Connections { target: modelData.cache; function onReset() { list.forceLayout() } function onSpliced(ops) { root.spliceColumn(list.colIndex, ops) } }
+                        Connections { target: modelData.cache; function onReset() { list.forceLayout(); Qt.callLater(root.recheckSelection, list.colIndex) } function onDoneChanged() { if (modelData.cache.done) Qt.callLater(root.recheckSelection, list.colIndex) } function onSpliced(ops) { root.spliceColumn(list.colIndex, ops) } }
                         // A living column handed another folder starts at its top.
                         readonly property var shown: modelData.cache
                         onShownChanged: positionViewAtBeginning()
@@ -473,7 +535,7 @@ Item {
                             onIndexChanged: r = cache ? cache.row(index) : null
                             property bool sel: index === modelData.selected
                             // The focused column shows its selection in the accent; the others in grey.
-                            property bool active: sel && list.colIndex === root.focusCol
+                            property bool active: sel && list.colIndex === root.focusCol && (!root.pane || root.pane.focused)
                             width: list.width; height: Kiki.Theme.rowHeight
                             color: "transparent"
                             property color fg: active ? Kiki.Theme.bg : Kiki.Theme.fgDim

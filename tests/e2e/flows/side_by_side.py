@@ -375,6 +375,34 @@ def run(ctx):
             c.check("with the server on the right and its location's local folder on the left",
                     st.get("rightUri") == remote and st.get("leftUri") == local, st)
         sh.call("dismiss")
+
+        # ---------------------------------------------------------- the info popover (0.1.1)
+        # In side by side the info panel is a card on the selected row of the focused pane — not
+        # the docked panel, which used to be laid out past the window's edge here.
+        sh.call("focusPane", "left")
+        sh.open(src)
+        if not sh.state().get("split"):
+            sh.call("split", "on")
+            sh.wait_state(lambda s: s.get("split") is True)
+        sh.call("focusPane", "right"); sh.open(dst)
+        sh.call("focusPane", "left")
+        if c.check("a file is chosen on the left", sh.select("one.txt") is not None, sh.state()):
+            sh.call("inspector", "on")
+            up = sh.wait_state(lambda s: s.get("infoPopover") is True)
+            c.check("Ctrl+I in side by side puts the info up as a popover", up is not None, sh.state())
+            card, left = sh.wait_geometry("info-popover"), sh.geometry("pane-left")
+            c.check("beside the focused pane, to its right", card is not None and left is not None
+                    and card["x"] >= left["x"] + left["w"], (card, left))
+            c.check("with its pointer on the row", sh.wait_geometry("info-popover-pointer") is not None, sh.state())
+            sh.call("focusPane", "right")
+            sh.select("here.txt")
+            right = sh.geometry("pane-right")
+            c.check("the focus moving to the right pane puts the card to its left, over the left pane",
+                    wait_for(lambda: (lambda g: g if g and right and g["x"] + g["w"] <= right["x"] else None)(sh.geometry("info-popover"))) is not None, (sh.geometry("info-popover"), right))
+            sh.keys(("Escape",))
+            c.check("Escape closes it", sh.wait_state(lambda s: s.get("infoPopover") is False) is not None, sh.state())
+        sh.call("split", "off")
+        sh.call("dismiss")
     finally:
         # Neither pane may be left standing on a server that is about to stop answering.
         for side in ("right", "left"):

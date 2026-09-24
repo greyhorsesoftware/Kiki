@@ -31,7 +31,7 @@ Item {
 
     anchors.fill: parent
     // Anywhere else closes it.
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: pop.close() }
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onPressed: pop.close(); onWheel: wheel => wheel.accepted = true }
 
     Rectangle {
         id: card
@@ -41,9 +41,10 @@ Item {
         x: Math.max(8, Math.min(pop.width - width - 8, pop.aimX - width + 28))
         y: pop.aimY - height - 10
         radius: 12; color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
-        Frost { anchors.fill: parent; radius: parent.radius; z: -2 }
+        // Darker than the default frost (owner, 2026-09-24): the entries are read against it.
+        Frost { anchors.fill: parent; radius: parent.radius; tintOpacity: 0.92; z: -2 }
         // Swallows what lands on the card, so only a click OUTSIDE closes.
-        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
 
         // The point, sliding along the bottom edge to stay on the orb but never into a corner.
         Rectangle {

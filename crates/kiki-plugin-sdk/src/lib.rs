@@ -411,6 +411,16 @@ fn emit(out: &Shared, v: &Value) -> io::Result<()> {
 /// For a plugin's own lines in a job's log: `sdk::log::info!(target: "kiki", …)`.
 pub use log;
 
+/// The wire: one line for what was asked of the server and one for what it answered, under the
+/// target `wire`, for the location's connection log (owner, 2026-09-24: "can we get commands
+/// sent/received to the connection log?"). `→` is ours, `←` the server's. Heard whether or not
+/// a job is running — this is what the connection log is for — so a plugin says one line per
+/// request, never one per chunk: a download is its OPEN and its total, not every READ.
+#[macro_export]
+macro_rules! wire {
+    ($($arg:tt)*) => { $crate::log::debug!(target: "wire", $($arg)*) };
+}
+
 /// What the libraries under a plugin say as they work — russh, suppaftp, rustls, all through the
 /// `log` facade — sent to the daemon as `Log` events, so that a job's log can show what the SSH or
 /// FTP library was doing when a transfer went wrong. Nobody was listening before: every line was
@@ -418,6 +428,10 @@ pub use log;
 ///
 /// - **Level**: `Debug` while a job's session is open on this plugin, `Info` otherwise, and never
 ///   `Trace` — russh's trace level is packet dumps, enough to slow a transfer and drown the rest.
+///   Two exceptions, for the connection log: the `wire` target (`sdk::wire!`, the plugin's own
+///   account of each request and answer) is heard at `Debug` always, and suppaftp's `Trace` is
+///   heard for its two control-channel lines only (`CC OUT: PASV`, `CC IN: …` as bytes), which
+///   are turned into `wire` lines — FTP's wire is the library's to see, and it does say it.
 /// - **Whose line**: the role of the session the calling thread is serving (`current_role`). A
 ///   library's own background threads serve nobody; their lines carry no role and the daemon
 ///   files them by which jobs were using the plugin at the time.
@@ -430,6 +444,7 @@ pub mod liblog {
 
     static SINK: OnceLock<Arc<Shared>> = OnceLock::new();
     static JOB_SESSIONS: AtomicUsize = AtomicUsize::new(0);
+    static LAST_WIRE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
     struct Forward;
     static FORWARD: Forward = Forward;
 
@@ -441,7 +456,9 @@ pub mod liblog {
             return;
         }
         if SINK.set(Arc::clone(out)).is_ok() && log::set_logger(&FORWARD).is_ok() {
-            log::set_max_level(log::LevelFilter::Debug);
+            // Trace so that suppaftp's control channel reaches `enabled`; everyone else's
+            // trace is refused there, before the line is formatted.
+            log::set_max_level(log::LevelFilter::Trace);
         }
     }
 
@@ -462,10 +479,28 @@ pub mod liblog {
 
     fn wanted(level: log::Level, target: &str) -> bool {
         let crate_name = target.split("::").next().unwrap_or(target);
+        if target == "wire" {
+            return level <= log::Level::Debug;
+        }
+        if level == log::Level::Trace {
+            return crate_name == "suppaftp";
+        }
         if WIRE_LEVEL.contains(&crate_name) {
             return level <= log::Level::Info;
         }
         level <= if JOB_SESSIONS.load(Ordering::Relaxed) > 0 { log::Level::Debug } else { log::Level::Info }
+    }
+
+    /// suppaftp's trace of its control channel, as a wire line: `CC OUT: PASV` is what we sent,
+    /// `CC IN: [50, 50, 55, …]` (the bytes of the reply line, as Rust prints a `Vec<u8>`) is what
+    /// came back. Anything else it traces is not the wire.
+    fn ftp_wire(msg: &str) -> Option<String> {
+        if let Some(cmd) = msg.strip_prefix("CC OUT: ") {
+            return Some(format!("→ {}", cmd.trim_end()));
+        }
+        let bytes = msg.strip_prefix("CC IN: ")?.trim().strip_prefix('[')?.strip_suffix(']')?;
+        let line: Vec<u8> = bytes.split(',').filter_map(|b| b.trim().parse().ok()).collect();
+        Some(format!("← {}", String::from_utf8_lossy(&line).trim_end()))
     }
 
     /// A secret is what follows `PASS ` (the FTP command, as the protocol spells it) or what
@@ -505,8 +540,21 @@ pub mod liblog {
                 return;
             }
             let Some(out) = SINK.get() else { return };
+            let (level, target, message) = if r.level() == log::Level::Trace {
+                // suppaftp's control channel (the only trace let through), as the wire. It
+                // traces a reply's first line twice; the second is dropped here.
+                let Some(line) = ftp_wire(&r.args().to_string()) else { return };
+                let mut last = LAST_WIRE.lock().unwrap();
+                if *last == line {
+                    return;
+                }
+                *last = line.clone();
+                ("debug".to_string(), "wire", line)
+            } else {
+                (r.level().as_str().to_ascii_lowercase(), r.target(), r.args().to_string())
+            };
             let role = super::ROLE.with(|x| x.borrow().clone());
-            let line = Value::obj().s("event", "Log").s("level", r.level().as_str().to_ascii_lowercase()).s("target", r.target()).s("message", redact(&r.args().to_string())).s("role", role).done();
+            let line = Value::obj().s("event", "Log").s("level", level).s("target", target).s("message", redact(&message)).s("role", role).done();
             let _ = emit(out, &line);
         }
         fn flush(&self) {}
@@ -514,7 +562,23 @@ pub mod liblog {
 
     #[cfg(test)]
     mod tests {
-        use super::redact;
+        use super::{ftp_wire, redact, wanted};
+        #[test]
+        fn suppaftps_control_channel_is_the_wire() {
+            assert_eq!(ftp_wire("CC OUT: PASV\r\n").as_deref(), Some("→ PASV"));
+            assert_eq!(ftp_wire("CC IN: [50, 50, 55, 32, 79, 75, 13, 10]").as_deref(), Some("← 227 OK"));
+            assert_eq!(ftp_wire("Code parsed from response: 227 (227)"), None);
+            // The password goes out as `PASS x`: redacted like every line, after the arrow.
+            assert_eq!(redact(&ftp_wire("CC OUT: PASS hunter2").unwrap()), "→ PASS [redacted]");
+        }
+        #[test]
+        fn the_wire_is_heard_without_a_job_and_trace_is_suppaftps_alone() {
+            assert!(wanted(log::Level::Debug, "wire"));
+            assert!(wanted(log::Level::Trace, "suppaftp::sync_ftp"));
+            assert!(!wanted(log::Level::Trace, "russh::client"), "russh's trace is packet dumps");
+            assert!(!wanted(log::Level::Debug, "russh_sftp::protocol"), "packet type numbers are not the story");
+            assert!(!wanted(log::Level::Debug, "kiki"), "a plugin's own debug waits for a job");
+        }
         #[test]
         fn secrets_do_not_leave_the_plugin() {
             assert_eq!(redact("CMD PASS hunter2"), "CMD PASS [redacted]");

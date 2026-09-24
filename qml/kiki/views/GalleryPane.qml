@@ -585,7 +585,7 @@ Item {
                 transform: Translate { y: 13 }
                 color: index === root.current ? Kiki.Theme.surface : Qt.rgba(1, 1, 1, 0.03)
                 border.width: index === root.current ? 2 : 1
-                border.color: index === root.current ? Kiki.Theme.accent : Qt.rgba(1, 1, 1, 0.05)
+                border.color: index === root.current ? (root.pane && !root.pane.focused ? Kiki.Theme.gutter : Kiki.Theme.accent) : Qt.rgba(1, 1, 1, 0.05)
                 // The one on the stage comes forward a little and its neighbours step back; both
                 // ease, so stepping along the strip is a movement and not a blink.
                 readonly property bool current: index === root.current

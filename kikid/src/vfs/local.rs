@@ -143,9 +143,24 @@ fn scan_impl(h: &DirHandle, sink: &mut dyn FnMut(Vec<RawEntry>)) -> Result<usize
 
 #[cfg(target_os = "linux")]
 fn stat_impl(h: &DirHandle, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
-    use rustix::fs::{statx, AtFlags, StatxFlags};
-    let mask = StatxFlags::SIZE | StatxFlags::MTIME | StatxFlags::ATIME | StatxFlags::MODE | StatxFlags::TYPE | StatxFlags::UID | StatxFlags::GID;
-    let st = statx(&h.file, name, AtFlags::SYMLINK_NOFOLLOW | AtFlags::STATX_DONT_SYNC, mask).map_err(|e| std::io::Error::from_raw_os_error(e.raw_os_error()))?;
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::io::AsRawFd;
+    // A name with a NUL in it is no name the kernel could have given us: refused the way the
+    // syscall itself would refuse it, not by panicking in the stat pool.
+    let c_name = std::ffi::CString::new(name.as_bytes()).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    let mask = libc::STATX_SIZE | libc::STATX_MTIME | libc::STATX_ATIME | libc::STATX_MODE | libc::STATX_TYPE | libc::STATX_UID | libc::STATX_GID;
+    // DONT_SYNC: a network filesystem may answer from its cache rather than round-trip for every
+    // row. The mask names the fields read below; the kernel is free to fill more.
+    let flags = libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_DONT_SYNC;
+    // `struct statx` is plain integers, so all-zero is a value the kernel can write over; the name
+    // is NUL-terminated and the directory fd is held open by `h` for the whole call.
+    let st = unsafe {
+        let mut st: libc::statx = std::mem::zeroed();
+        if libc::statx(h.file.as_raw_fd(), c_name.as_ptr(), flags, mask, &mut st) < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        st
+    };
     let mtime_ms = if st.stx_mtime.tv_sec <= 0 { 0 } else { st.stx_mtime.tv_sec as u64 * 1000 + (st.stx_mtime.tv_nsec / 1_000_000) as u64 };
     let atime_ms = if st.stx_atime.tv_sec <= 0 { 0 } else { st.stx_atime.tv_sec as u64 * 1000 + (st.stx_atime.tv_nsec / 1_000_000) as u64 };
     let mode = st.stx_mode as u32;

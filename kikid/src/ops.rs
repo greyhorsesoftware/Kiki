@@ -230,17 +230,51 @@ pub fn move_path(src: &Path, dst: &Path, p: &mut Progress) -> Result<()> {
     }
 }
 
-pub fn chmod(path: &Path, mode: u32, recursive: bool, out: &mut Vec<(PathBuf, u32)>) -> Result<()> {
+/// Sets the bits `mask` names to `bits`, leaving the rest as the file has them:
+/// `(old & !mask) | (bits & mask)`, in the 0o7777 space. A whole mode is `mask = 0o7777`. With
+/// `recursive`, everything under a folder too; a symlink is left alone. Every path that was
+/// changed goes to `out` with the mode it had — only once it has changed, so that a walk that
+/// stops half way says exactly what to put back. With `failed`, a path that cannot be changed
+/// (gone, denied, a folder that cannot be read) is noted and the rest go on; without, the
+/// first error ends it.
+pub fn chmod(path: &Path, mask: u32, bits: u32, recursive: bool, out: &mut Vec<(PathBuf, u32)>, mut failed: Option<&mut Vec<(PathBuf, String)>>) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let md = fs::symlink_metadata(path)?;
+    let excuse = |at: &Path, e: VfsError, failed: &mut Option<&mut Vec<(PathBuf, String)>>| match failed.as_mut() {
+        Some(list) => {
+            list.push((at.to_path_buf(), e.message()));
+            Ok(())
+        }
+        None => Err(e),
+    };
+    let md = match fs::symlink_metadata(path) {
+        Ok(md) => md,
+        Err(e) => return excuse(path, e.into(), &mut failed),
+    };
     if md.file_type().is_symlink() {
         return Ok(());
     }
-    out.push((path.to_path_buf(), md.permissions().mode() & 0o7777));
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    let old = md.permissions().mode() & 0o7777;
+    let new = (old & !mask) | (bits & mask);
+    if new != old {
+        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(new)) {
+            return excuse(path, e.into(), &mut failed);
+        }
+        out.push((path.to_path_buf(), old));
+    }
     if recursive && md.is_dir() {
-        for e in fs::read_dir(path)? {
-            chmod(&e?.path(), mode, true, out)?;
+        let entries = match fs::read_dir(path) {
+            Ok(rd) => rd,
+            Err(e) => return excuse(path, e.into(), &mut failed),
+        };
+        for e in entries {
+            let child = match e {
+                Ok(e) => e.path(),
+                Err(e) => {
+                    excuse(path, e.into(), &mut failed)?;
+                    continue;
+                }
+            };
+            chmod(&child, mask, bits, true, out, failed.as_deref_mut())?;
         }
     }
     Ok(())
@@ -452,8 +486,23 @@ mod tests {
         assert!(d.join("moved/a.txt").exists());
         assert_eq!(unique_name(&d.join("moved"), "a.txt"), "a (2).txt");
         let mut undo = Vec::new();
-        chmod(&d.join("moved"), 0o700, true, &mut undo).unwrap();
+        chmod(&d.join("moved"), 0o7777, 0o700, true, &mut undo, None).unwrap();
         assert_eq!(undo.len(), 4); // moved/, a.txt, sub/, sub/b.txt
+
+        // The masked form touches only the bits named: group read on, nothing else moved.
+        let mut masked = Vec::new();
+        chmod(&d.join("moved"), 0o070, 0o040, true, &mut masked, None).unwrap();
+        assert_eq!(masked.iter().map(|(_, m)| *m).collect::<Vec<_>>(), vec![0o700; 4], "each records the mode it had");
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&fs::metadata(d.join("moved/a.txt")).unwrap().permissions()) & 0o7777, 0o740);
+        // Already so: nothing to do and nothing to put back.
+        let mut again = Vec::new();
+        chmod(&d.join("moved"), 0o070, 0o040, true, &mut again, None).unwrap();
+        assert!(again.is_empty());
+        // A path that is not there is an error without a list to note it in, and a note with one.
+        assert!(chmod(&d.join("never-was"), 0o7777, 0o644, false, &mut again, None).is_err());
+        let mut failed = Vec::new();
+        chmod(&d.join("never-was"), 0o7777, 0o644, false, &mut again, Some(&mut failed)).unwrap();
+        assert_eq!(failed.len(), 1);
         std::env::remove_var("KIKI_TRASH_DIR");
         fs::remove_dir_all(&d).unwrap();
     }

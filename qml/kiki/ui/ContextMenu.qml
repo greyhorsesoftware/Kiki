@@ -58,17 +58,20 @@ Item {
     property string subLabel: ""
     property real subY: 0
 
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton | Qt.RightButton; onClicked: menu.close() }
+    // The scrim takes every pointer event — hover and wheel included: with a menu up the rows
+    // under it used to light as the pointer crossed them (owner, 2026-09-24: "mouse events
+    // should not go to views below").
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onClicked: menu.close(); onWheel: wheel => wheel.accepted = true }
 
     Rectangle {
         id: box
         width: 232; height: col.height + 8; radius: 2
         color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
-        Frost { anchors.fill: parent; radius: parent.radius; z: -1 }
+        Frost { anchors.fill: parent; radius: parent.radius; tintOpacity: 0.92; z: -1 }
         onHeightChanged: if (menu.visible) menu.place()
         focus: true
         Keys.onEscapePressed: menu.close()
-        MouseArea { anchors.fill: parent }          // clicks in the box never reach the scrim
+        MouseArea { anchors.fill: parent; hoverEnabled: true }          // clicks and hover in the box never reach the scrim
 
         Column {
             id: col; y: 4; width: parent.width
@@ -126,10 +129,10 @@ Item {
         visible: menu.subItems.length > 0
         width: 232; height: subCol.height + 8; radius: 2
         color: "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
-        Frost { anchors.fill: parent; radius: parent.radius; z: -1 }
+        Frost { anchors.fill: parent; radius: parent.radius; tintOpacity: 0.92; z: -1 }
         x: Math.min(box.x + box.width - 2, menu.width - width - 4)
         y: Math.max(0, Math.min(box.y + menu.subY, menu.height - height - 4))
-        MouseArea { anchors.fill: parent }
+        MouseArea { anchors.fill: parent; hoverEnabled: true }
         Column {
             id: subCol; y: 4; width: parent.width
             Repeater {

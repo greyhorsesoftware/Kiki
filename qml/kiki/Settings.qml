@@ -11,8 +11,20 @@ QtObject {
     function viewPref(uri) { return view.rememberPerFolder ? viewPrefs[uri] || null : null }
     function setViewPref(uri, v, sort, order, hidden) {
         if (!view.rememberPerFolder || !uri) return
+        const was = viewPrefs[uri]
+        if (was && was.view === v && was.sort === sort && was.order === order && was.hidden === hidden) return      // nothing new to write
         const p = Object.assign({}, viewPrefs); p[uri] = { view: v, sort: sort, order: order, hidden: hidden }; viewPrefs = p
+        _written[uri] = true
         Kiki.Daemon.request("SetViewPref", { uri: uri, view: v, sort: sort, order: order, hidden: hidden })
+    }
+    /// Prefs this window wrote and has not yet heard back about: the daemon answers a write with
+    /// `ViewPrefsChanged` for the folder, and every window used to fetch ALL the prefs again for
+    /// it — the writer included, which already knows (2026-09-24). Another window's change is
+    /// still fetched.
+    property var _written: ({})
+    function onViewPrefsChanged(uri) {
+        if (uri && _written[uri]) { delete _written[uri]; return }
+        loadViewPrefs()
     }
     function loadViewPrefs() { Kiki.Daemon.request("ViewPrefs", {}, ok => { if (ok) viewPrefs = ok.folders }) }
     property var timers: ({ toastMs: 8000, searchDebounceMs: 150, mirrorPollMs: 400 })
@@ -52,5 +64,5 @@ QtObject {
         settings[section] = Object.assign({}, settings[section], patch[section])
         Kiki.Daemon.request("SetSettings", { patch: patch })
     }
-    property Connections c: Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) settings.load() } function onEvent(msg) { if (msg.event === "ViewPrefsChanged") settings.loadViewPrefs() } }
+    property Connections c: Connections { target: Kiki.Daemon; function onReadyChanged() { if (Kiki.Daemon.ready) settings.load() } function onEvent(msg) { if (msg.event === "ViewPrefsChanged") settings.onViewPrefsChanged(msg.uri || "") } }
 }

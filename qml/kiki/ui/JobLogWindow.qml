@@ -46,7 +46,7 @@ Rectangle {
     function stamp(t) { const s = Math.max(0, (t - t0) / 1000); return "+" + (s < 100 ? s.toFixed(2) : Math.round(s)) + "s" }
     function asText() { return (dropped ? "… " + dropped + " earlier lines dropped\n" : "") + shownLines.map(l => stamp(l.t) + "  " + l.level.padEnd(5) + "  " + l.source + "  " + l.text).join("\n") + "\n" }
 
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: win.close(); onWheel: wheel => wheel.accepted = true }
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onPressed: win.close(); onWheel: wheel => wheel.accepted = true }
     Keys.onEscapePressed: win.close()
 
     Rectangle {
@@ -54,7 +54,7 @@ Rectangle {
         anchors.centerIn: parent
         width: Math.min(900, parent.width - 48); height: Math.min(620, parent.height - 48)
         radius: 4; color: Kiki.Theme.bg; border.width: 1; border.color: Kiki.Theme.gutter
-        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+        MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true }
 
         Item {
             id: top

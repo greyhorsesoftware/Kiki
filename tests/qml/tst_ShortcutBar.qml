@@ -18,6 +18,37 @@ TestCase {
     // A fresh array each time: the same one again is no change to `keys`, and no reset.
     function init() { bar.width = 360; bar.keys = many.slice(); tryVerify(() => bar.overflow > 0); compare(bar.scroll, 0) }
 
+    // A message takes the keys' place (owner, 2026-09-24): the chips roll up out of the strip,
+    // the message rolls in from below with its Undo, and when it goes they change back.
+    function test_a_message_rolls_the_chips_up_and_takes_their_place() {
+        const chips = findChild(bar, "shortcut-row"), msg = findChild(bar, "bar-toast")
+        const rest = chips.y
+        verify(!msg.visible, "no message: the chips")
+        bar.toast = { text: "Moved 3 items to Trash", undoable: true }
+        tryCompare(bar, "roll", 1, 1000)
+        compare(chips.y, rest - bar.height, "the chips rolled up out of the strip")
+        verify(msg.visible && msg.y >= 0 && msg.y + msg.height <= bar.height, "the message in the strip: " + msg.y)
+        verify(findChild(bar, "toast-undo").visible, "with its Undo")
+        compare(findChild(msg, "toast-undo").visible, true)
+        bar.toast = null
+        tryCompare(bar, "roll", 0, 1000)
+        compare(chips.y, rest, "and back in place")
+        verify(!msg.visible)
+    }
+    function test_undo_and_the_cross_are_the_bars_word() {
+        let undone = 0, dismissed = 0
+        bar.undo.connect(() => undone++); bar.dismiss.connect(() => dismissed++)
+        bar.toast = { text: "Deleted a.txt", undoable: true }
+        tryCompare(bar, "roll", 1, 1000)
+        mouseClick(findChild(bar, "toast-undo"))
+        compare(undone, 1)
+        mouseClick(findChild(bar, "toast-close"))
+        compare(dismissed, 1)
+        bar.toast = { text: "Nothing to undo", undoable: false }
+        tryCompare(bar, "roll", 1, 1000)
+        verify(!findChild(bar, "toast-undo").visible, "an error has no Undo")
+        bar.toast = null; tryCompare(bar, "roll", 0, 1000)
+    }
     function test_at_rest_the_first_chips_show_and_the_last_is_past_the_edge() {
         const row = findChild(bar, "shortcut-row"), view = findChild(bar, "shortcut-chips")
         compare(row.x, 14)

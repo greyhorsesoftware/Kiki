@@ -15,6 +15,10 @@ Rectangle {
     signal removeLocation(string name)
     property string currentUri: ""
     signal open(string uri)
+    /// The rail's first entry: search everywhere (0.1.1). Not a favorite — furniture, like
+    /// Trash and the `+` — and lit while the overlay is up.
+    signal searchRequested()
+    property bool searchOpen: false
     signal addLocation()
     signal dropOn(string uri, var drop)          // files dropped on a favorite or volume
     signal dropOnTrash(var uris)
@@ -27,14 +31,16 @@ Rectangle {
     /// Rail style (Settings → General): a 44px column of icons that widens on hover.
     property bool compact: false
     readonly property bool hovered: railHover.hovered
-    readonly property var entries: favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })).concat([{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }], locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
+    readonly property var entries: [{ kind: "search", uri: "", item: { name: "Search" } }].concat(favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })), [{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }], locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
     function moveKey(delta) { if (!entries.length) return; keyIndex = keyIndex < 0 ? (delta > 0 ? 0 : entries.length - 1) : Math.max(0, Math.min(entries.length - 1, keyIndex + delta)) }
     function activateKey() {
         const e = entries[keyIndex]; if (!e) return
-        if (e.kind === "location") sidebar.openLocation(e.item)
+        if (e.kind === "search") sidebar.searchRequested()
+        else if (e.kind === "location") sidebar.openLocation(e.item)
         else if (!(e.kind === "device" && e.item.busy)) sidebar.open(e.uri)
     }
-    function keyOffset(kind, i) { let o = 0; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += 1; if (kind === "device") o += locations.length; return o + i }
+    // Search is entry 0; everything after it is one further along than it was.
+    function keyOffset(kind, i) { if (kind === "search") return 0; let o = 1; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += 1; if (kind === "device") o += locations.length; return o + i }
     /// A glyph for the well-known folders; anything else keeps the plain folder icon and
     /// leans on its tooltip.
     function favIcon(name) {
@@ -56,130 +62,154 @@ Rectangle {
     color: Kiki.Theme.bgDark
     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
 
-    Column {
-        id: sections
-        width: parent.width; y: 12; spacing: 12
-        // Folders dropped anywhere in Favorites are added to the list. The drop area sits under
-        // the rows, so dropping onto a favourite still copies into that folder.
-        Item {
-            width: parent.width; height: favSection.height
-            // A drop anywhere in Favorites adds to the list at the line shown between the rows.
-            // It never copies into the folder under the pointer: that is what the pane is for.
-            DropArea {
-                id: favDrop
-                anchors.fill: parent; keys: ["text/uri-list"]
-                readonly property int pitch: 31          // SidebarItem's 30px plus the Column's 1px spacing
-                property int insertAt: 0
-                function indexAt(y) { return Math.max(0, Math.min(sidebar.favorites.length, Math.round((y - favSection.headerHeight) / pitch))) }
-                onEntered: drag => insertAt = indexAt(drag.y)
-                onPositionChanged: drag => insertAt = indexAt(drag.y)
-                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.LinkAction); sidebar.addFavorites(urls, insertAt) } }
-            }
-        SidebarSection {
-            id: favSection
-            compact: sidebar.compact
-            title: "Favorites"
-            Repeater {
-                model: sidebar.favorites
-                delegate: SidebarItem {
-                    required property var modelData
-                    required property int index
-                    compact: sidebar.compact
-                    icon: sidebar.favIcon(modelData.name)
-                    // Favourites are furniture: the one you are in is the accent, the rest match.
-                    label: modelData.name
-                    keyed: sidebar.keyIndex === sidebar.keyOffset("favorite", index)
-                    active: sidebar.currentUri === modelData.uri
-                    droppable: false
-                    onClicked: sidebar.open(modelData.uri)
-                    onRightClicked: sidebar.favoriteMenu(index, mapToItem(null, width / 2, height))
-                }
-            }
-        }
-            // The insertion mark: a dot on the left end of a line, centred on the gap the item
-            // would drop into.
-            Item {
-                visible: favDrop.containsDrag
-                x: 10; width: parent.width - 20; height: 8
-                y: favSection.headerHeight + favDrop.insertAt * favDrop.pitch - 4
-                Rectangle {
-                    id: insertDot
-                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                    width: 8; height: 8; radius: 4
-                    color: "transparent"; border.width: 2; border.color: Kiki.Theme.accent
-                }
-                Rectangle {
-                    anchors.left: insertDot.right; anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    height: 2; color: Kiki.Theme.accent
-                }
-            }
-        }
-        SidebarSection {
-            compact: sidebar.compact
-            title: "Locations"; plus: true
-            onPlusClicked: sidebar.addLocation()
+    // Everything on the rail scrolls when the window is too short for it (owner, 2026-09-24:
+    // "the left hand bar icons should go under the bottom bar and allow for scrolling"): the
+    // strip is clipped where the bottom bar begins, and the wheel, or a drag, brings the rest up.
+    Flickable {
+        id: scroller
+        objectName: "sidebar-scroll"
+        anchors.fill: parent; anchors.rightMargin: 1
+        contentWidth: width
+        contentHeight: (devicesCol.visible ? devicesCol.y + devicesCol.height : sections.y + sections.height) + 12
+        clip: true; boundsBehavior: Flickable.StopAtBounds; flickableDirection: Flickable.VerticalFlick
+        // The vertical scrollbar of the panel is the strip's own: no bar, the clip is the hint.
+        Column {
+            id: sections
+            width: parent.width; y: 12; spacing: 12
+            // Search everywhere, above Home (owner, 2026-09-24): the first thing on the rail, on a
+            // line of its own with the sections' gap under it. The toolbar's magnifier went with it.
             SidebarItem {
+                objectName: "sidebar-search"
                 compact: sidebar.compact
-                icon: "trash"; label: "Trash"
-                keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
-                active: sidebar.currentUri.startsWith("trash://")
-                droppable: true
-                onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); sidebar.dropOnTrash(urls) } }
-                onClicked: sidebar.open("trash:///")
+                icon: "search"; label: "Search"; tipText: "Search everywhere · Ctrl+Shift+F"
+                keyed: sidebar.keyIndex === 0
+                active: sidebar.searchOpen
+                droppable: false
+                onClicked: sidebar.searchRequested()
             }
-            Repeater {
-                model: sidebar.locations
-                delegate: SidebarItem {
-                    required property var modelData
-                    required property int index
-                    compact: sidebar.compact
-                    keyed: sidebar.keyIndex === sidebar.keyOffset("location", index)
-                    icon: "server"
-                    image: modelData.image || ""
-                    dot: modelData.connected ? Kiki.Theme.green : "transparent"
-                    label: modelData.name + " · " + modelData.plugin
-                    active: sidebar.currentUri.startsWith(modelData.plugin + "://" + modelData.name)
-                    onClicked: sidebar.openLocation(modelData)
-                    onRightClicked: sidebar.editLocation(modelData)
+            // Folders dropped anywhere in Favorites are added to the list. The drop area sits under
+            // the rows, so dropping onto a favourite still copies into that folder.
+            Item {
+                width: parent.width; height: favSection.height
+                // A drop anywhere in Favorites adds to the list at the line shown between the rows.
+                // It never copies into the folder under the pointer: that is what the pane is for.
+                DropArea {
+                    id: favDrop
+                    anchors.fill: parent; keys: ["text/uri-list"]
+                    readonly property int pitch: 31          // SidebarItem's 30px plus the Column's 1px spacing
+                    property int insertAt: 0
+                    function indexAt(y) { return Math.max(0, Math.min(sidebar.favorites.length, Math.round((y - favSection.headerHeight) / pitch))) }
+                    onEntered: drag => insertAt = indexAt(drag.y)
+                    onPositionChanged: drag => insertAt = indexAt(drag.y)
+                    onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.LinkAction); sidebar.addFavorites(urls, insertAt) } }
+                }
+            SidebarSection {
+                id: favSection
+                compact: sidebar.compact
+                title: "Favorites"
+                Repeater {
+                    model: sidebar.favorites
+                    delegate: SidebarItem {
+                        required property var modelData
+                        required property int index
+                        compact: sidebar.compact
+                        icon: sidebar.favIcon(modelData.name)
+                        // Favourites are furniture: the one you are in is the accent, the rest match.
+                        label: modelData.name
+                        keyed: sidebar.keyIndex === sidebar.keyOffset("favorite", index)
+                        active: sidebar.currentUri === modelData.uri
+                        droppable: false
+                        onClicked: sidebar.open(modelData.uri)
+                        onRightClicked: sidebar.favoriteMenu(index, mapToItem(null, width / 2, height))
+                    }
                 }
             }
-            // The section header carries the +, and the rail has no headers.
-            SidebarItem {
-                visible: sidebar.compact
-                compact: true
-                icon: "plus"; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
-                onClicked: sidebar.addLocation()
+                // The insertion mark: a dot on the left end of a line, centred on the gap the item
+                // would drop into.
+                Item {
+                    visible: favDrop.containsDrag
+                    x: 10; width: parent.width - 20; height: 8
+                    y: favSection.headerHeight + favDrop.insertAt * favDrop.pitch - 4
+                    Rectangle {
+                        id: insertDot
+                        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                        width: 8; height: 8; radius: 4
+                        color: "transparent"; border.width: 2; border.color: Kiki.Theme.accent
+                    }
+                    Rectangle {
+                        anchors.left: insertDot.right; anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: 2; color: Kiki.Theme.accent
+                    }
+                }
+            }
+            SidebarSection {
+                compact: sidebar.compact
+                title: "Locations"; plus: true
+                onPlusClicked: sidebar.addLocation()
+                SidebarItem {
+                    compact: sidebar.compact
+                    icon: "trash"; label: "Trash"
+                    keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
+                    active: sidebar.currentUri.startsWith("trash://")
+                    droppable: true
+                    onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.MoveAction); sidebar.dropOnTrash(urls) } }
+                    onClicked: sidebar.open("trash:///")
+                }
+                Repeater {
+                    model: sidebar.locations
+                    delegate: SidebarItem {
+                        required property var modelData
+                        required property int index
+                        compact: sidebar.compact
+                        keyed: sidebar.keyIndex === sidebar.keyOffset("location", index)
+                        icon: "server"
+                        image: modelData.image || ""
+                        dot: modelData.connected ? Kiki.Theme.green : "transparent"
+                        label: modelData.name + " · " + modelData.plugin
+                        active: sidebar.currentUri.startsWith(modelData.plugin + "://" + modelData.name)
+                        onClicked: sidebar.openLocation(modelData)
+                        onRightClicked: sidebar.editLocation(modelData)
+                    }
+                }
+                // The section header carries the +, and the rail has no headers.
+                SidebarItem {
+                    visible: sidebar.compact
+                    compact: true
+                    icon: "plus"; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
+                    onClicked: sidebar.addLocation()
+                }
             }
         }
-    }
-    // Devices (plan 17): present only while a phone or camera is plugged in.
-    Column {
-        anchors.top: sections.bottom; anchors.topMargin: 12; width: parent.width; spacing: 12
-        visible: sidebar.devices.length > 0
-        SidebarSection {
-            compact: sidebar.compact
-            title: "Devices"
-            Repeater {
-                model: sidebar.devices
-                delegate: SidebarItem {
-                    id: devItem
-                    required property var modelData
-                    required property int index
-                    keyed: sidebar.keyIndex === sidebar.keyOffset("device", index)
-                    icon: modelData.kind === "ptp" ? "image" : "phone"; iconColor: modelData.busy ? Kiki.Theme.yellow : (modelData.connected ? Kiki.Theme.green : Kiki.Theme.fgDim)
-                    label: modelData.name + (modelData.busy ? "  ·  in use by " + modelData.busy : "")
-                    active: sidebar.currentUri.startsWith(modelData.uri.replace(/\/$/, ""))
-                    droppable: !modelData.busy
-                    onDropped: drop => sidebar.dropOn(modelData.uri, drop)
-                    onClicked: if (!modelData.busy) sidebar.open(modelData.uri)
-                    onRightClicked: sidebar.deviceMenu(modelData)
-                    // eject on hover
-                    Rectangle {
-                        anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter; width: 20; height: 20; radius: 2
-                        visible: devItem.hovered || ejectHover.containsMouse; color: ejectHover.containsMouse ? Kiki.Theme.surface : "transparent"
-                        Icon { anchors.centerIn: parent; name: "eject"; size: 12; color: Kiki.Theme.fgDim }
-                        MouseArea { id: ejectHover; anchors.fill: parent; hoverEnabled: true; onClicked: sidebar.ejectDevice(modelData) }
+        // Devices (plan 17): present only while a phone or camera is plugged in.
+        Column {
+            id: devicesCol
+            anchors.top: sections.bottom; anchors.topMargin: 12; width: parent.width; spacing: 12
+            visible: sidebar.devices.length > 0
+            SidebarSection {
+                compact: sidebar.compact
+                title: "Devices"
+                Repeater {
+                    model: sidebar.devices
+                    delegate: SidebarItem {
+                        id: devItem
+                        required property var modelData
+                        required property int index
+                        keyed: sidebar.keyIndex === sidebar.keyOffset("device", index)
+                        icon: modelData.kind === "ptp" ? "image" : "phone"; iconColor: modelData.busy ? Kiki.Theme.yellow : (modelData.connected ? Kiki.Theme.green : Kiki.Theme.fgDim)
+                        label: modelData.name + (modelData.busy ? "  ·  in use by " + modelData.busy : "")
+                        active: sidebar.currentUri.startsWith(modelData.uri.replace(/\/$/, ""))
+                        droppable: !modelData.busy
+                        onDropped: drop => sidebar.dropOn(modelData.uri, drop)
+                        onClicked: if (!modelData.busy) sidebar.open(modelData.uri)
+                        onRightClicked: sidebar.deviceMenu(modelData)
+                        // eject on hover
+                        Rectangle {
+                            anchors.right: parent.right; anchors.rightMargin: 6; anchors.verticalCenter: parent.verticalCenter; width: 20; height: 20; radius: 2
+                            visible: devItem.hovered || ejectHover.containsMouse; color: ejectHover.containsMouse ? Kiki.Theme.surface : "transparent"
+                            Icon { anchors.centerIn: parent; name: "eject"; size: 12; color: Kiki.Theme.fgDim }
+                            MouseArea { id: ejectHover; anchors.fill: parent; hoverEnabled: true; onClicked: sidebar.ejectDevice(modelData) }
+                        }
                     }
                 }
             }

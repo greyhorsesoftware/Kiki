@@ -136,14 +136,15 @@ TestCase {
         shell.inspectorRequested = false
     }
 
-    // The hamburger's menu carries every button it hides: search, info, side by side when it is
-    // offered, the views as a submenu, favorites, and the gear's rows.
+    // The hamburger's menu carries every button it hides: info, side by side when it is
+    // offered, the views as a submenu, favorites, and the gear's rows. Search is the rail's
+    // (0.1.1), not a toolbar button, so it is not here either.
     function test_the_hamburger_menu_carries_every_folded_button() {
         shell.sideBySide = false
         shell.inspectorRequested = false
         let labels = shell.hamburgerItems().map(i => i.label)
-        compare(labels.filter(l => l.indexOf("favorites") < 0), ["Search everywhere…", "Show info", "View", "Settings…", "Keyboard shortcuts…", "About kiki…"])
-        verify(labels.indexOf("Search everywhere…") === 0)
+        compare(labels.filter(l => l.indexOf("favorites") < 0), ["Show info", "View", "Settings…", "Keyboard shortcuts…", "About kiki…"])
+        verify(labels.indexOf("Search everywhere…") < 0, "search is the rail's, not the toolbar's")
         verify(labels.indexOf("Side by Side") < 0, "offered with no server open")
         const view = shell.hamburgerItems().find(i => i.label === "View")
         verify(view.items.length >= 4, "the views are a submenu: " + view.items.map(i => i.label))

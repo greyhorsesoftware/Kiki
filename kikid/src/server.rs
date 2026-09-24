@@ -133,8 +133,15 @@ impl Client {
     }
 
     fn handle(&mut self, req: Request) {
+        static TRACE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("KIKI_TRACE").is_some_and(|v| v == "1"));
         let id = req.id;
         let b = &req.body;
+        // `KIKI_TRACE=1`: every request, by client, on stderr — for the stray request nobody can
+        // otherwise place (a remote file listed as a folder at a daemon start, 2026-09-24).
+        if *TRACE {
+            let t = crate::json::to_string(b);
+            eprintln!("[req] client {} {} {}", self.id, req.kind, &t[..t.len().min(240)]);
+        }
         let result: Result<Option<Value>, (&str, String)> = match req.kind.as_str() {
             "Hello" => {
                 // A client built for another protocol is told so, in words it can show, instead of

@@ -782,6 +782,11 @@ fn copy_inverse(created: &[PathBuf]) -> Value {
     Value::obj().s("op", "delete").v("items", uri_list(created)).b("_silent", true).done()
 }
 
+/// Each path a chmod changed, with the mode it had: `chmodList` puts them all back in one job.
+fn chmod_inverse(prev: &[(PathBuf, u32)]) -> Value {
+    Value::obj().s("op", "chmodList").v("list", Value::Arr(prev.iter().map(|(p, m)| Value::Arr(vec![Value::Str(Uri::from_path(p).to_string()), Value::Uint(u64::from(*m))])).collect())).done()
+}
+
 fn move_inverse(moved: &[(PathBuf, PathBuf)]) -> Value {
     let back = |(from, to): &(PathBuf, PathBuf)| Value::Arr(vec![Value::Str(Uri::from_path(to).to_string()), Value::Str(Uri::from_path(from).to_string())]);
     Value::obj().s("op", "movePairs").v("pairs", Value::Arr(moved.iter().map(back).collect())).done()
@@ -995,17 +1000,45 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
         }
         "chmod" => {
             let items = uris(op, "items")?;
-            let mode = op.u64_field("mode").ok_or(VfsError::Io("missing mode".into()))? as u32;
+            // Two forms. `mask` and `bits`: the bits named by the mask are set to `bits`, and the
+            // rest stay as each file has them — one job over a selection (0.1.1 plan 01), the
+            // Permissions grid's touched boxes and nothing else. `mode` alone: the whole word,
+            // which is a mask of 0o7777.
+            let (mask, bits) = match (op.u64_field("mask"), op.u64_field("bits"), op.u64_field("mode")) {
+                (Some(mask), Some(bits), _) => (mask as u32 & 0o7777, bits as u32 & 0o7777),
+                (None, None, Some(mode)) => (0o7777, mode as u32 & 0o7777),
+                (Some(_), None, _) | (None, Some(_), _) => return Err(VfsError::Io("mask and bits go together".into())),
+                _ => return Err(VfsError::Io("missing mode".into())),
+            };
             let recursive = op.get("recursive").and_then(Value::as_bool).unwrap_or(false);
             let mut prev = Vec::new();
+            // What could not be changed, noted so that the rest goes on (as a copy carries on
+            // past a file it cannot read).
+            let mut failed: Vec<(PathBuf, String)> = Vec::new();
             // As it goes, item by item — not one jump to the end once it is all over.
             job.set_totals(items.len() as u64, 0);
             for p in &items {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
                 job.file_started(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), 0);
-                ops::chmod(p, mode, recursive, &mut prev)?;
+                ops::chmod(p, mask, bits, recursive, &mut prev, Some(&mut failed))?;
+                if !prev.is_empty() {
+                    job.undo_so_far(chmod_inverse(&prev));
+                }
                 job.progress(1, 0);
             }
-            Some(Value::obj().s("op", "chmodList").v("list", Value::Arr(prev.iter().map(|(p, m)| Value::Arr(vec![Value::Str(Uri::from_path(p).to_string()), Value::Uint(*m as u64)])).collect())).done())
+            if !failed.is_empty() {
+                // Fail at the end, saying which; the partial inverse (`undo_so_far`) is what the
+                // journal gets, so what did change can still be put back.
+                for (path, why) in &failed {
+                    crate::joblog::say(job.id, "error", format!("{}: {why}", path.display()));
+                }
+                let first: Vec<String> = failed.iter().take(3).map(|(p, why)| format!("{} ({why})", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).collect();
+                let more = if failed.len() > 3 { format!(", and {} more — see the log", failed.len() - 3) } else { String::new() };
+                return Err(VfsError::Io(format!("{} of {} could not be changed: {}{more}", failed.len(), items.len().max(prev.len() + failed.len()), first.join(", "))));
+            }
+            Some(chmod_inverse(&prev))
         }
         "chmodList" => {
             use std::os::unix::fs::PermissionsExt;
@@ -1428,6 +1461,148 @@ mod tests {
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("dst/site").exists(), "and undo takes back what did arrive");
         std::fs::set_permissions(d.join("site/locked.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    // ---------------------------------------------------------------- chmod over a selection
+
+    fn mode_of(p: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(p).unwrap().permissions().mode() & 0o7777
+    }
+
+    fn set_mode(p: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    /// The journal's newest entry: what an undo would run.
+    fn last_inverse() -> Value {
+        queue().lock().unwrap().journal.last().and_then(|e| e.get("inverse").cloned()).expect("a journal entry")
+    }
+
+    /// One job for the selection (0.1.1 plan 01): the bits the mask names are set on every
+    /// item and the rest are left as each file has them, one undo puts every mode back, and
+    /// redo sets them again.
+    #[test]
+    fn a_masked_chmod_touches_only_the_named_bits_and_one_undo_puts_them_all_back() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-mask-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        let files = ["a.txt", "b.sh", "c.key"];
+        let was = [0o644u32, 0o755, 0o600];
+        for (name, mode) in files.iter().zip(was) {
+            std::fs::write(d.join(name), b"x").unwrap();
+            set_mode(&d.join(name), mode);
+        }
+        let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
+        let modes = || files.map(|n| mode_of(&d.join(n)));
+        let (tx, rx) = mpsc::channel();
+        subscribe(tx.clone());
+
+        // Group write on: the mask names one bit, `bits` sets it.
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&files)).u("mask", 0o010).u("bits", 0o010).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), [0o654, 0o755, 0o610], "the one bit moved and nothing else did");
+        let events: Vec<Value> = rx.try_iter().filter(|e| e.str_field("event") == Some("JobEvent")).filter_map(|e| e.get("job").cloned()).filter(|j| j.u64_field("id") == Some(id)).collect();
+        let last = events.last().unwrap();
+        assert_eq!((last.u64_field("done"), last.u64_field("total")), (Some(3), Some(3)), "counted per item");
+        assert_eq!(last.str_field("title"), Some("Change permissions of 3 items"));
+        assert_eq!((last.str_field("name"), last.u64_field("count")), (Some("a.txt"), Some(3)));
+        // The inverse is every mode that was changed, as it was: b.sh already had the bit and
+        // is not in it.
+        let inv = last_inverse();
+        assert_eq!(inv.str_field("op"), Some("chmodList"));
+        let listed: Vec<(String, u64)> = inv.get("list").unwrap().as_arr().unwrap().iter().map(|e| (e.as_arr().unwrap()[0].as_str().unwrap().to_string(), e.as_arr().unwrap()[1].as_u64().unwrap())).collect();
+        assert_eq!(listed, vec![(Uri::from_path(&d.join("a.txt")).to_string(), 0o644), (Uri::from_path(&d.join("c.key")).to_string(), 0o600)]);
+
+        let uid = undo(Some(tx.clone())).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), was, "one undo puts all three back");
+        let rid = redo(Some(tx.clone())).unwrap();
+        assert_eq!(wait(rid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), [0o654, 0o755, 0o610], "and redo sets them again");
+        let uid = undo(Some(tx.clone())).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), was);
+
+        // The older form, one file and a whole mode, is a mask of everything.
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mode", 0o600).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), [0o600, 0o755, 0o600]);
+        let uid = undo(Some(tx.clone())).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!(modes(), was);
+        // Half of the pair is a request that cannot mean anything.
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mask", 0o010).b("recursive", false).done(), Some(tx)).unwrap();
+        assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(m)) if m == "mask and bits go together"));
+        assert_eq!(modes(), was);
+
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// One item that cannot be changed does not stop the rest: the others change, the job fails
+    /// at the end naming the one that did not, and what changed can still be put back.
+    #[test]
+    fn a_chmod_carries_on_past_an_item_it_cannot_change() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-carry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        for name in ["a.txt", "c.txt"] {
+            std::fs::write(d.join(name), b"x").unwrap();
+            set_mode(&d.join(name), 0o644);
+        }
+        let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
+        let (tx, rx) = mpsc::channel();
+        subscribe(tx.clone());
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt", "never-was.txt", "c.txt"])).u("mask", 0o022).u("bits", 0o022).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
+        assert_eq!(why, "1 of 3 could not be changed: never-was.txt (NotFound)");
+        assert_eq!((mode_of(&d.join("a.txt")), mode_of(&d.join("c.txt"))), (0o666, 0o666), "the others changed, the one after it included");
+        let events: Vec<Value> = rx.try_iter().collect();
+        let last = events.iter().filter(|e| e.str_field("event") == Some("JobEvent")).filter_map(|e| e.get("job")).rfind(|j| j.u64_field("id") == Some(id)).unwrap();
+        assert_eq!((last.str_field("state"), last.str_field("error")), (Some("failed"), Some(why.as_str())));
+        assert_eq!(last.get("undoable"), Some(&Value::Bool(true)));
+        let toast = events.iter().find(|e| e.str_field("event") == Some("Toast") && e.u64_field("job") == Some(id)).expect("a toast offering the undo");
+        assert_eq!(toast.str_field("text"), Some("Change permissions of 3 items — stopped part-way"));
+        let log = crate::joblog::read_job(id, 0).expect("the job has a log");
+        let logged = |t: &str| log.get("lines").unwrap().as_arr().unwrap().iter().any(|l| l.str_field("level") == Some("error") && l.str_field("text").is_some_and(|x| x.ends_with(t)));
+        assert!(logged("never-was.txt: NotFound"), "the log names the path");
+        let uid = undo(Some(tx)).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!((mode_of(&d.join("a.txt")), mode_of(&d.join("c.txt"))), (0o644, 0o644), "and undo puts back the two that changed");
+        std::env::remove_var("KIKI_STATE_DIR");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Recursive: the folder and what is under it change, and the inverse names every path so.
+    #[test]
+    fn a_recursive_masked_chmod_is_undone_all_the_way_down() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("site")).unwrap();
+        std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+        std::fs::write(d.join("site/index.html"), b"x").unwrap();
+        set_mode(&d.join("site"), 0o755);
+        set_mode(&d.join("site/index.html"), 0o644);
+        let (tx, _rx) = mpsc::channel();
+        let site = Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())]);
+        // Take "other" away entirely.
+        let id = submit(Value::obj().s("op", "chmod").v("items", site).u("mask", 0o007).u("bits", 0).b("recursive", true).done(), Some(tx.clone())).unwrap();
+        assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!((mode_of(&d.join("site")), mode_of(&d.join("site/index.html"))), (0o750, 0o640));
+        let inv = last_inverse();
+        assert_eq!(inv.get("list").unwrap().as_arr().unwrap().len(), 2, "the folder and the file in it");
+        let uid = undo(Some(tx)).unwrap();
+        assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
+        assert_eq!((mode_of(&d.join("site")), mode_of(&d.join("site/index.html"))), (0o755, 0o644));
         std::env::remove_var("KIKI_STATE_DIR");
         std::fs::remove_dir_all(&d).unwrap();
     }

@@ -134,6 +134,9 @@ Item {
         color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.12)
         border.width: 1; border.color: Kiki.Theme.accent
     }
+    /// The delegate showing row `i`, for whoever aims at it (the info popover's pointer); null
+    /// while it is pooled or scrolled away.
+    function rowItem(i) { return grid.itemAtIndex(i) }
     GridView {
         id: grid
         UI.NaturalScroll { }
@@ -176,8 +179,10 @@ Item {
                 Rectangle {
                     visible: cell.selected
                     radius: 8
-                    color: Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.16)
-                    border.width: 1; border.color: Kiki.Theme.accent
+                    // The focused pane's selection wears the accent; the other pane's, the grey
+                    // the columns view gives its trail (0.1.1).
+                    color: root.pane && !root.pane.focused ? Kiki.Theme.surface : Qt.rgba(Kiki.Theme.accent.r, Kiki.Theme.accent.g, Kiki.Theme.accent.b, 0.16)
+                    border.width: 1; border.color: root.pane && !root.pane.focused ? Kiki.Theme.gutter : Kiki.Theme.accent
                     // Around what is actually drawn — a picture is only as wide as it is painted,
                     // and the frame should sit the same distance from every edge of it.
                     readonly property int pad: 8
@@ -189,7 +194,7 @@ Item {
                 Rectangle {
                     visible: cell.selected
                     radius: height / 2
-                    color: Kiki.Theme.accent
+                    color: root.pane && !root.pane.focused ? Kiki.Theme.surface : Kiki.Theme.accent
                     width: Math.min(body.width, label.paintedWidth + 16)
                     height: label.paintedHeight + 6
                     x: Math.round((body.width - width) / 2); y: col.y + label.y - 3

@@ -16,7 +16,7 @@ Rectangle {
     objectName: "pane-error"
     visible: error !== ""
     color: Kiki.Theme.bg
-    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: wheel => wheel.accepted = true }   // nothing underneath is there to be clicked
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onWheel: wheel => wheel.accepted = true }   // nothing underneath is there to be clicked
     Column {
         anchors.centerIn: parent; width: Math.min(parent.width - 48, 460); spacing: 12
         Icon { anchors.horizontalCenter: parent.horizontalCenter; name: "warn"; size: 28; color: Kiki.Theme.yellow }

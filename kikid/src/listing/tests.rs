@@ -718,3 +718,22 @@ fn opening_a_folder_of_projects_again_asks_them_again() {
     forget(&uri);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+// A remote row's owner and group are the names the plugin sent, back out as it sent them; a
+// row without them has none. (They used to be dropped on the way in: SFTP rows showed no
+// owner or group, 2026-09-24.)
+#[test]
+fn remote_owner_and_group_names_survive_the_round_trip() {
+    use crate::json::Value;
+    let v = Value::obj().u("size", 5).u("mtime", 1_700_000_000_000u64).u("mode", 0o644).s("owner", "djclark").s("group", "pg1234567").done();
+    let m = crate::vfs::remote::meta_from(&v);
+    let j = rows::meta_json(&m);
+    assert_eq!(j.str_field("owner"), Some("djclark"));
+    assert_eq!(j.str_field("group"), Some("pg1234567"));
+    // The same name again is the same id; a local uid still resolves locally.
+    assert_eq!(m.uid, crate::vfs::remote::meta_from(&v).uid);
+    let bare = crate::vfs::remote::meta_from(&Value::obj().u("size", 1).done());
+    let j = rows::meta_json(&bare);
+    assert!(j.get("owner").is_none_or(|o| matches!(o, Value::Null)), "no name given: no owner ({j:?})");
+    assert_eq!(names::user(unsafe { libc::getuid() }).as_deref(), std::env::var("USER").ok().as_deref());
+}

@@ -71,12 +71,18 @@ TestCase {
         compare(chmods.signalArguments[1][1], false)
     }
 
+    // Revert is a mark to the grid's right, not a button (owner, 2026-09-24): dim and dead until
+    // something changes, lit once it does.
     function test_revert_goes_back_to_the_mode_on_disk() {
+        const mark = findChild(insp, "perm-revert")
+        verify(!mark.lit, "nothing changed: dim")
         mouseClick(findChild(insp, "perm-owner-1"))
         compare(insp.dirty, true)
-        mouseClick(findChild(insp, "perm-revert"))
+        verify(mark.lit, "changed: lit")
+        mouseClick(mark)
         compare(insp.editMode, 0o644)
         compare(insp.dirty, false)
+        verify(!mark.lit)
         compare(chmods.count, 0)
     }
 
