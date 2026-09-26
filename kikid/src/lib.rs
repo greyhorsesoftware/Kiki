@@ -18,6 +18,7 @@ pub mod icons;
 pub mod index;
 pub mod integrate;
 pub mod kinds;
+pub mod lifetime;
 pub mod listing;
 pub mod locations;
 pub mod md5;

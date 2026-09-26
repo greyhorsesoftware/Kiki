@@ -550,6 +550,7 @@ var strings = {
     "form.notFound": "{name}  （見つかりません）",
     "location.group.password": "パスワード",
     "location.group.key": "鍵",
+    "daemon.startFailed": "kikid（{binary}）を起動できませんでした（終了コード {code}）",
     "daemon.versionMismatch": "kikid は {daemon} ですが、このウィンドウは {window} です。更新後は kiki を再起動してください",
     "error.1321": "{path} は取得したコピーではありません",
     "error.1330": "{name} はサーバー上にあります。クイックルックで表示できます（Space）",

@@ -26,6 +26,51 @@ Singleton {
     property int protocolVersion: 0
     property string daemonVersion: ""
 
+    // ---------------------------------------------------------------- starting the daemon
+    /// The daemon is this window's engine, not a service: when nothing answers the socket, the
+    /// window starts one and it leaves a moment after the last window has gone
+    /// (docs/0.3.0/01-daemon-on-demand.md). `KIKI_DAEMON` names the binary — `make run` points it
+    /// at the checkout's — and otherwise it is the `kikid` beside the shell, found on PATH.
+    readonly property string daemonBinary: Quickshell.env("KIKI_DAEMON") || "kikid"
+    /// Started once per silence, not once per retry: the daemon takes a moment to bind, and a
+    /// window that started one on every tick would start a handful before the first answered.
+    /// (Harmless — they stand down on a socket already served — but noisy in a process list.)
+    property bool starting: false
+    /// Set when a daemon we started could not be run at all: a window with no engine says so
+    /// rather than retrying in silence for ever.
+    property string startError: ""
+    function startDaemon() {
+        if (daemon.starting || daemon.ready) return
+        daemon.starting = true
+        starter.running = true
+        // And go looking for it: a socket that has NEVER connected gets no state change to
+        // notice, so without this the window started a daemon and then sat there for ever
+        // beside it, connected to nothing (2026-09-26).
+        daemon.tryAgain()
+    }
+    /// Look for the daemon from now on, quickly at first: one takes about 10 ms to bind, so a
+    /// cold start that waited out the slow cadence spent most of a second on nothing.
+    function tryAgain() {
+        if (daemon.ready) { daemon.retry.stop(); return }
+        daemon.attempts = 0
+        daemon.retry.start()
+    }
+    property Process starter: Process {
+        running: false
+        command: [daemon.daemonBinary]
+        // Not `SIGTERM` on exit: the daemon outlives this window on purpose when another window
+        // is using it, and it knows when to leave on its own.
+        onExited: (code, status) => {
+            daemon.starting = false
+            // Exit 0 without the window ever connecting is the "already served" stand-down, which
+            // is the ordinary race between two windows; anything else is a daemon that failed.
+            if (code !== 0 && !daemon.ready) {
+                daemon.startError = Kiki.T.tr("daemon.startFailed", { binary: daemon.daemonBinary, code: code })
+                console.warn("kikid:", daemon.startError)
+            }
+        }
+    }
+
     property int _nextId: 1
     property var _pending: ({})      // id -> callback(ok, err)
     property var _listings: ({})     // lid -> object with handleEvent(msg)
@@ -90,12 +135,21 @@ Singleton {
     /// kikid is socket-activated and restarts on failure; the window should follow it back up
     /// rather than sit there looking fine and doing nothing. A dropped `Socket` will not take a
     /// second connection — setting `connected` again does nothing — so the retry builds a new one.
+    /// How many times the socket has been tried since the last answer. The first second is
+    /// tried hard — a daemon binds in about 10 ms — and after that the cadence is the patient
+    /// one, for a daemon that is failing to start or a machine under load.
+    property int attempts: 0
+    readonly property int fastTries: 25
     property Timer retry: Timer {
-        interval: 700; repeat: true; running: false
+        interval: daemon.attempts < daemon.fastTries ? 40 : 700
+        repeat: true; running: false
         onTriggered: {
             if (daemon.ready) { stop(); return }
+            daemon.attempts++
             // Connected but never greeted: the Hello went out into a socket that was closing.
             if (daemon.connected) { daemon._hello(); return }
+            // Nothing is answering: make sure one is coming, then try the socket again.
+            daemon.startDaemon()
             sock.active = false
             sock.active = true
         }
@@ -133,7 +187,9 @@ Singleton {
             // change signal has been and gone.
             // `sock.item` is only assigned once this component is finished, so the greeting waits
             // a turn rather than asking a socket the singleton cannot see yet.
-            Component.onCompleted: if (connected) Qt.callLater(daemon._hello)
+            // Nothing answered the very first connection: no daemon is running, so start one now
+            // rather than after the first retry tick — this is the cold start every launch pays.
+            Component.onCompleted: connected ? Qt.callLater(daemon._hello) : Qt.callLater(daemon.tryAgain)
             onConnectionStateChanged: {
                 if (connected) {
                     // Deferred like the one above, and for the same reason: during construction
@@ -145,7 +201,8 @@ Singleton {
                     daemon.ready = false
                     daemon._listings = ({})
                     daemon._failPending("Disconnected", "the daemon restarted")
-                    daemon.retry.start()
+                    // Fast again: a daemon that died is started here and is back in about 10 ms.
+                    daemon.tryAgain()
                 }
             }
         }

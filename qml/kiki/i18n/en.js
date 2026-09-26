@@ -555,6 +555,7 @@ var strings = {
     "form.notFound": "{name}  (not found)",
     "location.group.password": "Password",
     "location.group.key": "Key",
+    "daemon.startFailed": "kikid ({binary}) would not start: it stopped with {code}",
     "daemon.versionMismatch": "kikid is {daemon} but this window is {window}: restart kiki after an upgrade",
     "error.1321": "{path} is not a fetched copy",
     "error.1330": "{name} is on a server; Quick Look shows it (Space)",

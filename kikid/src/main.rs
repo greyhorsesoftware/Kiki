@@ -24,7 +24,13 @@ fn serve() {
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
-            let _ = std::fs::remove_file(&path);
+            // One daemon per socket: a window that starts one while another window is starting
+            // one leaves the loser with nothing to do, and the winner serves them both. A socket
+            // nobody answers is a leftover and is removed by `claim`, never a live one.
+            if matches!(kikid::lifetime::claim(&path), kikid::lifetime::Claim::Taken) {
+                eprintln!("kikid: {} is already served", path.display());
+                std::process::exit(0);
+            }
             let l = UnixListener::bind(&path).unwrap_or_else(|e| {
                 eprintln!("bind {}: {e}", path.display());
                 std::process::exit(1)

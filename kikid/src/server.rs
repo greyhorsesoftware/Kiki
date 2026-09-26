@@ -77,6 +77,9 @@ impl Client {
             })
             .expect("spawn writer");
         let mut client = Client { id, tx, shell: false, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new() };
+        // Counted from the first frame to the last: the daemon is the window's engine and leaves
+        // a moment after the last one (docs/0.3.0/01-daemon-on-demand.md).
+        crate::lifetime::came();
         client.handle_frame(first);
         loop {
             match reader.next() {
@@ -98,6 +101,8 @@ impl Client {
         for (_, (job, _)) in client.plans.drain() {
             crate::mirror::unview(job);
         }
+        // Last of all, and after the jobs and the views: the count that may end the process.
+        crate::lifetime::went();
     }
 
     fn handle_frame(&mut self, f: Frame) {

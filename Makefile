@@ -67,17 +67,21 @@ scroll-history:
 # What is NOT separate: the trash — a file trashed is trashed — and the desktop's own dirs.
 DEV_SOCKET ?= $(or $(XDG_RUNTIME_DIR),/tmp)/kiki-dev.sock
 DEV_HOME ?= $(or $(XDG_STATE_HOME),$(HOME)/.local/state)/kiki-dev
-DEV_ENV = KIKI_SOCKET=$(DEV_SOCKET) KIKI_CONFIG_DIR=$(DEV_HOME)/config KIKI_STATE_DIR=$(DEV_HOME)/state KIKI_DATA_DIR=$(DEV_HOME)/data \
-	KIKI_CACHE_DIR=$(DEV_HOME)/cache KIKI_THUMB_DIR=$(DEV_HOME)/cache/thumbnails KIKI_INTEGRATE_HOME=$(DEV_HOME)/home
+DEV_ENV = KIKI_SOCKET=$(DEV_SOCKET) KIKI_DAEMON=$(ROOT)/target/release/kikid KIKI_CONFIG_DIR=$(DEV_HOME)/config \
+	KIKI_STATE_DIR=$(DEV_HOME)/state KIKI_DATA_DIR=$(DEV_HOME)/data KIKI_CACHE_DIR=$(DEV_HOME)/cache \
+	KIKI_THUMB_DIR=$(DEV_HOME)/cache/thumbnails KIKI_INTEGRATE_HOME=$(DEV_HOME)/home
 
+# No daemon started here: the window starts the checkout's own (KIKI_DAEMON), and it leaves
+# when the window does (docs/0.3.0/01-daemon-on-demand.md).
 run: build
-	@mkdir -p $(DEV_HOME)/home; rm -f $(DEV_SOCKET)
-	$(DEV_ENV) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \
-	sleep 0.5; $(DEV_ENV) $(QS) -p qml/shell.qml
+	@mkdir -p $(DEV_HOME)/home
+	$(DEV_ENV) KIKI_PLUGIN_DIR=$(ROOT)/target/release $(QS) -p qml/shell.qml
 
+# The daemon on its own, for a window started elsewhere or a script: it stays, since nothing
+# has connected yet and a grace of 0 never leaves.
 daemon: build
-	@mkdir -p $(DEV_HOME)/home; rm -f $(DEV_SOCKET)
-	$(DEV_ENV) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
+	@mkdir -p $(DEV_HOME)/home
+	$(DEV_ENV) KIKI_EXIT_GRACE_MS=0 KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
 
 shell:
 	$(DEV_ENV) $(QS) -p qml/shell.qml

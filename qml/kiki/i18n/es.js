@@ -550,6 +550,7 @@ var strings = {
     "form.notFound": "{name}  (no encontrada)",
     "location.group.password": "Contraseña",
     "location.group.key": "Clave",
+    "daemon.startFailed": "kikid ({binary}) no se pudo iniciar: terminó con {code}",
     "daemon.versionMismatch": "kikid es {daemon} pero esta ventana es {window}: reinicia kiki tras una actualización",
     "error.1321": "{path} no es una copia descargada",
     "error.1330": "{name} está en un servidor; la vista rápida lo muestra (Espacio)",

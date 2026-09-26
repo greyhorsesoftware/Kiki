@@ -25,6 +25,12 @@ export XDG_RUNTIME_DIR="$work/run"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG
 # One name for the run's socket, whatever the version: the daemon, the window and the driver
 # all read KIKI_SOCKET (by default each is named for its version, `kiki-<version>.sock`).
 export KIKI_SOCKET="$XDG_RUNTIME_DIR/kiki.sock"
+# The harness starts the daemon and kills it at the end: its life is not its own here, and a gap
+# between flows must not take it down (docs/0.3.0/01-daemon-on-demand.md).
+export KIKI_EXIT_GRACE_MS=0
+# And if it ever does have to be started — a window whose daemon died — it is the one under test,
+# never whatever `kikid` is installed on the machine running the suite.
+export KIKI_DAEMON="$root/target/release/kikid"
 export KIKI_CONFIG_DIR="$work/config"; mkdir -p "$KIKI_CONFIG_DIR"
 # A fresh config means the first-run dialog ("Make kiki your file manager?") would be up over
 # everything, swallowing every key the flows send. A test run must never be asked to change the

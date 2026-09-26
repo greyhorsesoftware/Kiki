@@ -12,8 +12,15 @@ QtObject {
 
     property var sent: []            // every request object, in order
     property var sockets: []         // the stub sockets that registered
+    /// Commands the window tried to start (the Process stub), oldest first.
+    property var starts: []
 
-    function reset() { sent = [] }
+    function reset() { sent = []; starts = [] }
+
+    /// A stub Process was set running: what it was asked to run.
+    function started(command) { starts = starts.concat([command.slice ? command.slice() : command]) }
+    function startCount() { return starts.length }
+    function lastStart() { return starts.length ? starts[starts.length - 1] : null }
 
     function register(s) { const a = sockets.slice(); a.push(s); sockets = a }
 
