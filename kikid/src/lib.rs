@@ -5,7 +5,6 @@ pub mod ai;
 pub mod archive;
 pub mod bench;
 pub mod config;
-pub mod dbus;
 pub mod desktop;
 pub mod devices;
 pub mod joblog;

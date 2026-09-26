@@ -76,13 +76,51 @@ boundary but the *lifetime*: a system service where a worker process belongs.
    the answer decides whether the fallback is dead code.
 4. **The listener is the on-demand part, and it is not the engine.** `kiki-plugin-dbus`
    becomes `kiki-dbus` in `/usr/libexec/kiki` — a program in its own right rather than a
-   plugin the daemon spawns — and it is what the bus activates:
-   `org.freedesktop.FileManager1.service` and the portal's service file both
-   `Exec=/usr/libexec/kiki/kiki-dbus` (no `SystemdService=`). It already claims both names
+   plugin the daemon spawns — and it is what the bus activates: the portal's service file
+   `Exec=/usr/libexec/kiki/kiki-dbus` with no `SystemdService=`. It already claims both names
    (`plugins/kiki-plugin-dbus/src/main.rs:180-181`); what changes is who starts whom. A request
-   arrives, the listener starts or reaches a window the way the `kiki` command does
-   (`qs ipc call shell present`, else `qs -p …`), hands it over, relays the answer, and exits
-   when it has no request outstanding and has held no name for a minute.
+   arrives, the listener starts or reaches a window the way the `kiki` command does, hands it
+   over, relays the answer, and exits when it has no request outstanding and has held no name
+   for a minute.
+
+   **Through the window's IPC, not a socket of its own.** The window is a Quickshell process and
+   has no socket to connect to: the listener reaches it exactly as `packaging/bin/kiki` does,
+   `qs -p <shell.qml> ipc call shell <fn> …`, whose functions return a string — so `ShowItems`
+   is a `present` and the chooser's answer comes back the same way. The listener therefore never
+   connects to the daemon at all, which is what keeps decision 2 ("nothing but a window is ever a
+   client") true rather than nearly true. Where a request needs a window and none is running, it
+   starts one the way the command does and the window starts its own engine (decision 1).
+
+   **It leaves when it is idle.** A request served and nothing outstanding for a minute
+   (`KIKI_DBUS_IDLE_MS` for the tests) and it exits; the bus starts another for the next request.
+   A chooser standing open counts as outstanding, however long the person takes. The first cut
+   ended `main` in a future that never finished, and every test run left a listener behind
+   holding a private bus open — the e2e flow is what found it.
+
+   **`org.freedesktop.FileManager1` is a name kiki cannot simply take.** On an Omarchy box that
+   service file belongs to another package — `Exec=/usr/bin/nautilus --gapplication-service`
+   here — and two packages cannot own one path: shipping ours would be a file conflict, and
+   pacman would refuse the install. Nor should it be taken silently. So it follows kiki's own
+   rule for integration, the one `kiki.install` states at the top: it is **each user's choice**,
+   a row in Settings › Omarchy beside mimeapps, the Hyprland bindings and the portal, which
+   writes `~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service` (the user's
+   directory wins over `/usr/share`) and removes it again on Remove. Until a user asks, "Show in
+   file manager" goes wherever it goes today.
+
+   **A link, not a copy — or removing kiki breaks it.** The package cannot reach a user's home
+   when it is removed, so whatever the row wrote stays. A *copy* naming `/usr/libexec/kiki/kiki-dbus`
+   would then make every "Show in folder" fail with "Failed to execute program … No such file"
+   (tried on 2026-09-26: it does, at once). So the row writes a **symlink** to the package's own
+   copy under `/usr/share/kiki/dbus-1/services/`: when kiki is removed the link dangles, the bus
+   skips a service file it cannot read (also tried: the system's handler ran), and nautilus has
+   the name back with nothing to clean up. The row reads a dangling link as off, and Remove
+   deletes it rather than leaving it. In a checkout there is no package, so it is a plain file
+   naming the checkout's listener. A migration at every daemon start (`integrate::migrate_services`)
+   brings 0.2.x's files up to date — copies naming the daemon and a unit become the link, and the
+   per-user portal file goes, since the package's own file serves that name now — so a user who
+   had the row on is healed by the upgrade without touching it. Verified on the owner's login,
+   2026-09-26: the copy the row had written became the link at the next daemon start, and "Show
+   in folder" still reached kiki.
 
    **Why this way round.** Both headless entry points need a *window* in the end — ShowItems
    shows a folder, and the file chooser **is** a picker window. Activating the engine means
@@ -127,12 +165,12 @@ boundary but the *lifetime*: a system service where a worker process belongs.
 |---|---|---|
 | L1 | **Leaving and single-instance**: the client count with the grace, `kikid` exiting 0 when it finds the socket alive; `dbus.rs` loses the spawn-and-bridge, since nothing spawns the listener now. A Rust test that a daemon with no client exits after the grace, and one with a window connected does not. | ½ day |
 | L2 | **Starting**: `Daemon.qml` runs `kikid` when the socket does not answer (`KIKI_DAEMON`), the `kiki` command reduced to `qs` + `present`, `make run` on the checkout's daemon by the same path; `tst_DaemonStart` against a fake. | ½ day |
-| L3 | **The listener stands alone**: `kiki-plugin-dbus` → `kiki-dbus` under `/usr/libexec/kiki`, connecting to the window's socket instead of a parent's pipe, starting a window when there is none, exiting when idle; both service files `Exec=` it; `packaging/systemd/` gone, `kiki.install` reduced to the `--global disable` sweep of decision 3 and two lines that ask for nothing. The e2e `launcher` flow: no daemon → `kiki` → a daemon and a window; close → the daemon gone after the grace; **ShowItems and a chooser with nothing at all running** — the harness already runs the daemon under `dbus-run-session` for gvfsd (`tests/e2e/run.sh:123`), so this needs `XDG_DATA_DIRS` pointed at a fixture `dbus-1/services/` rather than new machinery, and it is the first test the D-Bus paths have ever had. | 1½ days |
+| L3 | **The listener stands alone**: `kiki-plugin-dbus` → `kiki-dbus` under `/usr/libexec/kiki`, reaching the window through its IPC instead of a parent's pipe, starting one when there is none, exiting when idle; the portal's service file `Exec=` it; `packaging/systemd/` gone, `kiki.install` reduced to the `--global disable` sweep of decision 3 and two lines that ask for nothing; the FileManager1 row in Settings › Omarchy. **The test comes first, not last**: the chooser is a live D-Bus round trip with a window in the middle and has never had one, so the `dbus-run-session` harness is built and failing before the code moves — the daemon already runs under a private bus there for gvfsd (`tests/e2e/run.sh:123`), so it needs `XDG_DATA_DIRS` pointed at a fixture `dbus-1/services/` rather than new machinery. Then: no daemon → `kiki` → a daemon and a window; close → the daemon gone after the grace; ShowItems and a chooser with nothing at all running. **Done** (`tests/e2e/flows/dbus_activation.py`, 8 checks against a real window; it found the listener never exiting and the chooser in `open` mode taking no focus, so Escape reached nobody). | 2 days |
 | L4 | **The router, and it comes before `open.rs`**: `handlers/`, `cx.later`, the three hand-rolled threads moved onto it, module docs naming the per-connection order. No behaviour change: the whole gate is the test. First because `open.rs` is then written once, in its final home, instead of into the thousand-line match and moved out of it a day later. | 1½ days |
 | L5 | **`open.rs`**: the one verb and its rule table as one more handler, the aliases, the shell's one `open`, `API-DELTA.md`; Rust tests for every `with` on a local file, a folder, a server's file; the `ops_menu`/`launcher`/`quick_look` flows through the new verb. | 1 day |
 | L6 | **Docs and the rest**: API notes for 0.3.0, `docs/SKILL.md`'s transport paragraph, `README` (install has no units to speak of). | ½ day |
 
-About **5½ working days**. L1–L3 are the owner's ask — the engine belonging to the window and
+About **6 working days**. L1–L3 are the owner's ask — the engine belonging to the window and
 the listener standing alone; L4–L5 the restructure that makes the daemon and the open paths
 readable again. Either half stands on its own.
 
@@ -142,6 +180,9 @@ unit that is still there, so the gate passing after them means kiki works the sa
 and without it. L3 is where that stops being true. Everything before it is a step back if it
 has to be; nothing after it is, which is why the manual pass on a real login — no units,
 ShowItems from another application, a file chooser — belongs at the end of L3 and not later.
+**Done, 2026-09-26**: the owner upgraded 0.2.2 → 0.3.0 on their own login; a browser's "Save
+image as" went through the portal to a kiki chooser and back, and "Show in folder" opened kiki
+with the file selected once the Settings › Omarchy row had written the user-level service file.
 
 ## Acceptance
 

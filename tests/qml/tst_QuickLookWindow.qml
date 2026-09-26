@@ -283,7 +283,9 @@ TestCase {
         ql.show(fake.file("small.png", { kind: "image" }), small)
         compare(ql.shown, "image")
         tryCompare(body(), "status", Loader.Ready)
-        tryVerify(() => body().item.natural.width === 120, 3000, "decoded")
+        // A bound, not a timing: decoding a 120 × 80 PNG is instant, but a machine under load
+        // (a test suite being killed beside this one, 2026-09-26) once took it past 3 s.
+        tryVerify(() => body().item.natural.width === 120, 10000, "decoded")
         compare(body().item.natural.height, 80)
         // The picture plus its mount and the header, held to the least a window with a header can be.
         compare(ql.width, 320); compare(ql.height, 240)
@@ -291,7 +293,7 @@ TestCase {
         // Stepping on to a wide one keeps the window as it is: a window changing size at every j
         // is not something to look at.
         ql.show(fake.file("wide.png", { kind: "image" }), String(Qt.resolvedUrl("fixtures/wide.png")))
-        tryVerify(() => body().item.natural.width === 2400, 3000)
+        tryVerify(() => body().item.natural.width === 2400, 10000, "the wide one decoded")
         compare(ql.width, 320); compare(ql.height, 240)
         ql.close()
         compare(Wire.count("SetSettings"), 0, "the size it chose for the picture is not remembered as a drag")

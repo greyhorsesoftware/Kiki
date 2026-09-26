@@ -49,9 +49,18 @@ package() {
   install -Dm755 "${t}/kiki-thumber"     "${pkgdir}/usr/lib/kiki/kiki-thumber"
   install -Dm755 "${t}/kiki-plugin-sftp" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-sftp"
   install -Dm755 "${t}/kiki-plugin-ftps" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-ftps"
-  for p in dbus share-mail share-tailscale; do
+  for p in share-mail share-tailscale; do
     install -Dm755 "${t}/kiki-plugin-$p" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-$p"
   done
+  # Not a plugin any more: kiki's face on the session bus is a program the BUS starts, which
+  # puts the request to a window and has no connection to the daemon at all
+  # (docs/0.3.0/01-daemon-on-demand.md).
+  install -Dm755 "${t}/kiki-plugin-dbus" "${pkgdir}/usr/libexec/kiki/kiki-dbus"
+  # What a user's "Show in folder" row LINKS to from ~/.local/share/dbus-1/services: a link into
+  # the package dangles when the package is gone, and the bus skips a service file it cannot
+  # read, so removing kiki hands the name back to whoever owns it system-wide with nothing to
+  # clean up (docs/0.3.0/01-daemon-on-demand.md, decision 4).
+  install -Dm644 "${_srcdir}/packaging/user-services/org.freedesktop.FileManager1.service" "${pkgdir}/usr/share/kiki/dbus-1/services/org.freedesktop.FileManager1.service"
   # A location kind is the suffix of the name the plugin is run by: gio goes in as smb.
   install -Dm755 "${t}/kiki-plugin-gio" "${pkgdir}/usr/lib/kiki/plugins/kiki-plugin-smb"
   # WebDAV and AFP are not in 0.1.0: adding one back is this list and plugin::LOCATION_KINDS.
@@ -61,10 +70,8 @@ package() {
   install -d "${pkgdir}/usr/share/kiki"
   cp -r "${_srcdir}/qml/." "${pkgdir}/usr/share/kiki/"
 
-  # The socket is named for the version (kiki-0.2.0.sock): a window and a daemon are a pair.
-  install -d "${pkgdir}/usr/lib/systemd/user"
-  sed "s/@VERSION@/${pkgver}/" "${_srcdir}/packaging/systemd/kiki.socket" > "${pkgdir}/usr/lib/systemd/user/kiki.socket"
-  install -Dm644 "${_srcdir}/packaging/systemd/kikid.service" "${pkgdir}/usr/lib/systemd/user/kikid.service"
+  # No systemd units: the daemon is the window's engine, started by the window and gone with it
+  # (docs/0.3.0/01-daemon-on-demand.md). `kiki.install` sweeps up what the old hook enabled.
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
   # The mark the desktop entry names, and the one the About panel tints to the current theme.
   install -Dm644 "${_srcdir}/app-images/cat-head-wireframe.svg" "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.kiki.App.svg"

@@ -12,4 +12,7 @@ path = "src/main.rs"
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "io-util"] }
+# `process` and `time`: the listener asks the window over its IPC, asynchronously and on a
+# deadline. They arrive through zbus's own tokio features too, but a crate should name what it
+# uses rather than depend on another's choices.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-std", "io-util", "process", "time"] }

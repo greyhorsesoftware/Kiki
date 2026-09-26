@@ -465,7 +465,7 @@ FloatingWindow {
     }
     // `RepoChanged` comes once per listing that read the repo — the other pane's, every column's —
     // and each used to reload the same repo state; the pane's own listing's word is enough.
-    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged" && (!msg.lid || msg.lid === win.pane.listing.lid)) win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); if (msg.event === "ShowChooser") portal.open(msg); if (msg.event === "ShowItems") win.showItems(msg) } }
+    Connections { target: Kiki.Daemon; function onEvent(msg) { if (msg.event === "RepoChanged" && (!msg.lid || msg.lid === win.pane.listing.lid)) win.loadRepo(); if (msg.event === "OpenInChanged") win.loadOpenIn(); } }
     /// Bring the window to the front of the workspace it is on. Asked for by whatever opened
     /// something in it from outside — a second `kiki`, "Show in folder" from a browser — which
     /// is otherwise answered by a window nobody can see.
@@ -475,6 +475,34 @@ FloatingWindow {
     function present(uri) {
         if (uri) win.pane.open(uri)
         raise()
+    }
+    // ---------------------------------------------------------------- the chooser, for kiki-dbus
+    /// Answers for choosers that have finished, by token, until the listener collects them. A
+    /// listener that dies before collecting leaves one entry; they are small and the window is
+    /// not a server, so they are dropped after `chooserKeep`.
+    property var chooserDone: ({})
+    readonly property int chooserKeep: 5 * 60 * 1000
+    function startChooser(r) {
+        raise()
+        portal.open(r)
+    }
+    /// Called by the portal when a chooser the LISTENER asked for is answered (`uris` null when
+    /// it was cancelled). A chooser kiki asked itself never comes here.
+    function chooserFinished(token, uris) {
+        if (!token) return
+        const d = Object.assign({}, chooserDone)
+        d[token] = { at: Date.now(), uris: uris || [], cancelled: !uris }
+        chooserDone = d
+    }
+    /// What the listener collects: pending until the person has chosen, then the answer once.
+    function chooserAnswer(token) {
+        const got = chooserDone[token]
+        if (!got) return { pending: true }
+        const d = Object.assign({}, chooserDone)
+        delete d[token]
+        for (const t in d) if (Date.now() - d[t].at > chooserKeep) delete d[t]
+        chooserDone = d
+        return got.cancelled ? { cancelled: true } : { uris: got.uris }
     }
     /// org.freedesktop.FileManager1: ShowFolders, ShowItems, ShowItemProperties.
     function showItems(msg) {
@@ -1065,6 +1093,25 @@ FloatingWindow {
     IpcHandler {
         target: "shell"
         function open(uri: string): void { win.pane.open(uri) }
+        /// What `kiki-dbus` puts to this window: another application's "Show in file manager",
+        /// or the file chooser the portal asked for (docs/0.3.0/01-daemon-on-demand.md,
+        /// decision 4). The listener is started by the bus and has no connection to the daemon;
+        /// it reaches the window here, as the `kiki` command does.
+        ///
+        /// A chooser cannot be answered from this call — the person has not chosen yet, and QML
+        /// answers at once or not at all — so it opens the dialog, returns a token, and the
+        /// listener asks `ChooserPoll` for the answer until it has one.
+        function dbus(kind: string, payload: string): string {
+            let r = {}
+            try { r = payload ? JSON.parse(payload) : {} } catch (e) { return JSON.stringify({ error: "bad payload" }) }
+            switch (kind) {
+            case "ShowItems": win.showItems(r); return "{}"
+            case "ShowFolders": win.showItems(Object.assign({}, r, { folders: true })); return "{}"
+            case "ShowChooser": win.startChooser(r); return JSON.stringify({ token: r.token || "" })
+            case "ChooserPoll": return JSON.stringify(win.chooserAnswer(r.token || ""))
+            }
+            return JSON.stringify({ error: "unknown " + kind })
+        }
         /// What the `kiki` launcher calls on a running instance: open it, and come to the front.
         function present(uri: string): void { win.present(uri) }
         function enter(): void { win.enterSelected() }
@@ -1666,7 +1713,7 @@ FloatingWindow {
         if (loc.image) items.push({ id: "removeImage", label: Kiki.T.tr("menu.removeImage"), action: () => set("") })
         return items
     }
-    UI.PortalDialog { id: portal; objectName: "portal"; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
+    UI.PortalDialog { id: portal; objectName: "portal"; chooser: ({ answered: (token, uris) => win.chooserFinished(token, uris) }); anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
     UI.SettingsWindow { id: settingsWin; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
     UI.ConfirmDialog { id: confirm; objectName: "confirm"; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }

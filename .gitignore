@@ -5,3 +5,6 @@ target/
 docs/design/kiki-file-manager.html
 tests/e2e/out/
 __pycache__/
+# makepkg's working directories under packaging/: the fakeroot staging tree and the build's target
+packaging/pkg/
+packaging/src/

@@ -38,6 +38,17 @@ TestCase {
         compare(Wire.count("ChooserResult"), 0)
     }
 
+    // A chooser in `open` mode takes the keyboard when it appears: the window's own keys stand
+    // down while it is up, so a dialog that did not would leave Escape with nobody to hear it.
+    function test_an_open_chooser_takes_focus_so_escape_reaches_it() {
+        let got = "unset"
+        portal.pick({ mode: "open", directory: false, currentFolder: "/home/t" }, uris => got = uris)
+        verify(portal.activeFocus, "the dialog has the keyboard")
+        keyClick(Qt.Key_Escape)
+        compare(got, null, "and Escape cancels it")
+        verify(!portal.visible)
+    }
+
     function test_cancelling_answers_null() {
         let got = "unset"
         portal.pick({ mode: "open", directory: true, currentFolder: "/home/t" }, uris => got = uris)
@@ -46,15 +57,20 @@ TestCase {
         compare(Wire.count("ChooserResult"), 0)
     }
 
-    // A portal request after a local pick still goes to the daemon: the callback is one-shot.
-    function test_the_portal_path_is_untouched() {
+    // A portal request after a local pick is answered by token to whoever asked — since 0.3.0
+    // that is the window itself, which `kiki-dbus` collects from; nothing goes to the daemon.
+    // The callback is one-shot, so the local pick before it must not swallow this one.
+    function test_a_portal_request_after_a_local_pick_answers_by_token() {
         portal.pick({ mode: "open", directory: true, currentFolder: "/home/t" }, () => {})
         portal.finish(null)
         Wire.reset()
+        let answered = null
+        portal.chooser = ({ answered: (token, uris) => answered = { token: token, uris: uris } })
         portal.open({ mode: "open", directory: true, currentFolder: "/home/t", token: "tok-1" })
         portal.accept()
-        compare(Wire.count("ChooserResult"), 1)
-        compare(Wire.last("ChooserResult").token, "tok-1")
+        verify(answered !== null, "the window was told")
+        compare(answered.token, "tok-1")
+        compare(Wire.count("ChooserResult"), 0, "and the daemon was not")
     }
 
     // A location can only be answered with a URI the asking application cannot open.

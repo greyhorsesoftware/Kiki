@@ -44,10 +44,10 @@ fn serve() {
             l
         }
     };
-    kikid::dbus::start();
     kikid::fetched::clear();
     kikid::plugin::start_reaper();
     kikid::locations::migrate_option_labels();
+    kikid::integrate::migrate_services();
     kikid::devices::start();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));

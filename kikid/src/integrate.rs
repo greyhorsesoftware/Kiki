@@ -62,6 +62,16 @@ fn kikid_path() -> String {
     std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()).filter(|p| p.ends_with("kikid")).unwrap_or_else(|| "/usr/bin/kikid".into())
 }
 
+/// `kiki-dbus`, the program the session bus starts: beside this daemon in a checkout (where it
+/// is still built under its plugin name), else where the package puts it.
+fn listener_path() -> String {
+    let beside = std::path::PathBuf::from(kikid_path()).parent().map(|d| d.join("kiki-plugin-dbus"));
+    match beside {
+        Some(p) if p.exists() => p.to_string_lossy().into_owned(),
+        _ => "/usr/libexec/kiki/kiki-dbus".into(),
+    }
+}
+
 /// Write through a temp file and rename, so a crash never leaves a half-written config.
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(p) = path.parent() {
@@ -251,50 +261,133 @@ fn mime_remove() -> Result<String, String> {
 
 // ---------------------------------------------------------------- 2. dbus
 
-fn service_files() -> [(PathBuf, String); 2] {
-    let dir = services_dir();
-    let exec = kikid_path();
-    [
-        (dir.join("org.freedesktop.FileManager1.service"), format!("[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec={exec}\nSystemdService=kikid.service\n")),
-        (dir.join(format!("{PORTAL_NAME}.service")), format!("[D-BUS Service]\nName={PORTAL_NAME}\nExec={exec}\nSystemdService=kikid.service\n")),
-    ]
+/// The one user-level service file the row writes: `org.freedesktop.FileManager1`, a name that
+/// belongs to whatever file manager the distribution packaged (nautilus on an Omarchy box).
+/// Two packages cannot own one path, so kiki does not ship it system-wide; `~/.local/share`
+/// wins over `/usr/share` for the person who asked (docs/0.3.0/01-daemon-on-demand.md,
+/// decision 4). The portal's own name is kiki's and its file is the package's: nothing per user.
+///
+/// **A link, not a copy.** Installed, the user file is a symlink to the package's copy under
+/// `/usr/share/kiki/dbus-1/services`. When kiki is removed the link dangles, the bus skips a
+/// service file it cannot read, and the system's file takes the name back — nothing left behind
+/// to break "Show in folder" (a copy would have named a program that was gone, and every call
+/// would have failed with "no such file"). In a checkout there is no package, so it is a plain
+/// file naming the checkout's listener.
+fn user_service() -> PathBuf {
+    services_dir().join("org.freedesktop.FileManager1.service")
+}
+
+/// The package's copy to link to, when there is one. `KIKI_PACKAGED_SERVICES` names the
+/// directory for a test.
+fn packaged_service() -> Option<PathBuf> {
+    let dir = std::env::var("KIKI_PACKAGED_SERVICES").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/usr/share/kiki/dbus-1/services"));
+    let p = dir.join("org.freedesktop.FileManager1.service");
+    p.is_file().then_some(p)
+}
+
+/// Put the user file in place: a link to the package's copy, else a file naming the listener.
+fn place_user_service() -> Result<(), String> {
+    let p = user_service();
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    match packaged_service() {
+        Some(target) => {
+            // Through a temporary link and a rename, as `write_atomic` does for a file.
+            let tmp = p.with_extension(format!("kiki-tmp-{}", std::process::id()));
+            let _ = std::fs::remove_file(&tmp);
+            std::os::unix::fs::symlink(&target, &tmp).map_err(|e| format!("{}: {e}", p.display()))?;
+            std::fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
+        }
+        None => write_atomic(&p, &format!("[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec={}\n", listener_path())).map_err(|e| format!("{}: {e}", p.display())),
+    }
+}
+
+/// Whether a path is there at all — a dangling link included, which `exists()` says is not.
+fn present(p: &Path) -> bool {
+    std::fs::symlink_metadata(p).is_ok()
+}
+
+/// A user-level service file that is kiki's: it names the listener or, from 0.2.x, the daemon.
+fn is_kikis(text: &str) -> bool {
+    text.contains("kiki-dbus") || text.contains("kiki-plugin-dbus") || text.contains("kikid")
 }
 
 fn dbus_status() -> bool {
-    service_files().iter().all(|(p, _)| std::fs::read_to_string(p).map(|t| t.contains("kikid")).unwrap_or(false))
+    // Reads through a link; a dangling one (kiki removed) is "off", which is the truth.
+    std::fs::read_to_string(user_service()).map(|t| t.contains("kiki-dbus") || t.contains("kiki-plugin-dbus")).unwrap_or(false)
+}
+
+/// Files an earlier kiki wrote per user, brought up to date. 0.2.x wrote copies naming the
+/// daemon and a `SystemdService=` (both gone: the daemon has no bus role and there are no
+/// units), and one for the portal's name too, which the package's own file now serves. Run at
+/// every daemon start, so an upgrade heals the user who had turned the row on without their
+/// having to turn it off and on again — and a copy naming the right listener becomes the link,
+/// so that removing kiki later leaves nothing behind. A file that is not kiki's is not touched.
+pub fn migrate_services() {
+    let mut changed = false;
+    // The portal's name: never per user any more.
+    let portal = services_dir().join(format!("{PORTAL_NAME}.service"));
+    if let Ok(t) = std::fs::read_to_string(&portal) {
+        if is_kikis(&t) && std::fs::remove_file(&portal).is_ok() {
+            changed = true;
+        }
+    }
+    // "Show in folder": a copy that should be a link, or a copy that names the daemon.
+    let p = user_service();
+    let is_link = std::fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(false);
+    if !is_link {
+        if let Ok(t) = std::fs::read_to_string(&p) {
+            let stale = t.contains("kikid") && !t.contains("kiki-dbus");
+            if is_kikis(&t) && (stale || packaged_service().is_some()) && place_user_service().is_ok() {
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        reload_bus();
+    }
+}
+
+/// The session bus rescans its service directories on ReloadConfig.
+fn reload_bus() {
+    let _ = run("dbus-send", &["--session", "--dest=org.freedesktop.DBus", "--type=method_call", "/org/freedesktop/DBus", "org.freedesktop.DBus.ReloadConfig"]);
 }
 
 fn dbus_apply() -> Result<String, String> {
+    let p = user_service();
+    // What was there (somebody else's file, or nothing) is what Remove puts back.
     let mut prev = Value::obj();
-    for (p, _) in service_files() {
-        if let Ok(existing) = std::fs::read_to_string(&p) {
-            prev = prev.s(&p.file_name().unwrap().to_string_lossy(), existing);
-        }
+    if let Ok(existing) = std::fs::read_to_string(&p) {
+        prev = prev.s("FileManager1", existing);
     }
     backup_set("dbus", prev.done());
-    for (p, text) in service_files() {
-        write_atomic(&p, &text).map_err(|e| format!("{}: {e}", p.display()))?;
-    }
-    // The session bus rescans its service directories on ReloadConfig.
-    let _ = run("dbus-send", &["--session", "--dest=org.freedesktop.DBus", "--type=method_call", "/org/freedesktop/DBus", "org.freedesktop.DBus.ReloadConfig"]);
+    place_user_service()?;
+    reload_bus();
     Ok("\"Show in folder\" from browsers and chat apps opens kiki".into())
 }
 
 fn dbus_remove() -> Result<String, String> {
-    let prev = backup_get("dbus");
-    for (p, _) in service_files() {
-        let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        match prev.as_ref().and_then(|v| v.str_field(&name)) {
-            Some(original) => write_atomic(&p, original).map_err(|e| format!("{}: {e}", p.display()))?,
-            None => {
-                if p.exists() {
-                    std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-                }
+    let p = user_service();
+    match backup_get("dbus").as_ref().and_then(|v| v.str_field("FileManager1").map(str::to_string)) {
+        Some(original) if !is_kikis(&original) => write_atomic(&p, &original).map_err(|e| format!("{}: {e}", p.display()))?,
+        _ => {
+            // `present`, not `exists`: the link may already dangle, and that is the one most
+            // worth removing.
+            if present(&p) {
+                std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
             }
         }
     }
+    // And a 0.2.x portal file, if the migration has not been past yet.
+    let portal = services_dir().join(format!("{PORTAL_NAME}.service"));
+    if let Ok(t) = std::fs::read_to_string(&portal) {
+        if is_kikis(&t) {
+            let _ = std::fs::remove_file(&portal);
+        }
+    }
     backup_clear("dbus");
-    let _ = run("dbus-send", &["--session", "--dest=org.freedesktop.DBus", "--type=method_call", "/org/freedesktop/DBus", "org.freedesktop.DBus.ReloadConfig"]);
+    reload_bus();
     Ok("D-Bus activation files removed".into())
 }
 
@@ -549,6 +642,74 @@ mod tests {
         assert_eq!(strip_block(base), base);
     }
 
+    /// Installed, the user file is a link into the package. When the package is gone the link
+    /// dangles, the row reads as off, and the bus skips it so "Show in folder" goes back to the
+    /// system's file manager; Remove takes the dangling link away rather than leaving it.
+    #[test]
+    fn the_user_file_is_a_link_into_the_package_and_dangles_harmlessly_when_it_is_gone() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = scratch();
+        std::env::set_var("KIKI_CONFIG_DIR", d.join(".config/kiki"));
+        std::env::set_var("KIKI_INTEGRATE_NO_EXEC", "1");
+        let pkg = d.join("usr/share/kiki/dbus-1/services");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("org.freedesktop.FileManager1.service"), "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/libexec/kiki/kiki-dbus\n").unwrap();
+        std::env::set_var("KIKI_PACKAGED_SERVICES", &pkg);
+
+        dbus_apply().unwrap();
+        let p = user_service();
+        let meta = std::fs::symlink_metadata(&p).unwrap();
+        assert!(meta.file_type().is_symlink(), "a link, not a copy");
+        assert_eq!(std::fs::read_link(&p).unwrap(), pkg.join("org.freedesktop.FileManager1.service"));
+        assert!(dbus_status(), "on, read through the link");
+
+        // kiki is removed: the package's file goes, the link dangles.
+        std::fs::remove_file(pkg.join("org.freedesktop.FileManager1.service")).unwrap();
+        assert!(!dbus_status(), "off: the row tells the truth about a dangling link");
+        assert!(!p.exists() && present(&p), "dangling: `exists` says no, the link is there");
+
+        // Remove still cleans it up — `exists()` would have left it.
+        dbus_remove().unwrap();
+        assert!(!present(&p), "the dangling link is removed");
+        std::env::remove_var("KIKI_PACKAGED_SERVICES");
+        std::env::remove_var("KIKI_INTEGRATE_NO_EXEC");
+    }
+
+    /// What 0.2.x left per user: copies naming the daemon and a unit, and one for the portal's
+    /// name. The daemon's start brings them up to date without the row being touched; a file
+    /// that is not kiki's is left alone.
+    #[test]
+    fn service_files_from_0_2_x_are_migrated_at_start() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = scratch();
+        std::env::set_var("KIKI_CONFIG_DIR", d.join(".config/kiki"));
+        std::env::set_var("KIKI_INTEGRATE_NO_EXEC", "1");
+        std::env::remove_var("KIKI_PACKAGED_SERVICES");
+        let dir = services_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/bin/kikid\nSystemdService=kikid.service\n";
+        std::fs::write(dir.join("org.freedesktop.FileManager1.service"), old).unwrap();
+        std::fs::write(dir.join(format!("{PORTAL_NAME}.service")), old.replace("FileManager1", PORTAL_NAME)).unwrap();
+        std::fs::write(dir.join("org.example.Other.service"), "[D-BUS Service]\nName=org.example.Other\nExec=/usr/bin/other\n").unwrap();
+
+        migrate_services();
+        let now = std::fs::read_to_string(user_service()).unwrap();
+        assert!(!now.contains("kikid") && !now.contains("SystemdService"), "no daemon, no unit: {now}");
+        assert!(now.contains("kiki-dbus") || now.contains("kiki-plugin-dbus"), "names the listener: {now}");
+        assert!(!dir.join(format!("{PORTAL_NAME}.service")).exists(), "the portal's file is the package's now");
+        assert!(dir.join("org.example.Other.service").exists(), "somebody else's file is not touched");
+
+        // With a package to link to, a plain copy naming the right listener becomes the link.
+        let pkg = d.join("usr/share/kiki/dbus-1/services");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("org.freedesktop.FileManager1.service"), "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/usr/libexec/kiki/kiki-dbus\n").unwrap();
+        std::env::set_var("KIKI_PACKAGED_SERVICES", &pkg);
+        migrate_services();
+        assert!(std::fs::symlink_metadata(user_service()).unwrap().file_type().is_symlink(), "relinked into the package");
+        std::env::remove_var("KIKI_PACKAGED_SERVICES");
+        std::env::remove_var("KIKI_INTEGRATE_NO_EXEC");
+    }
+
     #[test]
     fn apply_and_remove_everything_per_user() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -574,7 +735,12 @@ mod tests {
         let portals = std::fs::read_to_string(d.join(".config/xdg-desktop-portal/portals.conf")).unwrap();
         assert!(portals.contains("org.freedesktop.impl.portal.FileChooser=kiki;gtk"));
         assert!(portals.contains("default=hyprland;gtk"));
-        assert!(d.join(".local/share/dbus-1/services/org.freedesktop.FileManager1.service").exists());
+        // The user's own service file, which is how kiki takes a name another package owns
+        // system-wide: it names the LISTENER and no unit (0.3.0 has none).
+        let svc = std::fs::read_to_string(d.join(".local/share/dbus-1/services/org.freedesktop.FileManager1.service")).expect("the user's service file");
+        assert!(svc.contains("Name=org.freedesktop.FileManager1"), "{svc}");
+        assert!(svc.contains("kiki-dbus") || svc.contains("kiki-plugin-dbus"), "the bus must start the listener, not the daemon: {svc}");
+        assert!(!svc.contains("SystemdService"), "there are no units to name any more: {svc}");
         let bindings = std::fs::read_to_string(d.join(".config/hypr/bindings.conf")).unwrap();
         assert!(bindings.starts_with("bindd = SUPER, RETURN"));
         assert!(bindings.contains(BEGIN) && bindings.contains(END));

@@ -1,8 +1,0 @@
-[Unit]
-Description=kiki file manager daemon
-Requires=kiki.socket
-
-[Service]
-ExecStart=/usr/bin/kikid
-Restart=on-failure
-Nice=5

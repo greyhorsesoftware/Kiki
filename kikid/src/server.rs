@@ -161,12 +161,10 @@ impl Client {
                             .reply(id, Err(("Version", format!("this kikid speaks protocol {}, the client {theirs}: restart kiki after an upgrade (systemctl --user restart kikid.service)", proto::PROTOCOL_VERSION))));
                     }
                 }
-                if b.str_field("client") == Some("kiki") {
-                    if !self.shell {
-                        self.shell = true;
-                        crate::jobs::shell_came();
-                    }
-                    crate::dbus::register_shell(self.tx.clone());
+                // A window, saying so once: its jobs stop when the last window has gone.
+                if b.str_field("client") == Some("kiki") && !self.shell {
+                    self.shell = true;
+                    crate::jobs::shell_came();
                 }
                 Ok(Some(
                     Value::obj()
@@ -178,10 +176,6 @@ impl Client {
                         .v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect()))
                         .done(),
                 ))
-            }
-            "ChooserResult" => {
-                crate::dbus::chooser_result(b.str_field("token").unwrap_or(""), b.get("uris").cloned().unwrap_or(Value::Null));
-                Ok(Some(Value::obj().done()))
             }
             "Icon" => {
                 let name = b.str_field("name").unwrap_or("");

@@ -13,7 +13,7 @@ Rectangle {
     property bool busy: false
     readonly property var items: [
         { id: "mime", label: Kiki.T.tr("integration.mime"), detail: "inode/directory in ~/.config/mimeapps.list" },
-        { id: "dbus", label: Kiki.T.tr("integration.dbus"), detail: "user D-Bus activation for org.freedesktop.FileManager1" },
+        { id: "dbus", label: Kiki.T.tr("integration.dbus"), detail: "org.freedesktop.FileManager1 in ~/.local/share/dbus-1/services (yours, above the system's)" },
         { id: "hypr", label: Kiki.T.tr("integration.hypr"), detail: "a marked block in ~/.config/hypr/bindings.conf, rolled back if Hyprland rejects it" },
         { id: "portal", label: Kiki.T.tr("integration.portal"), detail: "FileChooser=kiki;gtk in ~/.config/xdg-desktop-portal/portals.conf" },
     ]
@@ -32,7 +32,9 @@ Rectangle {
     }
     MouseArea { anchors.fill: parent }
     Rectangle {
-        anchors.centerIn: parent; width: 640; height: col.height + 48; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        // Never wider than the window it is asked in: at 640 flat it ran off the edges of a
+        // half-width kiki (owner, 2026-09-26). The same rule the settings pages keep.
+        anchors.centerIn: parent; width: Math.min(640, dlg.width - 48); height: col.height + 48; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             id: col; x: 24; y: 24; width: parent.width - 48; spacing: 12
             Text { text: Kiki.T.tr("integration.title"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }

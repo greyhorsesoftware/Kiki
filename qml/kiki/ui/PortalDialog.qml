@@ -20,7 +20,12 @@ Rectangle {
         req = r; filterIndex = 0; visible = true
         pane.open(r.currentFolder ? "file://" + encodeURI(r.currentFolder) : "file://" + home)
         nameInput.text = r.currentName || ""
+        // Focus comes here with the dialog, in every mode. The window's own keys stand down
+        // while a chooser is up (Shell.qml), so a dialog that took no focus in `open` mode left
+        // Escape with nobody to hear it: a person given a kiki chooser by a browser's "Open file"
+        // pressed Escape and nothing happened (found by the e2e flow, 2026-09-26).
         if (r.mode !== "open") nameInput.forceActiveFocus()
+        else dlg.forceActiveFocus()
     }
     /// The same chooser, asked by kiki itself rather than by another app through the portal:
     /// `cb(uris)` gets the answer (null when cancelled) and nothing goes to the daemon.
@@ -30,8 +35,12 @@ Rectangle {
     function finish(uris) {
         visible = false
         if (_local) { const cb = _local; _local = null; cb(uris); return }
-        Kiki.Daemon.request("ChooserResult", { token: req.token, uris: uris })
+        // Collected from the window by token: the listener that asked is started by the bus and
+        // has no connection to the daemon (docs/0.3.0/01-daemon-on-demand.md, decision 4).
+        chooser.answered(req.token, uris)
     }
+    /// Where a listener's answer goes: the Shell sets this to its `chooserFinished`.
+    property var chooser: ({ answered: function (token, uris) {} })
     function accept() {
         if (req.mode === "saveFiles") { finish((req.files || []).map(n => pane.childUri(n))); return }
         if (req.mode === "open") {

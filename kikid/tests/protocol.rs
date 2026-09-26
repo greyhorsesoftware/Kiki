@@ -141,7 +141,6 @@ fn body(kind: &str) -> Value {
         "AiConfigure" => o.s("provider", "omarchy").s("cliCommand", "claude"),
         "AiOpen" => o.s("dir", "file:///home/david/Projects").v("uris", uris()),
         "OpenTerminal" => o.s("dir", "file:///home/david/Projects"),
-        "ChooserResult" => o.s("token", "t-1").v("uris", uris()),
         "Icon" => o.s("name", "folder-documents").s("theme", "Adwaita").u("size", 32),
         // Everything else takes no fields at all (`Ping`, `Jobs`, `Undo`, `Volumes`, …).
         _ => o,
@@ -248,7 +247,6 @@ fn every_reply_and_event_survives_both_framings() {
         include_str!("../src/devices.rs"),
         include_str!("../src/locations.rs"),
         include_str!("../src/config.rs"),
-        include_str!("../src/dbus.rs"),
         include_str!("../src/openin.rs"),
     ];
     let mut names: Vec<String> = Vec::new();
@@ -264,11 +262,12 @@ fn every_reply_and_event_survives_both_framings() {
         }
     }
     names.sort();
-    // `ShowChooser` is put together field by field in `dbus.rs` rather than through `event()`;
-    // it is the one the helper sends and the shell answers with `ChooserResult`.
-    names.push("ShowChooser".into());
-    assert!(names.len() >= 19, "the scrape found only {names:?}");
-    for must in ["Rows", "Reset", "Splice", "Count", "Gone", "JobEvent", "Toast", "Prompt", "JobsCleared", "RepoChanged", "ShowItems", "ShowChooser"] {
+    // `ShowItems` and `ShowChooser` are not the daemon's any more: since 0.3.0 the bus starts
+    // `kiki-dbus`, which puts them to a window through its IPC and never touches the daemon
+    // (docs/0.3.0/01-daemon-on-demand.md). `plugins/kiki-plugin-dbus/tests/activation.rs` is
+    // where that round trip is checked.
+    assert!(names.len() >= 17, "the scrape found only {names:?}");
+    for must in ["Rows", "Reset", "Splice", "Count", "Gone", "JobEvent", "Toast", "Prompt", "JobsCleared", "RepoChanged"] {
         assert!(names.iter().any(|n| n == must), "{must} is not among {names:?}");
     }
 
