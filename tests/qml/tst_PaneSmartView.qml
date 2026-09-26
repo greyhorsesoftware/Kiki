@@ -65,6 +65,32 @@ TestCase {
         compare(opens("file:///home/t/Documents", []), "list")
     }
 
+    // ---------------------------------------------------------------- not on a server
+    // The gallery is for this machine's folders: on a server every picture would be a fetch
+    // (owner, 2026-09-25). Neither the name nor the contents pick it there, and a remembered or
+    // default gallery opens as a list.
+    function test_a_picture_folder_on_a_server_opens_as_a_list() {
+        compare(opens("sftp://homelab/home/d/Pictures", []), "list", "by name")
+        compare(opens("sftp://homelab/home/d/shots", folder(20, 20)), "list", "by contents")
+        Kiki.Settings.viewPrefs = ({ "sftp://homelab/home/d/album": { view: "gallery", sort: "name", order: "asc" } })
+        Wire.reset()
+        compare(opens("sftp://homelab/home/d/album", folder(20, 20)), "list", "remembered as gallery")
+        // ... and from now on remembered as a list: the preference is rewritten, once.
+        compare(Kiki.Settings.viewPrefs["sftp://homelab/home/d/album"].view, "list")
+        compare(Wire.count("SetViewPref"), 1)
+        compare(opens("sftp://homelab/home/d/album", folder(20, 20)), "list")
+        compare(Wire.count("SetViewPref"), 1, "nothing new to write the second time")
+        // A folder on this machine remembered as a gallery is left exactly as it is.
+        Kiki.Settings.viewPrefs = ({ "file:///home/t/album": { view: "gallery", sort: "name", order: "asc" } })
+        Wire.reset()
+        compare(opens("file:///home/t/album", []), "gallery")
+        compare(Kiki.Settings.viewPrefs["file:///home/t/album"].view, "gallery")
+        compare(Wire.count("SetViewPref"), 0, "not rewritten")
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { "default": "gallery" })
+        compare(opens("sftp://homelab/home/d/other", []), "list", "the default view is gallery")
+        compare(opens("file:///home/t/other", []), "gallery", "and on this machine it still is")
+    }
+
     // ---------------------------------------------------------------- by contents
     function test_a_folder_of_mostly_pictures_opens_in_gallery() {
         compare(opens("file:///home/t/snaps", folder(20, 15)), "gallery")

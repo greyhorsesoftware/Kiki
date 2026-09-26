@@ -15,8 +15,9 @@ post_install() {
 post_upgrade() {
   update-desktop-database -q 2>/dev/null || true
   gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
-  echo ":: kiki was upgraded. A running kiki keeps the old daemon until you restart it:"
-  echo "   systemctl --user restart kikid.service"
+  echo ":: kiki was upgraded. The socket is named for the version, so the new kiki will not find"
+  echo "   the daemon still running from before; as your user:"
+  echo "   systemctl --user daemon-reload && systemctl --user restart kiki.socket kikid.service"
 }
 
 pre_remove() {

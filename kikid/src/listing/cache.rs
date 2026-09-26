@@ -72,8 +72,9 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
     let dir: Box<dyn Source> = if uri.is_local() || trash {
         Box::new(DirHandle::open(&path)?)
     } else {
-        let (session, rpath) = crate::locations::resolve(uri)?;
-        Box::new(crate::vfs::remote::RemoteDir { session, path: rpath, cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)) })
+        // Not connected here: the scan thread connects, so `Open` answers at once and the other
+        // pane is not kept waiting behind a slow server (see `RemoteDir`).
+        Box::new(crate::vfs::remote::RemoteDir::lazy(uri.clone()))
     };
     let listing = Arc::new(Listing {
         uri: uri.clone(),
@@ -87,6 +88,7 @@ pub fn open(uri: &Uri) -> Result<(Arc<Listing>, bool)> {
             git_done: false,
             scan_done: false,
             scan_error: None,
+            scan_said: None,
             view: Vec::new(),
             pos: Vec::new(),
             sort: (SortRole::Name, true),

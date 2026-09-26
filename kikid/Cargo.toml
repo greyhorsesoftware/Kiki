@@ -39,6 +39,9 @@ kiki-json = { path = "../crates/kiki-json" }
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
 png = "0.17"
+# Syntax colours for Quick Look (docs/0.2.0/05-quicklook.md): the Sublime grammars, pure Rust
+# (`regex-fancy`, no oniguruma); parsing only, no themes and no HTML — the window colours.
+syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 
 [dev-dependencies]
 # Depending on ourselves is how a crate enables one of its own features for its tests only.

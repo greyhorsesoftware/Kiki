@@ -107,7 +107,7 @@ pub fn settings() -> Value {
             .b("railHover", true)
             .b("relativeDates", true)
             .s("heatSource", "filesystem")
-            .b("vimKeys", false)
+            .b("shortcutChips", false)
             .b("rememberPerFolder", true)
             .v("columns", Value::Arr(vec![Value::Str("mtime".into()), Value::Str("size".into()), Value::Str("kind".into())]))
             // List column widths, by role, as the header's grips left them (plan 21). Empty is
@@ -156,8 +156,16 @@ pub fn set_settings(patch: &Value) -> std::io::Result<()> {
     write_toml("settings.toml", &Value::Obj(cur))
 }
 
+/// The socket is named for the version — `kiki-0.2.0.sock` — so a window and a daemon of the
+/// same build find each other and no other: a checkout's window never lands on the installed
+/// daemon, an upgraded package's window never on the daemon still running from before (owner,
+/// 2026-09-25: "that way kiki and kikid can be paired"). `KIKI_SOCKET` still overrides it.
+pub fn socket_name() -> String {
+    format!("kiki-{}.sock", env!("CARGO_PKG_VERSION"))
+}
+
 pub fn socket_path_string() -> String {
-    std::env::var("KIKI_SOCKET").unwrap_or_else(|_| format!("{}/kiki.sock", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into())))
+    std::env::var("KIKI_SOCKET").unwrap_or_else(|_| format!("{}/{}", std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()), socket_name()))
 }
 
 pub fn reset_all() -> std::io::Result<()> {
@@ -566,5 +574,16 @@ mod view_pref_tests {
         assert!(p.get("file:///f5").is_some(), "and no more than that");
         std::env::remove_var("KIKI_CONFIG_DIR");
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    /// The window computes the same name from `version.js`; `make lint` keeps the two versions one.
+    #[test]
+    fn the_socket_is_named_for_the_version() {
+        assert_eq!(super::socket_name(), format!("kiki-{}.sock", env!("CARGO_PKG_VERSION")));
+        std::env::remove_var("KIKI_SOCKET");
+        assert!(super::socket_path_string().ends_with(&super::socket_name()));
     }
 }

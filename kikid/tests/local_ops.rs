@@ -15,7 +15,6 @@
 use kikid::json::Value;
 use kikid::listing::Listing;
 use kikid::vfs::uri::Uri;
-use kikid::vfs::VfsError;
 use kikid::{jobs, ops};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -197,10 +196,15 @@ fn make_rename_delete_and_stamp_a_local_file() {
     let e = kikid::locations::resolve(&unknown).map(|_| ()).unwrap_err();
     assert_eq!(e.code(), "Io");
     assert!(e.message().contains("no location for nosuch://server"), "{}", e.message());
-    let e = kikid::listing::open(&unknown).map(|_| ()).unwrap_err();
-    // Numbered (1260, "no location for {scheme}://{host}") since 0.2.0: still an Io to a client.
-    assert!(matches!(e, VfsError::Said { n: 1260, .. }), "{}", e.message());
-    assert_eq!(e.code(), "Io");
+    // A listing opens at once and connects on its scan (2026-09-25): the unknown host is the
+    // scan's failure, numbered (1260, "no location for {scheme}://{host}") since 0.2.0.
+    let (l, _) = kikid::listing::open(&unknown).unwrap();
+    let start = std::time::Instant::now();
+    while !l.count().1 && start.elapsed() < std::time::Duration::from_secs(10) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert_eq!(l.error_said().map(|s| s.0), Some(1260), "{:?}", l.error());
+    assert!(l.error().unwrap().contains("no location for nosuch://server"), "{:?}", l.error());
     // And a job over one is refused rather than run against a local path of the same name.
     refused(Value::obj().s("op", "mkdir").s("uri", "nosuch://server/made-up").done(), "no location for nosuch://server");
     assert!(!PathBuf::from("/made-up").exists());

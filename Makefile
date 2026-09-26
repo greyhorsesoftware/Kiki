@@ -75,6 +75,8 @@ lint: clippy
 	$(CARGO) fmt --all -- --check
 	@# The catalogs stay whole: every key asked for exists in every language, none is unasked (docs/0.2.0/02-localization.md).
 	python3 tests/i18n_check.py
+	@# One version in Cargo.toml, the window and the packages: the socket is named for it.
+	python3 tests/version_check.py
 
 clean:
 	$(CARGO) clean

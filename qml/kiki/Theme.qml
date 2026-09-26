@@ -37,6 +37,10 @@ Singleton {
     /// green there, and "Move to Trash" in green reads as the safe choice. A palette slot is a
     /// colour; danger is a meaning, and it does not get to be green.
     readonly property color danger: isReddish(red) ? red : "#f7768e"
+    /// Code in Quick Look: the daemon says what a token is (keyword, string, comment, number,
+    /// type, function, attribute, punctuation) and these say what that looks like, from the
+    /// theme's own colours so a theme change recolours the code too.
+    readonly property var code: ({ keyword: purple, string: green, comment: muted, number: yellow, type: cyan, function: accent, attribute: yellow, punctuation: fgDim })
     /// What "this has been changed" is drawn in — a modified file's badge, a dirty repository's
     /// capsule. The theme's yellow, unless the theme's yellow is red (matte-black: `yellow =
     /// "#b91c1c"`): then changed and conflicted would be one colour, and the difference between

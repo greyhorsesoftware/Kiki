@@ -56,6 +56,7 @@ Rectangle {
             anchors.fill: parent; anchors.margins: 18; spacing: 12
 
             Item {
+                id: header
                 width: parent.width; height: 28
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -69,6 +70,7 @@ Rectangle {
                 }
             }
             Text {
+                id: intro
                 width: parent.width
                 text: win.recording
                     ? (win.clash ? Kiki.T.tr("keys.clash", { action: win.keymap.find(win.clash).label.toLowerCase() })
@@ -78,10 +80,12 @@ Rectangle {
                 color: win.clash ? Kiki.Theme.danger : (win.recording ? Kiki.Theme.accent : Kiki.Theme.muted)
                 font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
-            Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
+            Rectangle { id: rule; width: parent.width; height: 1; color: Kiki.Theme.line }
 
+            // What the header, the intro and the rule leave: the intro wraps to several lines
+            // (and more in Spanish), and a fixed 92 let the list run out of the panel.
             Flickable {
-                width: parent.width; height: parent.height - 92
+                width: parent.width; height: parent.height - header.height - intro.height - rule.height - 3 * parent.spacing
                 contentWidth: width; contentHeight: rows.height
                 clip: true; boundsBehavior: Flickable.StopAtBounds
                 NaturalScroll { }

@@ -16,8 +16,15 @@ out="$here/out"; mkdir -p "$out"
 # hyprctl and the screen recorder must keep looking in the real one; the demo flow uses these.
 export KIKI_E2E_REAL_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 desktop_display="$KIKI_E2E_REAL_RUNTIME_DIR/${WAYLAND_DISPLAY:-wayland-1}"
-work="$(mktemp -d /tmp/kiki-e2e-XXXXXX)"
+# On disk, under target/, not in /tmp: /tmp is a tmpfs of a few GB here, and a run — two 1.5 GB
+# upload fixtures, a mirror's worth of copies — filled it once (2026-09-25), which took the
+# machine's shells down with it. target/ is ignored by git and cleaned by `cargo clean`.
+mkdir -p "$root/target/e2e"
+work="$(mktemp -d "$root/target/e2e/run-XXXXXX")"
 export XDG_RUNTIME_DIR="$work/run"; mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+# One name for the run's socket, whatever the version: the daemon, the window and the driver
+# all read KIKI_SOCKET (by default each is named for its version, `kiki-<version>.sock`).
+export KIKI_SOCKET="$XDG_RUNTIME_DIR/kiki.sock"
 export KIKI_CONFIG_DIR="$work/config"; mkdir -p "$KIKI_CONFIG_DIR"
 # A fresh config means the first-run dialog ("Make kiki your file manager?") would be up over
 # everything, swallowing every key the flows send. A test run must never be asked to change the
@@ -48,6 +55,15 @@ export KIKI_TRASH_DIR="$work/trash"
 export HOME_FIXTURE="$work/home"; mkdir -p "$HOME_FIXTURE"
 export KIKI_START="file://$HOME_FIXTURE"
 export WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman
+# No application is ever started under the harness: the daemon's `KIKI_OPEN_WITH` runs this in
+# place of one, and it only writes what it was given to a log a flow can read (quick_look checks
+# the log stays empty — a look starts nothing).
+export KIKI_E2E_OPEN_LOG="$work/open.log"
+cat > "$work/open-with" <<EOS
+#!/bin/sh
+printf '%s\n' "\$@" >> "$KIKI_E2E_OPEN_LOG"
+EOS
+chmod +x "$work/open-with"; export KIKI_OPEN_WITH="$work/open-with"
 # A secret-tool of our own: there is no Secret Service in a headless run. It keeps what it is given
 # in the temp directory and gives it back, because a flow that signs in to a server with a
 # password (remote_transfers, FTPS) needs the daemon to be able to look that password up again.

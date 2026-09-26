@@ -8,8 +8,12 @@ use super::*;
 /// The error used to be readable only in the reply to `Open`, so a folder that failed to list
 /// **again** had nowhere to say so: a share whose server had gone away came back from Refresh as
 /// nought items, done, no error, and the pane showed an empty folder where the files had been.
-fn finished(lid: u64, n: u64, error: Option<&str>) -> Value {
-    proto::event("Count").u("lid", lid).u("n", n).b("done", true).opt_s("error", error).done()
+fn finished(lid: u64, n: u64, error: Option<&str>, said: Option<&(u16, Value)>) -> Value {
+    let mut o = proto::event("Count").u("lid", lid).u("n", n).b("done", true).opt_s("error", error);
+    if let Some((num, params)) = said {
+        o = o.u("errorN", *num as u64).v("errorParams", params.clone());
+    }
+    o.done()
 }
 
 impl Listing {
@@ -40,6 +44,7 @@ impl Listing {
         inner.scan_done = true;
         if let Err(e) = result {
             inner.scan_error = Some(e.message());
+            inner.scan_said = e.said_json();
         }
         let total = inner.pool.len();
         {
@@ -52,10 +57,11 @@ impl Listing {
         let n = inner.view.len() as u64;
         let gen = inner.generation;
         let failed = inner.scan_error.clone();
+        let said = inner.scan_said.clone();
         let subs = inner.subscribers.clone();
         drop(inner);
         for s in &subs {
-            let _ = s.tx.send(finished(s.lid, n, failed.as_deref()));
+            let _ = s.tx.send(finished(s.lid, n, failed.as_deref(), said.as_ref()));
             let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
         }
         if std::env::var_os("KIKI_TRACE").is_some() {
@@ -270,6 +276,7 @@ impl Listing {
         inner.pool = pool;
         inner.meta = meta;
         inner.scan_done = true;
+        inner.scan_said = result.as_ref().err().and_then(|e| e.said_json());
         inner.scan_error = result.err().map(|e| e.message());
         inner.stale = false;
         inner.sorted = false;
@@ -279,6 +286,7 @@ impl Listing {
         let gen = inner.generation;
         let count = inner.view.len() as u64;
         let failed = inner.scan_error.clone();
+        let said = inner.scan_said.clone();
         let subs = inner.subscribers.clone();
         drop(inner);
         {
@@ -286,7 +294,7 @@ impl Listing {
             c.entries = c.entries.saturating_sub(old_total) + n;
         }
         for s in &subs {
-            let _ = s.tx.send(finished(s.lid, count, failed.as_deref()));
+            let _ = s.tx.send(finished(s.lid, count, failed.as_deref(), said.as_ref()));
             let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", count).u("gen", gen).done());
         }
         if !crate::git::is_slow(&self.path) {

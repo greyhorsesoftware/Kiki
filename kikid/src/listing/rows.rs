@@ -36,6 +36,11 @@ impl Listing {
         self.inner.lock().unwrap().scan_error.clone()
     }
 
+    /// The scan's failure by number, when it has one.
+    pub fn error_said(&self) -> Option<(u16, Value)> {
+        self.inner.lock().unwrap().scan_said.clone()
+    }
+
     /// Answer a window immediately with what is known and queue stats for the rest.
     pub fn window(self: &Arc<Self>, client: u64, lid: u64, first: u32, count: u32, view: Option<(u32, u32)>) -> Value {
         let count = count.min(WINDOW_MAX);

@@ -17,7 +17,7 @@ Rate each dimension by its worst unmitigated finding.
 Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
 
 - **`kikid/`**: a Rust daemon (std, `rustix`, `libc`, own JSON in `crates/kiki-json`,
-  no async runtime) serving a Unix socket at `$XDG_RUNTIME_DIR/kiki.sock` with
+  no async runtime) serving a Unix socket at `$XDG_RUNTIME_DIR/kiki-<version>.sock` with
   newline-delimited JSON for the shell and length-prefixed frames for plugins. Threads:
   reader and writer per client, scanner per listing, stat and thumbnail pools, an
   inotify watcher, job threads, index and device threads. Listings live in a string

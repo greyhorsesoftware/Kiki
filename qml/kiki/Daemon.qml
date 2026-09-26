@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "." as Kiki
+import "version.js" as Version
 
 // The one connection to kikid. Newline-delimited JSON over the Unix socket:
 // requests carry an id and get one reply; events carry "event" and a lid.
@@ -10,7 +11,17 @@ import "." as Kiki
 Singleton {
     id: daemon
 
-    property string socketPath: Quickshell.env("KIKI_SOCKET") || (Quickshell.env("XDG_RUNTIME_DIR") + "/kiki.sock")
+    /// Named for the version — `kiki-0.2.0.sock` — so this window and a daemon of its own build
+    /// find each other and no other (`version.js`); `KIKI_SOCKET` overrides it, as for the daemon.
+    property string socketPath: Quickshell.env("KIKI_SOCKET") || (Quickshell.env("XDG_RUNTIME_DIR") + "/kiki-" + Version.version + ".sock")
+    /// A daemon of another version answered: the sentence to show, "" when the pair matches.
+    property string mismatch: ""
+    /// What Hello's reply says about the pairing: "" for a daemon of this version (or one too
+    /// old to say — a script's fake), else the sentence, in the window's language.
+    function pairing(ok) {
+        if (!ok || ok.kikid === undefined || ok.kikid === Version.version) return ""
+        return Kiki.T.tr("daemon.versionMismatch", { daemon: ok.kikid, window: Version.version })
+    }
     property bool ready: false
     property int protocolVersion: 0
     property string daemonVersion: ""
@@ -32,6 +43,8 @@ Singleton {
         const id = _nextId++
         const msg = Object.assign({ id: id, type: type }, fields || {})
         if (!socket) { if (cb) cb(undefined, { code: "Disconnected", message: Kiki.T.tr("daemon.notConnected") }); return id }
+        // A mismatched daemon answers nothing but its refusal: every request is the sentence.
+        if (daemon.mismatch !== "") { if (cb) cb(undefined, { code: "Version", message: daemon.mismatch }); return id }
         if (cb) _pending[id] = cb
         socket.write(JSON.stringify(msg) + "\n")
         socket.flush()
@@ -92,6 +105,8 @@ Singleton {
     function _hello() {
         daemon.request("Hello", { version: 1, client: "kiki" }, (ok, err) => {
             if (!ok) { console.warn("kikid Hello failed", err && err.message); return }
+            daemon.mismatch = daemon.pairing(ok)
+            if (daemon.mismatch !== "") { console.warn("kikid", ok.kikid, "is not this window's", Version.version); return }
             daemon.protocolVersion = ok.version
             daemon.daemonVersion = ok.daemon
             const again = daemon._hadSession

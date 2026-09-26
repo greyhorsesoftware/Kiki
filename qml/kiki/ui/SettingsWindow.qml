@@ -189,7 +189,7 @@ Rectangle {
         Row2 { label: Kiki.T.tr("settings.fileIcons"); Choice { options: ["kiki", "system"]; value: Kiki.Settings.view.icons || "kiki"; onPicked: v => sw.set("view", "icons", v) } }
         Row2 { label: Kiki.T.tr("settings.defaultView"); Choice { objectName: "default-view"; options: ["list", "icon", "columns", "gallery"]; value: Kiki.Settings.view["default"] === "mirror" ? "list" : Kiki.Settings.view["default"]; onPicked: v => sw.set("view", "default", v) } }
         Row2 { label: Kiki.T.tr("settings.sortBy"); Choice { options: ["name", "kind", "size", "mtime", "atime"]; value: Kiki.Settings.view.sort; onPicked: v => sw.set("view", "sort", v) } }
-        Row2 { hint: Kiki.T.tr("settings.vimKeysHint"); label: Kiki.T.tr("settings.vimKeys"); Switch { on: Kiki.Settings.view.vimKeys === true; onToggled: sw.set("view", "vimKeys", !on) } }
+        Row2 { hint: Kiki.T.tr("settings.shortcutChipsHint"); label: Kiki.T.tr("settings.shortcutChips"); Switch { objectName: "shortcut-chips"; on: Kiki.Settings.view.shortcutChips === true; onToggled: sw.set("view", "shortcutChips", !on) } }
         Row2 { hint: Kiki.T.tr("settings.relativeDatesHint"); label: Kiki.T.tr("settings.relativeDates"); Switch { on: Kiki.Settings.view.relativeDates !== false; onToggled: sw.set("view", "relativeDates", !on) } }
         Row2 { hint: Kiki.T.tr("settings.favoritesPanelHint"); label: Kiki.T.tr("settings.favoritesPanel")
             Choice { options: ["rail", "traditional"]; value: Kiki.Settings.view.sidebarStyle || "rail"; onPicked: v => sw.set("view", "sidebarStyle", v) } }

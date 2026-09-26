@@ -16,9 +16,9 @@ def run(ctx):
         return
 
     c.check("dot files are out of the way by default", sh.state().get("count") == 3, sh.state().get("count"))
-    sh.keys(("ctrl", "h"))
-    c.check("Ctrl+H shows them", sh.wait_state(lambda st: st.get("count") == 4) is not None, sh.state().get("count"))
-    sh.keys(("ctrl", "h"))
+    sh.keys(("period",))
+    c.check(". shows them", sh.wait_state(lambda st: st.get("count") == 4) is not None, sh.state().get("count"))
+    sh.keys(("period",))
     c.check("and hides them again", sh.wait_state(lambda st: st.get("count") == 3) is not None, sh.state().get("count"))
 
     # The filter narrows the listing in place and Escape puts it back.

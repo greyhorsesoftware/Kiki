@@ -5,8 +5,9 @@ import "." as Kiki
 // bound to. `Shell.qml` asks this what a keypress means before it reaches its own handler, and
 // the shortcuts window edits the same table, so the two can never disagree.
 //
-// Contextual keys — the arrows, Enter, Backspace, Vim keys, type-ahead — are not here: they
-// mean different things in each view and there is nothing useful to rebind them to.
+// Contextual keys — the arrows and the Vim letters (h j k l, y x p, v, r, dd, z, f, :, m, .),
+// Enter, Backspace — are not here: they mean different things in each view and there is
+// nothing useful to rebind them to.
 QtObject {
     id: keymap
 
@@ -23,7 +24,6 @@ QtObject {
         { id: "viewColumns",   group: "view",     label: Kiki.T.tr("action.viewColumns"),           def: "Ctrl+3" },
         { id: "viewMirror",    group: "view",     label: Kiki.T.tr("action.viewMirror"),           def: "Ctrl+4" },
         { id: "viewGallery",   group: "view",     label: Kiki.T.tr("action.viewGallery"),           def: "Ctrl+5" },
-        { id: "hidden",        group: "view",     label: Kiki.T.tr("action.hidden"),      def: "Ctrl+H" },
         { id: "inspector",     group: "view",     label: Kiki.T.tr("action.inspector"),             def: "Ctrl+I" },
         { id: "refresh",       group: "view",     label: Kiki.T.tr("action.refresh"),                def: "F5" },
         { id: "sidebar",       group: "view",     label: Kiki.T.tr("action.sidebar"), def: "Ctrl+Shift+B" },
@@ -47,6 +47,7 @@ QtObject {
         { id: "openDefault",   group: "files",    label: Kiki.T.tr("action.openDefault"),   def: "Alt+Enter" },
         { id: "share",         group: "files",    label: Kiki.T.tr("action.share"),                  def: "Alt+S" },
         { id: "ai",            group: "files",    label: Kiki.T.tr("action.ai"),            def: "Alt+Q" },
+        { id: "terminal",      group: "files",    label: Kiki.T.tr("action.terminal"),      def: "Ctrl+T" },
 
         { id: "mirror",        group: "twoPanes", label: Kiki.T.tr("action.mirror"),  def: "Ctrl+M" },
         { id: "transfer",      group: "twoPanes", label: Kiki.T.tr("action.transfer"),           def: "F6" },

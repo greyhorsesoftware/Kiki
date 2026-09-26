@@ -10,11 +10,12 @@ license=('MIT')
 # libsecret is where `secret-tool` lives (gnome-keyring is the Secret Service behind it);
 # libarchive is bsdtar, udisks2 is udisksctl, git is the repository overlay in every listing.
 # glib2 and gvfs are what the SMB plugin links and talks to; the backend itself is optional.
+# poppler is pdftoppm, which draws PDF pages for thumbnails and for Quick Look; qt6-multimedia
+# is the player Quick Look shows a video with (docs/0.2.0/05-quicklook.md).
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'
-         'udisks2' 'git' 'qt6-declarative' 'glib2' 'gvfs')
+         'udisks2' 'git' 'qt6-declarative' 'qt6-multimedia' 'poppler' 'glib2' 'gvfs')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf' 'glib2')
-optdepends=('poppler: PDF thumbnails'
-            'noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
+optdepends=('noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
             'openssh: SFTP host key tools'
             'gvfs-smb: SMB (Windows share) locations'
             'gvfs-wsdd: find Windows computers on the network'
@@ -60,7 +61,9 @@ package() {
   install -d "${pkgdir}/usr/share/kiki"
   cp -r "${_srcdir}/qml/." "${pkgdir}/usr/share/kiki/"
 
-  install -Dm644 "${_srcdir}/packaging/systemd/kiki.socket"   "${pkgdir}/usr/lib/systemd/user/kiki.socket"
+  # The socket is named for the version (kiki-0.2.0.sock): a window and a daemon are a pair.
+  install -d "${pkgdir}/usr/lib/systemd/user"
+  sed "s/@VERSION@/${pkgver}/" "${_srcdir}/packaging/systemd/kiki.socket" > "${pkgdir}/usr/lib/systemd/user/kiki.socket"
   install -Dm644 "${_srcdir}/packaging/systemd/kikid.service" "${pkgdir}/usr/lib/systemd/user/kikid.service"
   install -Dm644 "${_srcdir}/packaging/org.kiki.App.desktop"  "${pkgdir}/usr/share/applications/org.kiki.App.desktop"
   # The mark the desktop entry names, and the one the About panel tints to the current theme.

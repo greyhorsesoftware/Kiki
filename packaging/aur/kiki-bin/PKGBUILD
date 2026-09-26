@@ -12,9 +12,8 @@ url="https://github.com/greyhorsesoftware/Kiki"
 license=('MIT')
 # Keep in step with packaging/PKGBUILD.
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'
-         'udisks2' 'git' 'qt6-declarative' 'glib2' 'gvfs')
-optdepends=('poppler: PDF thumbnails'
-            'noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
+         'udisks2' 'git' 'qt6-declarative' 'qt6-multimedia' 'poppler' 'glib2' 'gvfs')
+optdepends=('noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
             'openssh: SFTP host key tools'
             'gvfs-smb: SMB (Windows share) locations'
             'gvfs-wsdd: find Windows computers on the network'

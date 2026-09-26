@@ -390,20 +390,23 @@ pub fn spawn_detached_in(argv: &[String], dir: Option<&std::path::Path>) -> Resu
 
 // ---------------------------------------------------------------- what a double-click does
 
-/// What a double-click on a file does (0.2.0; owner, 2026-09-24: "double clicking a file should
-/// open it in the default editor; double clicking a remote file should download and then open
-/// in the default editor for the type"): the default application for the file's type, `xdg-open`
-/// when none is registered. A remote file is fetched first and written back when saved
-/// (`openback`); the fetch job's id is answered so the window can follow it. `KIKI_OPEN_WITH`
-/// names a program to run on the file instead of any application: what the tests set.
-pub fn open_default(uri: &crate::vfs::uri::Uri) -> Result<Option<u64>, String> {
-    crate::openback::localise(std::slice::from_ref(uri), |local| {
-        if let Some(u) = local.first() {
-            if let Err(e) = open_local(&u.to_path()) {
-                eprintln!("open {}: {e}", u.to_path().display());
-            }
-        }
-    })
+/// What a double-click on a file does (0.2.0): the default application for the file's type,
+/// `xdg-open` when none is registered — for a file on this machine. A file on a server is not
+/// opened in an application at all: the window shows it in Quick Look instead (owner,
+/// 2026-09-25: "double click should just open the quicklook window for remote"; the day-old
+/// fetch-and-write-back was withdrawn with that), and asked anyway the daemon says so by number.
+/// `KIKI_OPEN_WITH` names a program to run on the file instead of any application: what the
+/// tests set.
+pub fn open_default(uri: &crate::vfs::uri::Uri) -> crate::vfs::Result<()> {
+    if !uri.is_local() {
+        return Err(on_a_server(uri));
+    }
+    open_local(&uri.to_path()).map_err(|e| crate::vfs::VfsError::said(1331, &[("name", &uri.name()), ("error", &e)], format!("{} could not be opened: {e}", uri.name())))
+}
+
+/// 1330: a file on a server, asked to be opened in an application — Quick Look is the way.
+pub fn on_a_server(uri: &crate::vfs::uri::Uri) -> crate::vfs::VfsError {
+    crate::vfs::VfsError::said(1330, &[("name", &uri.name())], format!("{} is on a server; Quick Look shows it (Space)", uri.name()))
 }
 
 fn open_local(path: &Path) -> Result<(), String> {

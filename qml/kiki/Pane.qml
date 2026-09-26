@@ -63,6 +63,9 @@ QtObject {
     /// view, sort, hidden files — is the folder's preference. One switch for read and write, so
     /// the two cannot drift apart.
     property bool rememberViews: true
+    /// On this machine, as against a server: the gallery is for local folders only (every
+    /// picture on a server would be a fetch), and the menu, the key and the smart pick all ask.
+    readonly property bool isLocal: uri.indexOf("file://") === 0
     /// Put this folder back the way it is remembered: for the pane that stays when side by side
     /// is turned off.
     function applyPref() {
@@ -88,7 +91,13 @@ QtObject {
             const want = !d || d === "mirror" ? "list" : d
             if (view !== want) view = want
         }
+        // A gallery is not for a server's folder: it opens as a list — and a folder REMEMBERED as
+        // a gallery is remembered as a list from now on (owner, 2026-09-25: "if there is a
+        // preference, make it list view"); a default of gallery is only not applied here.
+        const rewrite = !isLocal && view === "gallery" && !!pref
+        if (!isLocal && view === "gallery") view = "list"
         _applying = false
+        if (rewrite) Kiki.Settings.setViewPref(target.replace(/\/+$/, "") || target, "list", sortRole, sortOrder, showHidden)
     }
     property bool _applying: false
     property bool hasPref: false
@@ -100,6 +109,7 @@ QtObject {
     function _smart() {
         if (_smartChecked === uri || hasPref || !rememberViews) return
         _smartChecked = uri
+        if (!isLocal) return                      // no gallery on a server: every picture is a fetch
         const name = decodeURIComponent(uri.replace(/\/+$/, "").split("/").pop() || "").toLowerCase()
         let pick = pictureNames.indexOf(name) >= 0 ? "gallery" : ""
         if (!pick) {

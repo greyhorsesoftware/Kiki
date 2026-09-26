@@ -2,7 +2,7 @@
 Description=kiki file manager daemon socket
 
 [Socket]
-ListenStream=%t/kiki.sock
+ListenStream=%t/kiki-@VERSION@.sock
 SocketMode=0600
 
 [Install]

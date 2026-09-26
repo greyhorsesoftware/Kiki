@@ -39,7 +39,7 @@ fn serve() {
         }
     };
     kikid::dbus::start();
-    kikid::openback::clear();
+    kikid::fetched::clear();
     kikid::plugin::start_reaper();
     kikid::locations::migrate_option_labels();
     kikid::devices::start();
@@ -58,7 +58,7 @@ fn socket_path() -> PathBuf {
         return PathBuf::from(p);
     }
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/tmp/kiki-{}", unsafe { libc::getuid() }));
-    PathBuf::from(dir).join("kiki.sock")
+    PathBuf::from(dir).join(kikid::config::socket_name())
 }
 
 /// systemd socket activation: LISTEN_FDS=1 with the listener on fd 3.

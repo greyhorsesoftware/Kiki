@@ -167,6 +167,9 @@ impl Client {
                     Value::obj()
                         .u("version", proto::PROTOCOL_VERSION)
                         .s("daemon", format!("kikid {}", env!("CARGO_PKG_VERSION")))
+                        // The build itself, for the window to compare with its own: a window and
+                        // a daemon are a pair, and one from another version is refused.
+                        .s("kikid", env!("CARGO_PKG_VERSION"))
                         .v("plugins", Value::Arr(crate::plugin::available().into_iter().map(Value::Str).collect()))
                         .done(),
                 ))
@@ -304,33 +307,18 @@ impl Client {
                 let key = b.str_field("tool").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 let class = crate::openin::find(&key).and_then(|t| t.str_field("id").map(crate::openin::window_class)).unwrap_or_default();
-                // A remote file is fetched first and the tool opened on the copy when it has
-                // arrived (0.2.0): the reply then names the fetch job instead of a pid.
-                if uris.iter().any(|u| !u.is_local()) {
-                    let line = b.u64_field("line");
-                    crate::openback::localise(&uris, move |local| {
-                        if let Err(e) = crate::openin::open(&key, &local, line) {
-                            eprintln!("open in {key}: {e}");
-                        }
-                    })
-                    .map(|job| Some(Value::obj().u("job", job.unwrap_or(0)).s("class", class).done()))
-                    .map_err(|m| ("Io", m))
+                // A file on a server is not opened in a tool: Quick Look is the way, said by number.
+                if let Some(r) = uris.iter().find(|u| !u.is_local()) {
+                    Err(vfs_err(crate::desktop::on_a_server(r)))
                 } else {
                     crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).s("class", class).done())).map_err(|e| ("Invalid", e))
                 }
             }
-            // A double-click on a file (0.2.0): the default application, a remote file fetched first.
+            // A double-click on a file (0.2.0): the default application; a file on a server says 1330.
             "OpenDefault" => match parse_uri(b, "uri") {
                 Ok(u) => {
                     crate::access::record(&u.to_string());
-                    crate::desktop::open_default(&u)
-                        .map(|job| {
-                            Some(match job {
-                                Some(j) => Value::obj().u("job", j).done(),
-                                None => Value::obj().done(),
-                            })
-                        })
-                        .map_err(|e| ("Io", e))
+                    crate::desktop::open_default(&u).map(|_| Some(Value::obj().done())).map_err(vfs_err)
                 }
                 Err(e) => Err(e),
             },
@@ -529,6 +517,44 @@ impl Client {
             "Preview" => match parse_uri(b, "uri") {
                 Ok(u) => crate::preview::preview(&u).map(Some).map_err(vfs_err),
                 Err(e) => Err(e),
+            },
+            // Quick Look (0.2.0, plan 05): the window's own verbs; each says its failures by number.
+            "ReadText" => match parse_uri(b, "uri") {
+                Ok(u) => crate::quicklook::read_text(&u).map(Some).map_err(vfs_err),
+                Err(e) => Err(e),
+            },
+            "PdfInfo" => match parse_uri(b, "uri") {
+                Ok(u) => crate::quicklook::pdf_info(&u).map(Some).map_err(vfs_err),
+                Err(e) => Err(e),
+            },
+            "PdfPage" => match parse_uri(b, "uri") {
+                Ok(u) => {
+                    let page = b.u64_field("page").unwrap_or(1);
+                    let width = b.u64_field("width").unwrap_or(1024).min(u32::MAX as u64) as u32;
+                    let tx = self.tx.clone();
+                    // A render takes as long as pdftoppm takes; the window's other requests
+                    // (the next page, a thumbnail) should not wait behind it. The number goes
+                    // with the reply from here, since `reply` and its thread-local are elsewhere.
+                    std::thread::spawn(move || {
+                        let _ = tx.send(match crate::quicklook::pdf_page(&u, page, width) {
+                            Ok(v) => proto::ok(id, v),
+                            Err(e) => match e.said_json() {
+                                Some((n, params)) => proto::err_said(id, e.code(), e.message(), n, params),
+                                None => proto::err(id, e.code(), e.message()),
+                            },
+                        });
+                    });
+                    Ok(None)
+                }
+                Err(e) => Err(e),
+            },
+            "QuickLookFetch" => match parse_uri(b, "uri") {
+                Ok(u) => crate::quicklook::fetch(&u).map(Some).map_err(vfs_err),
+                Err(e) => Err(e),
+            },
+            "QuickLookDrop" => match b.str_field("path") {
+                Some(p) => crate::quicklook::drop(std::path::Path::new(p)).map(Some).map_err(vfs_err),
+                None => Err(("Invalid", "missing path".into())),
             },
             "Thumbnail" => match parse_uri(b, "uri") {
                 Ok(u) => {
@@ -948,17 +974,13 @@ impl Client {
                     crate::access::record(&u.to_string());
                 }
                 let app = b.str_field("app").unwrap_or("").to_string();
-                // Remote files are fetched first and the application started on the copies
-                // when they have arrived (0.2.0); the reply then carries the fetch job.
-                let job = crate::openback::localise(&uris, move |local| {
-                    let paths: Vec<String> = local.iter().map(|u| u.to_string()).collect();
-                    if let Err(e) = crate::desktop::launch(&app, &paths) {
-                        eprintln!("launch {app}: {e}");
-                    }
-                })
-                .map_err(|m| ("Io", m))?;
-                if let Some(j) = job {
-                    return Ok(Some(Value::obj().u("job", j).done()));
+                // A file on a server is not opened in an application: Quick Look is the way.
+                if let Some(r) = uris.iter().find(|u| !u.is_local()) {
+                    return Err(vfs_err(crate::desktop::on_a_server(r)));
+                }
+                let paths: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
+                if let Err(e) = crate::desktop::launch(&app, &paths) {
+                    eprintln!("launch {app}: {e}");
                 }
                 Ok(Some(Value::obj().done()))
             }

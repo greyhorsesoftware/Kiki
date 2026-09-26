@@ -346,7 +346,9 @@ fn pump() {
                 }
                 job.status.lock().unwrap().state = ended;
                 job.announce();
-                if undoable_now && matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
+                // A hidden job is nobody's toast either: Quick Look's fetch into the cache showed
+                // as "Copy X to 1790392597080 · Undo" (2026-09-25).
+                if !job.about.hidden && undoable_now && matches!(job.kind.as_str(), "trash" | "move" | "rename" | "chmod" | "delete" | "extract" | "compress" | "copy") {
                     // A job that stopped half way did not do what its title says: the toast
                     // offers to take back the part that it did, and says that is what it is.
                     let mut text = if finished_well { job.title.clone() } else { format!("{} — stopped part-way", job.title) };
@@ -355,7 +357,7 @@ fn pump() {
                     }
                     broadcast(proto::event("Toast").u("job", job.id).s("text", text).b("undoable", true).done());
                 }
-                if !undoable_now && matches!(job.kind.as_str(), "delete" | "emptyTrash") && finished_well {
+                if !job.about.hidden && !undoable_now && matches!(job.kind.as_str(), "delete" | "emptyTrash") && finished_well {
                     broadcast(proto::event("Toast").u("job", job.id).s("text", job.title.clone()).b("undoable", false).done());
                 }
                 queue().lock().unwrap().running -= 1;

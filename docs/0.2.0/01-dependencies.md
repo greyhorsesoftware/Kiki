@@ -79,3 +79,10 @@ Each item is its own commit with the lock-file delta in the message. `make lint`
 | D1 | `openssh` a hard dependency of the package? | Yes. Omarchy ships it; without it SFTP is not a kind this build speaks, and the alternative is keeping `russh` for the case where it is absent, which is the whole cost. |
 | D2 | Keep `auth: "key"` with an explicit file, or agent only? | Keep it. A key file without an agent is the headless-box case, and `-i` costs nothing. |
 | D3 | Item 3 at all? | Not now. Revisit with the number from a cold build after item 2. |
+
+## Added since: `syntect` (2026-09-25)
+
+For Quick Look's code colours (`05-quicklook.md`): the Sublime grammars, parsing only
+(`default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"]` — no
+oniguruma, no themes, no HTML), a few MB of syntax dump in the daemon. The one crate added
+since the survey; the window does its own colouring from the runs, so nothing else came with it.

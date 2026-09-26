@@ -507,7 +507,33 @@ FloatingWindow {
             win.inspectedRow = r; win.inspectedUri = r ? win.pane.childUri(r.name) : ""
             const ps = win.pane.selection.positions()
             win.inspectedRows = ps.length > 1 ? ps.map(i => win.pane.listing.row(i)).filter(x => x) : []
+            win.quickLookFollow()
         }
+    }
+    // Quick Look (docs/0.2.0/05-quicklook.md): Space on a file opens it in a window of its own
+    // beside this one, Space again closes it. While it is up it follows the selection — the
+    // gallery's "step", not a second window — and its own j k and arrows ask this window to
+    // move the selection. Columns keeps a selection of its own, so its highlight is watched too.
+    function openQuickLook() {
+        const r = win.selectedRow(), u = win.selectedUris()
+        if (!r || r.isDir || !u.length) return false
+        quickLookWin.show(r, u[0])
+        return true
+    }
+    function toggleQuickLook() { if (quickLookWin.visible) quickLookWin.close(); else openQuickLook() }
+    function quickLookFollow() {
+        if (!quickLookWin.visible) return
+        const r = win.selectedRow(), u = win.selectedUris()
+        if (r && u.length && u[0] !== quickLookWin.uri) quickLookWin.show(r, u[0])
+    }
+    function quickLookState() {
+        const on = quickLookWin.visible
+        return { visible: on, uri: on ? quickLookWin.uri : "", kind: on ? quickLookWin.shown : "", face: on ? quickLookWin.face : "" }
+    }
+    Connections {
+        target: win.pane.view === "columns" ? win.currentView() : null
+        ignoreUnknownSignals: true
+        function onInspectedUriChanged() { win.quickLookFollow() }
     }
     function submitChmod(uri, mode, recursive) { ops.chmod(uri, mode, recursive) }
     function submitChmodMany(mask, bits, recursive) { ops.chmodMany(win.selectedUris(), mask, bits, recursive) }
@@ -591,7 +617,7 @@ FloatingWindow {
     /// none of these was the current one.)
     function viewMenuItems() {
         const act = { gallery: () => win.enterGallery(), hidden: () => pane.setHidden(!pane.showHidden) }
-        return ViewMenu.items(pane.view, pane.showHidden, Kiki.T.tr).map(it => Object.assign(it, { action: act[it.id] || (() => win.setView(it.id)) }))
+        return ViewMenu.items(pane.view, pane.showHidden, Kiki.T.tr, pane.isLocal).map(it => Object.assign(it, { action: act[it.id] || (() => win.setView(it.id)) }))
     }
     function viewMenu() {
         const items = viewMenuItems()
@@ -600,16 +626,6 @@ FloatingWindow {
     // Sidebar keyboard focus (plan 23): Ctrl+B, then Up/Down/Enter, Esc back to the pane.
     property bool sidebarFocus: false
     function focusSidebar(on) { sidebarFocus = on; if (on && sidebarPanel.keyIndex < 0) sidebarPanel.keyIndex = 0; if (!on) sidebarPanel.keyIndex = -1 }
-    // Type-ahead (plan 23): letters jump to the next name starting with what was typed; the
-    // prefix resets after 800 ms. Off when Vim keys are on, since h j k l e are bound then.
-    readonly property bool vimKeys: Kiki.Settings.view.vimKeys === true
-    property string typed: ""
-    Timer { id: typedTimer; interval: 800; onTriggered: win.typed = "" }
-    function typeAhead(ch) {
-        typed += ch; typedTimer.restart()
-        const after = typed.length > 1 ? null : (pane.selection.current >= 0 ? pane.selection.current : null)
-        Kiki.Daemon.request("SeekName", { lid: pane.listing.lid, prefix: typed, after: after }, ok => { if (ok && ok.index !== null && ok.index !== undefined) win.selectAt(ok.index, false) })
-    }
     // Open with (plans 02/03 and 14): one list holding the desktop entries for the file's MIME
     // type and kiki's own tools, so there is a single way to open something elsewhere.
     /// Open with is the desktop's applications. The terminal tools and agents of plan 14 are
@@ -794,11 +810,12 @@ FloatingWindow {
         if (!r) return
         if (pane.isTrash) { win.restoreSelection(); return }
         if (r.isDir) pane.open(pane.childUri(r.name))
+        else if (!pane.isLocal) win.openQuickLook()          // a server's file: looked at, not opened
         else openExternal(pane.childUri(r.name))
     }
-    /// A double-click on a file: the daemon opens it with the default application for its
-    /// type, fetching a remote file to the cache first (0.2.0). It used to be `xdg-open` on the
-    /// URI here, which a remote URI gave nothing to work with.
+    /// A double-click on a local file: the daemon opens it with the default application for its
+    /// type (0.2.0). It used to be `xdg-open` on the URI here. A file on a server goes to Quick
+    /// Look instead (owner, 2026-09-25); asked anyway, the daemon says 1330.
     function openExternal(uri) { Kiki.Daemon.request("OpenDefault", { uri: uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
     /// Right: step into the selected folder. A file has nothing to step into.
     function enterSelected() {
@@ -873,7 +890,51 @@ FloatingWindow {
         case "mirror": win.toggleMirror(); return true
         case "transfer": if (!win.split) return false; win.transfer(true); return true
         case "project": if (win.projectMode) win.leaveProject(); else { const u = win.selectedUris(), r = win.selectedRow(); win.enterProject(u.length && r && r.isDir ? u[0] : win.pane.uri) } return true
+        case "terminal": if (pane.uri.indexOf("file://") !== 0) return false; win.openTerminalHere(pane.uri); return true
         case "eject": { const d = win.devices.find(d => pane.uri.startsWith(d.uri.replace(/\/$/, ""))); if (!d) return false; Kiki.Daemon.request("Eject", { uri: d.uri }); return true }
+        }
+        return false
+    }
+    // ------------------------------------------------ the keys that belong to the view
+    // The arrows and the Vim letters mean the same thing: h j k l are Left Down Up Right (0.2.0,
+    // owner: "make defaults for nav the vim ones — remove preference"). Bare letters are commands
+    // here, so there is no type-ahead; `/` and `f` filter.
+    /// `v`: extending, as if Shift were held — j k, the arrows, Home and End grow the selection
+    /// from where v was pressed, until Esc, until a folder is entered or left, or until the
+    /// selection is used (copied, cut, trashed).
+    property bool visual: false
+    readonly property string paneUri: pane.uri
+    onPaneUriChanged: visual = false
+    function keyDown(shift) { if (win.sidebarFocus) sidebarPanel.moveKey(1); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().moveKey(1); else win.moveSelection(win.rowStep, shift || win.visual) }
+    function keyUp(shift) { if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (win.galleryPane()) win.galleryPane().step(-1); else if (win.columnsPane()) win.columnsPane().moveKey(-1); else win.moveSelection(-win.rowStep, shift || win.visual) }
+    function keyLeft() { win.visual = false; if (win.galleryPane()) { if (!win.galleryPane().step(-1)) pane.up() } else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else pane.up() }
+    function keyRight() { win.visual = false; if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().focusRight(); else win.enterSelected() }
+    function openMenuKey() { menu.open(win.contextItemsNow(), Qt.point(400, 200)) }
+    /// `dd` trashes: the first d waits 600 ms for the second.
+    property bool pendingD: false
+    Timer { id: ddTimer; interval: 600; onTriggered: win.pendingD = false }
+    /// The Vim letters, bare (no Ctrl, no Alt): whether `key` was one of them. In the gallery
+    /// its own bare keys keep their meaning (f is the filmstrip there).
+    function vimKey(key, shift) {
+        if (key !== Qt.Key_D) pendingD = false
+        switch (key) {
+        case Qt.Key_J: keyDown(shift); return true
+        case Qt.Key_K: keyUp(shift); return true
+        case Qt.Key_H: keyLeft(); return true
+        case Qt.Key_L: keyRight(); return true
+        case Qt.Key_V: visual = !visual; if (visual && pane.selection.current >= 0 && !Object.keys(pane.selection.rows).length) pane.selection.set(pane.selection.current); return true
+        case Qt.Key_Y: visual = false; return runAction("copy")
+        case Qt.Key_X: visual = false; return runAction("cut")
+        case Qt.Key_P: return runAction("paste")
+        case Qt.Key_R: return runAction("rename")
+        case Qt.Key_Z: return runAction(shift ? "redo" : "undo")
+        case Qt.Key_E: editSelected(); return true
+        case Qt.Key_I: inspectorRequested = !inspectorRequested; return true
+        case Qt.Key_F: if (galleryPane()) galleryPane().filmstrip = !galleryPane().filmstrip; else openFilter(); return true
+        case Qt.Key_Colon: return runAction("typePath")
+        case Qt.Key_M: openMenuKey(); return true
+        case Qt.Key_Period: return runAction("hidden")
+        case Qt.Key_D: if (pendingD) { pendingD = false; visual = false; return runAction("trash") } pendingD = true; ddTimer.restart(); return true
         }
         return false
     }
@@ -909,7 +970,9 @@ FloatingWindow {
         return v && v.step ? v : null
     }
     property string galleryFrom: "icon"
-    function enterGallery() { if (pane.view !== "gallery") { galleryFrom = pane.view; pane.view = "gallery" } }
+    /// Not on a server: the menu greys the gallery out there, and the key and the arrow into a
+    /// picture follow the menu.
+    function enterGallery() { if (!pane.isLocal) return; if (pane.view !== "gallery") { galleryFrom = pane.view; pane.view = "gallery" } }
     /// The focused pane's view item when it is the columns view, else null.
     function columnsPane() {
         const v = (win.pane === win.right && rightLoader.item) ? rightLoader.item : viewLoader.item
@@ -959,47 +1022,40 @@ FloatingWindow {
         Keys.onPressed: event => {
             const ctrl = event.modifiers & Qt.ControlModifier, shift = event.modifiers & Qt.ShiftModifier, alt = event.modifiers & Qt.AltModifier
             // The rebindable shortcuts come first, from the table the shortcuts window edits.
-            // Whatever is left is contextual — arrows, Enter, type-ahead — and belongs to the view.
+            // Whatever is left is contextual — the arrows and the Vim letters, Enter, Backspace —
+            // and belongs to the view.
             const action = keymap.idFor(event.key, event.modifiers, event.text)
             if (action && win.runAction(action)) { event.accepted = true; return }
+            // The letters are commands only bare: with Ctrl or Alt they are chords, and a chord
+            // the table does not have means nothing.
+            if (!ctrl && !alt && win.vimKey(event.key, shift)) { event.accepted = true; return }
             switch (event.key) {
-            case Qt.Key_L: if (win.vimKeys && win.columnsPane()) win.columnsPane().focusRight(); else return; break
+            // Bare keys are free in the gallery: it has no list to move about in.
             case Qt.Key_1: if (win.galleryPane()) win.galleryPane().actual(); else return; break
-            // Bare keys are free in the gallery: type-ahead is off there.
             case Qt.Key_0: if (win.galleryPane()) win.galleryPane().fit(); else return; break
             case Qt.Key_Plus: case Qt.Key_Equal: if (win.galleryPane()) win.galleryPane().zoomBy(1.25); else return; break
             case Qt.Key_Minus: if (win.galleryPane()) win.galleryPane().zoomBy(0.8); else return; break
-            case Qt.Key_Space: if (win.galleryPane()) win.galleryPane().step(1); else return; break
-            case Qt.Key_J: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(1); else if (win.vimKeys) win.moveSelection(1, shift); else return; break
-            case Qt.Key_K: if (win.vimKeys && win.columnsPane()) win.columnsPane().moveKey(-1); else if (win.vimKeys) win.moveSelection(-1, shift); else return; break
-            case Qt.Key_Down: if (win.sidebarFocus) sidebarPanel.moveKey(1); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().moveKey(1); else win.moveSelection(win.rowStep, shift); break
-            case Qt.Key_Up: if (win.sidebarFocus) sidebarPanel.moveKey(-1); else if (alt) pane.up(); else if (win.galleryPane()) win.galleryPane().step(-1); else if (win.columnsPane()) win.columnsPane().moveKey(-1); else win.moveSelection(-win.rowStep, shift); break
-            case Qt.Key_F: if (win.galleryPane()) win.galleryPane().filmstrip = !win.galleryPane().filmstrip; else return; break
-            case Qt.Key_Home: win.selectAt(0, shift); break
-            case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift); break
-            case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift); break
-            case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift); break
-            case Qt.Key_H: if (win.vimKeys && win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else return; break
+            // In the gallery Space steps, as it always has; elsewhere it is Quick Look, on and off.
+            case Qt.Key_Space: if (win.galleryPane()) win.galleryPane().step(1); else if (quickLookWin.visible) quickLookWin.close(); else if (!win.openQuickLook()) return; break
+            case Qt.Key_Down: win.keyDown(shift); break
+            case Qt.Key_Up: if (alt) pane.up(); else win.keyUp(shift); break
+            case Qt.Key_Home: win.selectAt(0, shift || win.visual); break
+            case Qt.Key_End: win.selectAt(pane.listing.count - 1, shift || win.visual); break
+            case Qt.Key_PageDown: win.moveSelection(win.pageStep, shift || win.visual); break
+            case Qt.Key_PageUp: win.moveSelection(-win.pageStep, shift || win.visual); break
             case Qt.Key_Return: case Qt.Key_Enter: if (win.sidebarFocus) { sidebarPanel.activateKey(); win.focusSidebar(false); break } if (win.columnsPane()) { win.columnsPane().activateKey(); break } { const rr = pane.listing.row(pane.selection.current); if (rr && rr.isDir && !pane.isTrash) { win.openFolder(pane.childUri(rr.name)); break } } win.openSelected(); break
             case Qt.Key_Backspace: pane.up(); break
-            // In columns, Left walks back through the columns the inspector pushed off screen and
-            // only leaves the folder once it runs out of them.
-            // Left leaves a folder, Right enters one, whichever view is showing.
-            case Qt.Key_Left: if (alt) pane.back(); else if (win.galleryPane()) { if (!win.galleryPane().step(-1)) pane.up() } else if (win.columnsPane()) { if (!win.columnsPane().focusLeft()) pane.up() } else pane.up(); break
-            case Qt.Key_Right: if (alt) pane.forward(); else if (win.galleryPane()) win.galleryPane().step(1); else if (win.columnsPane()) win.columnsPane().focusRight(); else win.enterSelected(); break
-            case Qt.Key_E: if (win.vimKeys) win.editSelected(); else return; break
-            case Qt.Key_Menu: menu.open(win.contextItemsNow(), Qt.point(400, 200)); break
+            // Left leaves a folder, Right enters one, whichever view is showing; with Alt they
+            // walk the history. (In columns, Left first walks back through the columns the
+            // inspector pushed off screen.)
+            case Qt.Key_Left: if (alt) pane.back(); else win.keyLeft(); break
+            case Qt.Key_Right: if (alt) pane.forward(); else win.keyRight(); break
+            case Qt.Key_Menu: win.openMenuKey(); break
             // The mirror workspace answers Escape itself where it has something to stop — the
             // compare on its Preflight screen — and leaves it alone on its other screens.
-            case Qt.Key_Escape: if (activity.visible) activity.close(); else if (infoPopover.visible) win.inspectorRequested = false; else if (win.mirrorOpen && mirrorWs.escapeKey()) { /* the workspace stopped its compare */ } else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
-            case Qt.Key_I: if (win.vimKeys) win.inspectorRequested = !win.inspectorRequested; else return; break
+            case Qt.Key_Escape: if (win.visual) win.visual = false; else if (activity.visible) activity.close(); else if (infoPopover.visible) win.inspectorRequested = false; else if (win.mirrorOpen && mirrorWs.escapeKey()) { /* the workspace stopped its compare */ } else if (win.sidebarFocus) win.focusSidebar(false); else if (win.galleryPane()) pane.view = win.galleryFrom; else pane.selection.clear(); break
             case Qt.Key_Tab: if (win.split) win.focusPane(win.otherPane()); else return; break
-            default:
-                // type-ahead: printable characters without Ctrl/Alt (Vim keys off)
-                // Not in the gallery: its bare keys are commands (0, 1, +, -, F, Space), and a letter
-                // that jumped the stage to another picture would be a surprise beside them.
-                if (!ctrl && !alt && !win.vimKeys && !win.sidebarFocus && !win.galleryPane() && event.text && event.text.length === 1 && event.text.charCodeAt(0) > 32) { win.typeAhead(event.text); break }
-                return
+            default: return
             }
             event.accepted = true
         }
@@ -1095,6 +1151,19 @@ FloatingWindow {
             else win.shareTargets(p, uris)
         }
         function settings(action: string, page: string): void { if (action === "open") settingsWin.open(page || "general"); else { settingsWin.close(); keys.forceActiveFocus() } }
+        /// Quick Look, for the harness: `open` is Space on the selected file, `close` is Space
+        /// again (or Esc in the window), `toggle` is either; `step <n>` is j or k inside the
+        /// window; `key <name>` is a key pressed in it — escape, space, j, k. Answers what the
+        /// window shows, as `state` carries it.
+        function quickLook(action: string): string {
+            const a = (action || "").trim().split(/\s+/)
+            if (a[0] === "open") win.openQuickLook()
+            else if (a[0] === "close") quickLookWin.close()
+            else if (a[0] === "toggle") win.toggleQuickLook()
+            else if (a[0] === "step") quickLookWin.step(parseInt(a[1]) || 1)
+            else if (a[0] === "key") { const k = { escape: Qt.Key_Escape, space: Qt.Key_Space, j: Qt.Key_J, k: Qt.Key_K, down: Qt.Key_Down, up: Qt.Key_Up, left: Qt.Key_Left, right: Qt.Key_Right }[a[1]]; if (k !== undefined) quickLookWin.handleKey(k, 0) }
+            return JSON.stringify(win.quickLookState())
+        }
         /// The mirror workspace (plan 08's four screens) without a pointer. One word and its
         /// arguments, space-separated, because Quickshell's IPC hands a function strings:
         ///   `open` / `download`   start a run from the local or the remote side
@@ -1162,7 +1231,7 @@ FloatingWindow {
             return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: keys.activeFocus, filterOpen: win.filterOpen, searchOpen: searchOverlay.visible, settingsVisible: settingsWin.visible, menuVisible: menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.renamingRow(),
                 daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
                 dialogs: { confirm: confirm.visible, compress: compressDialog.visible, location: locationDialog.visible, integration: integrationDialog.visible, portal: portal.visible, share: shareSheet.visible }, split: win.split, infoPopover: infoPopover.visible, infoRows: win.inspectedRows.length, filter: win.pane.filterText, filterColumn: (win.pane.view === "columns" && win.currentView()) ? win.currentView().focusCol : -1, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
-                listColumns: win.listColumnWidths() })
+                listColumns: win.listColumnWidths(), quickLook: win.quickLookState() })
         }
         /// Side by side, for scripts and tests: `toggle`; `drag <px>` is what dragging the line
         /// between the panes to that x does, `end` lets go, `reset` is the double click.
@@ -1479,7 +1548,9 @@ FloatingWindow {
             id: bar
             width: parent.width
             // Side by side, Ctrl+M is the thing the layout is for, so it leads the hints.
-            keys: (win.split ? [{ key: "^M", label: Kiki.T.tr("chip.mirror") }] : []).concat(win.vimKeys ? [{ key: "h j k l", label: Kiki.T.tr("chip.move") }] : []).concat([
+            // The chips are a preference, off by default (owner, 2026-09-25: "hide the shortcuts stuff
+            // in the bottom bar"); messages roll into the bar either way.
+            keys: Kiki.Settings.view.shortcutChips !== true ? [] : (win.split ? [{ key: "^M", label: Kiki.T.tr("chip.mirror") }] : []).concat([{ key: "h j k l", label: Kiki.T.tr("chip.move") },
                 { key: "Enter", label: Kiki.T.tr("chip.open") }, { key: "←", label: Kiki.T.tr("chip.up") }, { key: "→", label: Kiki.T.tr("chip.into") },
                 { key: "^I", label: Kiki.T.tr("chip.info") }, { key: "F2", label: Kiki.T.tr("chip.rename") }, { key: "Del", label: Kiki.T.tr("chip.trash") },
                 { key: "❖C", label: Kiki.T.tr("chip.copy") }, { key: "❖V", label: Kiki.T.tr("chip.paste") }, { key: "/", label: Kiki.T.tr("chip.filter") },
@@ -1635,6 +1706,16 @@ FloatingWindow {
         onRevealRequested: uri => win.revealUri(uri)
     }
     UI.JobLogWindow { id: jobLog; objectName: "joblog"; onCopyText: text => Quickshell.execDetached(["wl-copy", text]) }
+    // A second top-level window, declared here so it is this window's: Quickshell maps it when
+    // `visible` goes true and unmaps it when it goes false, and maps it again on the next
+    // (measured under 0.3.1 — a nested FloatingWindow, unlike the root, does come back).
+    UI.QuickLookWindow {
+        id: quickLookWin
+        home: win.home; paneUri: win.pane.uri
+        onStep: delta => win.moveSelection(delta, false)
+        onOpenWith: win.openWithMenu()
+        onDismissed: keys.forceActiveFocus()
+    }
     /// Show a file where it is: its folder, with it selected.
     function revealUri(uri) {
         const parent = uri.replace(/\/[^/]*$/, "") || uri

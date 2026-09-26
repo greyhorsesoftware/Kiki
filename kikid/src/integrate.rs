@@ -300,6 +300,9 @@ fn dbus_remove() -> Result<String, String> {
 
 // ---------------------------------------------------------------- 3. hyprland
 
+/// The launch keys, the chooser's floating rule, and Quick Look's: its window floats and is
+/// pinned — above everything, on every workspace — matched by the title's constant ending
+/// (owner, 2026-09-25: "quick look window should be a floating window ie above all").
 pub fn hypr_block() -> String {
     format!(
         "{BEGIN}\n\
@@ -308,6 +311,8 @@ pub fn hypr_block() -> String {
          windowrulev2 = float, class:^(kiki-chooser)$\n\
          windowrulev2 = center, class:^(kiki-chooser)$\n\
          windowrulev2 = size 860 560, class:^(kiki-chooser)$\n\
+         windowrulev2 = float, title:^(.* — Quick Look)$\n\
+         windowrulev2 = pin, title:^(.* — Quick Look)$\n\
          {END}\n"
     )
 }
@@ -380,7 +385,7 @@ fn hypr_apply() -> Result<String, String> {
     if new != old {
         hypr_write_reload(&old, &new)?;
     }
-    Ok("Super+Shift+F opens kiki, Super+Alt+Shift+F opens the terminal's folder; the chooser floats".into())
+    Ok("Super+Shift+F opens kiki, Super+Alt+Shift+F opens the terminal's folder; the chooser floats; Quick Look floats above all".into())
 }
 
 fn hypr_remove() -> Result<String, String> {

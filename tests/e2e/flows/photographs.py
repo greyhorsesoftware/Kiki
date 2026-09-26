@@ -9,6 +9,7 @@ The files land in tests/e2e/out/photo-<lang>-<name>.png. Not in the default run.
 
 import os, shutil, subprocess, time
 from harness import make_tree
+from media import png, pdf, mp4, MARKDOWN
 
 NEEDS = {"shell", "keyboard"}
 TITLE = "photographs of every dialog, in the language asked for"
@@ -24,7 +25,7 @@ def run(ctx):
     lang = os.environ.get("LANGUAGE", "en")
     home = make_tree(os.path.join(ctx.base, "home"), {
         "Documents": {"Quarterly report.md": "# Q\n" * 40, "Notes.txt": "call the dentist\n", "Budget 2026.csv": "a,b\n", "Receipts": {"march.pdf": 40_000}},
-        "Pictures": {}, "Backup": {}, "Projects": {"kiki": {"README.md": "# kiki\n", "src": {"main.rs": "fn main() {}\n"}}},
+        "Pictures": {}, "Backup": {}, "Looks": {"Field notes.md": MARKDOWN, "sheet.xlsx": "PK\x03\x04no", "main.rs": "//! A small program.\nfn main() {\n    let name = \"kiki\";\n    for i in 0..3 {\n        println!(\"{i}: hello, {name}\");\n    }\n}\n"}, "Projects": {"kiki": {"README.md": "# kiki\n", "src": {"main.rs": "fn main() {}\n"}}},
     })
     shots = []
 
@@ -68,6 +69,15 @@ def run(ctx):
     sh.call("settings", "close"); sh.keys(("Escape",)); time.sleep(0.4)
     sh.call("action", "shortcuts"); shot("shortcuts"); sh.keys(("Escape",))
     sh.call("action", "addLocation"); shot("add-location", 1.0); sh.keys(("Escape",))
+    # Quick Look, one shot per kind (docs/0.2.0/05-quicklook.md, decision 6): the window is a
+    # floating window of its own, so the shot is the whole screen with it in front.
+    looks = os.path.join(home, "Looks")
+    png(os.path.join(looks, "photo.png")); pdf(os.path.join(looks, "paper.pdf")); has_video = mp4(os.path.join(looks, "clip.mp4"))
+    sh.open("file://" + looks); time.sleep(0.8)
+    for name, tag in [("photo.png", "image"), ("paper.pdf", "pdf"), ("Field notes.md", "markdown"), ("main.rs", "code"), ("sheet.xlsx", "unsupported")] + ([("clip.mp4", "video")] if has_video else []):
+        sh.select(name); sh.call("quickLook", "open"); shot(f"quick-look-{tag}", 1.5)
+        sh.call("quickLook", "close"); time.sleep(0.3)
+    sh.open("file://" + home)
     sh.call("searchEverywhere", "report"); shot("search"); sh.call("searchEverywhere", "")
     sh.call("activity", "open"); shot("activity"); sh.call("activity", "close")
     c.check(f"{len(shots)} photographs taken in {lang}", len(shots) >= 20, shots)

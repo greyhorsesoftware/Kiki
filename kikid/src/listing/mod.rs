@@ -91,6 +91,9 @@ struct Inner {
     git_done: bool,
     scan_done: bool,
     scan_error: Option<String>,
+    /// The scan's failure by number, when it has one (a connect refused, a location unknown),
+    /// so the window says it in its language.
+    scan_said: Option<(u16, Value)>,
     /// Display order after sort and filter; index into the pool.
     view: Vec<u32>,
     /// Inverse of `view`: pool index -> position, or u32::MAX when hidden.

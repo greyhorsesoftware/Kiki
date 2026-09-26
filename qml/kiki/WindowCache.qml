@@ -256,7 +256,9 @@ QtObject {
             // The scan that has just ended says how it went. Only the reply to `Open` used to,
             // so a folder that failed to list a SECOND time — a share whose server had gone
             // away, a disk unplugged mid-browse — came back as nought items with nothing wrong.
-            if (msg.done) error = msg.error || ""
+            // A failure the scan met — a server that would not connect, a location unknown —
+            // arrives here by number (the connect happens on the scan, not in `Open`).
+            if (msg.done) error = msg.errorN !== undefined ? Kiki.T.errorText({ n: msg.errorN, params: msg.errorParams, message: msg.error }) : (msg.error || "")
             break
         case "Rows":
             _apply(msg.first, msg.rows)

@@ -61,7 +61,9 @@ class Desktop:
         self.was = None
         self.monitor = None
 
-    def enter(self):
+    def enter(self, fullscreen=True):
+        """`fullscreen=False` leaves the window tiled — alone it fills the workspace anyway — so a
+        second window (Quick Look) tiles beside it rather than taking the screen."""
         try:
             mons = json.loads(hypr("monitors", "-j"))
             m = next((m for m in mons if m.get("focused")), mons[0])
@@ -76,8 +78,7 @@ class Desktop:
         for call in (f'hl.dsp.focus({{ window = "title:^(kiki)$" }})',
                      f'hl.dsp.window.move({{ workspace = "{ws}" }})',
                      f'hl.dsp.focus({{ workspace = "{ws}" }})',
-                     f'hl.dsp.focus({{ window = "title:^(kiki)$" }})',
-                     'hl.dsp.window.fullscreen({ mode = "fullscreen" })'):
+                     f'hl.dsp.focus({{ window = "title:^(kiki)$" }})') + (('hl.dsp.window.fullscreen({ mode = "fullscreen" })',) if fullscreen else ()):
             r = hypr("dispatch", call)
             if r != "ok":
                 print(f"  hyprctl {call}: {r}")
@@ -108,6 +109,8 @@ class Recorder:
         self.n = 0
         self.t0 = 0.0
         self.marks = []          # (seconds from the start of the recording, text)
+        # A card before the first frame: an image and a line of text, `seconds` long.
+        self.title = None        # (image path, text, seconds)
 
     def say(self, text):
         self.marks.append((time.monotonic() - self.t0, text))
@@ -197,7 +200,44 @@ class Recorder:
         os.replace(tmp, self.out)
         if src != self.out and os.path.exists(src):
             os.remove(src)
+        if self.title:
+            self.prepend_title(h + band)
         return True
+
+    def prepend_title(self, height):
+        """The title card — the image centred over black with the text under it, the size of the
+        captioned video — concatenated before it (owner, 2026-09-25: "demo should open showing
+        kiki image and title then move to showing")."""
+        image, text, seconds = self.title
+        font = font_file()
+        if not font or not os.path.exists(image):
+            print(f"  ... no title card: font {font!r}, image {image!r}")
+            return
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", self.out],
+                               capture_output=True, text=True).stdout.strip().split(",")
+        try:
+            w, h = int(probe[0]), int(probe[1])
+        except (ValueError, IndexError):
+            return
+        size = max(24, round(h / 18))
+        esc = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+        card = self.out + ".title.mp4"
+        vf = (f"scale=-2:{round(h * 0.5)},pad={w}:{h}:(ow-iw)/2:(oh-ih)/2-{round(h * 0.06)}:black,"
+              f"drawtext=fontfile='{font}':expansion=none:text='{esc}':fontsize={size}:fontcolor=white@0.95:x=(w-text_w)/2:y={round(h * 0.78)},"
+              f"fade=t=in:st=0:d=0.5,fade=t=out:st={seconds - 0.5:.2f}:d=0.5,format=yuv420p")
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-i", image, "-t", f"{seconds:.2f}", "-vf", vf,
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", card], capture_output=True, text=True)
+        if r.returncode != 0:
+            print("  ffmpeg (title):", r.stderr.strip()[:400])
+            return
+        joined = self.out + ".joined.mp4"
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", card, "-i", self.out, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-movflags", "+faststart", joined], capture_output=True, text=True)
+        os.remove(card)
+        if r.returncode != 0:
+            print("  ffmpeg (join):", r.stderr.strip()[:400])
+            return
+        os.replace(joined, self.out)
 
 
 def home_spec():
