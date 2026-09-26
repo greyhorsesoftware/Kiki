@@ -156,6 +156,14 @@ pub fn set_settings(patch: &Value) -> std::io::Result<()> {
     write_toml("settings.toml", &Value::Obj(cur))
 }
 
+/// kiki's cache — the search index, fetched copies: `KIKI_CACHE_DIR`, else `$XDG_CACHE_HOME/kiki`
+/// (`~/.cache/kiki`). A checkout's `make run` points it elsewhere so a build under way shares
+/// nothing with the installed kiki. (Thumbnails are the desktop's shared `thumbnails/` folder,
+/// with `KIKI_THUMB_DIR` as their own override.)
+pub fn cache_dir() -> PathBuf {
+    std::env::var("KIKI_CACHE_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::var("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|_| home().join(".cache")).join("kiki"))
+}
+
 /// The socket is named for the version — `kiki-0.2.0.sock` — so a window and a daemon of the
 /// same build find each other and no other: a checkout's window never lands on the installed
 /// daemon, an upgraded package's window never on the daemon still running from before (owner,

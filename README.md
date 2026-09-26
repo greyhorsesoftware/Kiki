@@ -49,7 +49,13 @@ of exactly what would change. Passwords go to the keyring; nothing is sent anywh
 make            # build the daemon and the plugins
 make run        # a daemon against this checkout and a shell on top of it
 make test       # clippy, then the Rust, QML and end-to-end suites
+make dev-clean  # forget the checkout's own settings, cache and index
 ```
+
+`make run` keeps to itself: its socket is `kiki-dev.sock` and everything it writes — settings,
+locations, the journal, the cache, thumbnails, the search index — goes under
+`~/.local/state/kiki-dev/`, never into the installed kiki's folders; Settings › Omarchy's Apply
+edits a scratch home there too. Only the trash is shared: a file trashed is trashed.
 
 The end-to-end flows drive the real shell under `cage`; the ones that need a server (`openssh`,
 `vsftpd`, `samba`) skip by name when it is not installed. `cd packaging && makepkg -fi` builds

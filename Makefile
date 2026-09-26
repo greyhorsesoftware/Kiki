@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history coverage run daemon shell fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history coverage run daemon shell dev-clean fmt lint clean
 
 all: build
 
@@ -58,19 +58,33 @@ scroll-perf: build
 scroll-history:
 	@tests/e2e/scroll_history.py
 
-# The checkout's daemon and window on a socket of their own: the installed kiki of the same
-# version would otherwise be found first (the socket is named for the version).
+# The checkout's daemon and window keep to themselves: a socket of their own (the installed
+# kiki of the same version would otherwise be found first — the socket is named for the
+# version) and folders of their own for everything kiki writes — config, state, data, cache,
+# thumbnails, the search index — so a build under way never rewrites the installed kiki's
+# settings, locations or journal, and Settings › Omarchy's Apply edits a scratch home rather
+# than the real one (owner, 2026-09-26: "we should have a separate location for dev work").
+# What is NOT separate: the trash — a file trashed is trashed — and the desktop's own dirs.
 DEV_SOCKET ?= $(or $(XDG_RUNTIME_DIR),/tmp)/kiki-dev.sock
+DEV_HOME ?= $(or $(XDG_STATE_HOME),$(HOME)/.local/state)/kiki-dev
+DEV_ENV = KIKI_SOCKET=$(DEV_SOCKET) KIKI_CONFIG_DIR=$(DEV_HOME)/config KIKI_STATE_DIR=$(DEV_HOME)/state KIKI_DATA_DIR=$(DEV_HOME)/data \
+	KIKI_CACHE_DIR=$(DEV_HOME)/cache KIKI_THUMB_DIR=$(DEV_HOME)/cache/thumbnails KIKI_INTEGRATE_HOME=$(DEV_HOME)/home
 
 run: build
-	rm -f $(DEV_SOCKET); KIKI_SOCKET=$(DEV_SOCKET) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \
-	sleep 0.5; KIKI_SOCKET=$(DEV_SOCKET) $(QS) -p qml/shell.qml
+	@mkdir -p $(DEV_HOME)/home; rm -f $(DEV_SOCKET)
+	$(DEV_ENV) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \
+	sleep 0.5; $(DEV_ENV) $(QS) -p qml/shell.qml
 
 daemon: build
-	rm -f $(DEV_SOCKET); KIKI_SOCKET=$(DEV_SOCKET) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
+	@mkdir -p $(DEV_HOME)/home; rm -f $(DEV_SOCKET)
+	$(DEV_ENV) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
 
 shell:
-	KIKI_SOCKET=$(DEV_SOCKET) $(QS) -p qml/shell.qml
+	$(DEV_ENV) $(QS) -p qml/shell.qml
+
+# The checkout's own folders, gone: the next `make run` starts as a first run.
+dev-clean:
+	rm -rf $(DEV_HOME) $(DEV_SOCKET)
 
 fmt:
 	$(CARGO) fmt --all

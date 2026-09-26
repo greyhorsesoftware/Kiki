@@ -34,8 +34,7 @@ pub struct Index {
 
 /// Where the index lives between runs.
 pub fn index_path() -> PathBuf {
-    let base = std::env::var("KIKI_CACHE_DIR").map(PathBuf::from).unwrap_or_else(|_| std::env::var("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|_| crate::config::home().join(".cache")).join("kiki"));
-    base.join("index.bin")
+    crate::config::cache_dir().join("index.bin")
 }
 
 const MAGIC: &[u8; 8] = b"KIKIIDX1";

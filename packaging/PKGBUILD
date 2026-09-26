@@ -1,7 +1,7 @@
 # Maintainer: David Clark <david.j.clark@icloud.com>
 # Source package: builds kiki from the repository checkout one level up.
 pkgname=kiki
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')

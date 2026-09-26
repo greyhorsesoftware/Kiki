@@ -71,3 +71,13 @@ Newest last.
   the old listening descriptor — the reload alone did not take on the 0.2.0 → 0.2.1 upgrade), so
   an upgrade takes on the first launch without anything typed. The install hooks cannot do it:
   they run as root, whose `systemctl --user` is not the user's.
+- **A checkout keeps to itself (2026-09-26).** `make run` used the installed kiki's folders —
+  `~/.config/kiki`, `~/.local/state/kiki`, `~/.cache/kiki`, the shared thumbnails — so a build
+  under way rewrote the real settings, locations (the option migration), journal and index, and
+  Settings › Omarchy's Apply in a dev window edited the real `~/.config`. The dev targets now set
+  `KIKI_CONFIG_DIR`, `KIKI_STATE_DIR`, `KIKI_DATA_DIR`, `KIKI_CACHE_DIR`, `KIKI_THUMB_DIR` and
+  `KIKI_INTEGRATE_HOME` under `~/.local/state/kiki-dev/` beside the `kiki-dev.sock` socket;
+  `make dev-clean` empties it. The daemon gained one cache rule for the index and the fetched
+  copies (`config::cache_dir`, honouring `KIKI_CACHE_DIR`; the copies used to follow
+  `XDG_CACHE_HOME` alone). The trash stays the desktop's. `Makefile`, `README.md`, `fetched.rs`,
+  `index.rs`.

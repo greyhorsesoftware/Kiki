@@ -7,7 +7,7 @@ resolver = "2"
 members = ["kikid", "crates/kiki-json", "crates/kiki-plugin-sdk", "plugins/kiki-plugin-sftp", "plugins/kiki-plugin-ftps", "plugins/kiki-plugin-gio", "plugins/kiki-plugin-dbus", "plugins/kiki-plugin-share-mail", "plugins/kiki-plugin-share-tailscale"]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/davidjclark/kiki"

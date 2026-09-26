@@ -22,36 +22,6 @@ fn scratch(tag: &str) -> PathBuf {
 }
 
 #[test]
-fn a_fetched_copy_is_dropped_and_nothing_else_is() {
-    let dir = common::setup("quicklook-drop");
-    common::save_location("lab");
-    std::env::set_var("XDG_CACHE_HOME", dir.join("cache"));
-    let v = quicklook::fetch(&Uri::parse("stub://lab/docs/notes.txt").unwrap()).unwrap();
-    let job = v.u64_field("job").unwrap();
-    let copy = std::path::PathBuf::from(v.str_field("path").unwrap());
-    assert_eq!(kikid::jobs::wait(job, std::time::Duration::from_secs(20)), Some(kikid::jobs::State::Done));
-    assert!(copy.exists(), "the copy came");
-    let listed = kikid::jobs::list();
-    let j = listed.as_arr().into_iter().flatten().find(|j| j.u64_field("id") == Some(job)).cloned().expect("the job is listed");
-    assert_eq!(j.get("hidden").and_then(Value::as_bool), Some(true), "a fetch for a look is nobody's toast: {}", kikid::json::to_string(&j));
-    let folder = copy.parent().unwrap().to_path_buf();
-    quicklook::drop(&copy).unwrap();
-    assert!(!folder.exists(), "the copy and its folder are gone");
-    // Anything that is not a fetched copy stays, said by number.
-    let mine = dir.join("mine.txt");
-    std::fs::write(&mine, "keep").unwrap();
-    match quicklook::drop(&mine).unwrap_err() {
-        VfsError::Said { n, .. } => assert_eq!(n, 1321),
-        other => panic!("{other:?}"),
-    }
-    assert!(mine.exists());
-    // Once dropped, dropping again is nothing to do.
-    quicklook::drop(&copy).unwrap();
-    std::env::remove_var("XDG_CACHE_HOME");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn code_comes_with_its_colours_and_prose_does_not() {
     let dir = common::setup("quicklook-colours");
     let rs = dir.join("main.rs");
@@ -245,7 +215,7 @@ fn pdf_pages_are_counted_rendered_once_and_refused_beyond_the_end() {
 }
 
 #[test]
-fn a_local_file_is_its_path_and_a_remote_one_is_fetched_unwatched() {
+fn a_local_file_is_its_path_and_a_remote_one_is_fetched_unwatched_and_dropped() {
     let dir = common::setup("quicklook-fetch");
     common::save_location("lab");
     std::env::set_var("XDG_CACHE_HOME", dir.join("cache"));
@@ -273,6 +243,28 @@ fn a_local_file_is_its_path_and_a_remote_one_is_fetched_unwatched() {
         assert!(!jobs.as_arr().into_iter().flatten().any(|j| j.str_field("title").is_some_and(|t| t.starts_with("Save "))), "an unwatched copy was sent back: {}", kikid::json::to_string(&jobs));
         std::thread::sleep(Duration::from_millis(100));
     }
+
+    // The fetch is nobody's toast: a hidden job, since the window shows its progress itself.
+    // (In this test rather than one of its own: the tests of a binary run in parallel and each
+    // `common::setup` moves KIKI_CONFIG_DIR for the whole process — a second test saving the
+    // location "lab" had its copy job resolve it in the other test's folder, "no location".)
+    let listed = kikid::jobs::list();
+    let j = listed.as_arr().into_iter().flatten().find(|j| j.u64_field("id") == Some(job)).cloned().expect("the job is listed");
+    assert_eq!(j.get("hidden").and_then(Value::as_bool), Some(true), "a fetch for a look is nobody's toast: {}", kikid::json::to_string(&j));
+
+    // Dropped when the look is over: the copy and its folder go; anything that is not a fetched
+    // copy stays, said by number; dropping again is nothing to do.
+    let folder = copy.parent().unwrap().to_path_buf();
+    quicklook::drop(&copy).unwrap();
+    assert!(!folder.exists(), "the copy and its folder are gone");
+    let mine = dir.join("mine.txt");
+    std::fs::write(&mine, "keep").unwrap();
+    match quicklook::drop(&mine).unwrap_err() {
+        VfsError::Said { n, .. } => assert_eq!(n, 1321),
+        other => panic!("{other:?}"),
+    }
+    assert!(mine.exists());
+    quicklook::drop(&copy).unwrap();
 
     std::env::remove_var("XDG_CACHE_HOME");
     let _ = std::fs::remove_dir_all(&dir);
