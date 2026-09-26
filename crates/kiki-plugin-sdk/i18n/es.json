@@ -1,0 +1,9 @@
+{
+  "Name": "Nombre",
+  "Host": "Servidor",
+  "Port": "Puerto",
+  "Username": "Usuario",
+  "Password": "Contraseña",
+  "Remote path": "Ruta remota",
+  "Local path": "Ruta local"
+}

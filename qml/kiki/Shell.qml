@@ -30,9 +30,8 @@ FloatingWindow {
         const live = Kiki.Jobs.running(), seen = live.filter(j => !j.hidden)
         if (win._quitting || !seen.length) return
         ev.accepted = false
-        const what = seen.length === 1 ? "“" + Kiki.Jobs.headline(seen[0]) + "” is still running and will be stopped."
-                                       : seen.length + " jobs are still running and will be stopped."
-        confirm.ask({ title: "Quit kiki?", message: what + " What has already finished stays where it is.", label: "Quit" }, yes => {
+        const what = seen.length === 1 ? Kiki.T.tr("quit.oneRunning", { job: Kiki.Jobs.headline(seen[0]) }) : Kiki.T.tr("quit.manyRunning", { n: seen.length })
+        confirm.ask({ title: Kiki.T.tr("quit.title"), message: what + " " + Kiki.T.tr("quit.finishedStays"), label: Kiki.T.tr("quit.confirm") }, yes => {
             if (!yes) return
             for (const j of Kiki.Jobs.running()) Kiki.Jobs.cancel(j.id)
             win._quitting = true
@@ -250,7 +249,7 @@ FloatingWindow {
         const loc = win.locations.find(l => l.name === host)
         const to = loc && loc.localUri ? loc.localUri : "file://" + win.home
         for (const p of [left, right]) if (p.uri !== "" && Kiki.Format.authority(p.uri) === host && !/^(file|trash):/.test(p.uri)) p.open(to)
-        Kiki.Daemon.request("Disconnect", { name: host }, (ok, err) => Kiki.Jobs.showToast({ text: err ? err.message : "Disconnected from " + host, undoable: false }))
+        Kiki.Daemon.request("Disconnect", { name: host }, (ok, err) => Kiki.Jobs.showToast({ text: err ? err.message : Kiki.T.tr("toast.disconnected", { host: host }), undoable: false }))
         // Side by side was that server and its folder: with the server gone it is one pane again.
         if (!remoteOpen) leaveMirror()
     }
@@ -258,10 +257,10 @@ FloatingWindow {
     function recordMirror() { const m = Object.assign({}, lastMirror); m[remoteUri()] = Date.now(); lastMirror = m; Kiki.Daemon.request("SetSettings", { patch: { mirror: { last: m } } }) }
     function mirrorOptions(pos) {
         menu.open([
-            { label: "Upload · local → " + (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1], key: "Ctrl+M", action: () => win.startMirror(true) },
-            { label: "Download · " + (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1] + " → local", action: () => win.startMirror(false) },
-            { label: "Swap sides", sep: true, action: () => win.swapPanes() },
-            { label: "Open remote alone", action: () => { const r = win.remoteUri(); win.left.view = "list"; win.left.open(r) } },
+            { label: Kiki.T.tr("menu.mirrorUpload", { host: (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1] }), key: "Ctrl+M", action: () => win.startMirror(true) },
+            { label: Kiki.T.tr("menu.mirrorDownload", { host: (remoteUri().match(/^[a-z]+:\/\/([^/]+)/) || [])[1] }), action: () => win.startMirror(false) },
+            { id: "swapSides", label: Kiki.T.tr("menu.swapSides"), sep: true, action: () => win.swapPanes() },
+            { id: "openRemoteAlone", label: Kiki.T.tr("menu.openRemoteAlone"), action: () => { const r = win.remoteUri(); win.left.view = "list"; win.left.open(r) } },
         ], pos)
     }
     function startMirror(upload) { if (!split) enterMirror(); mirrorWs.upload = upload; mirrorOpen = true }
@@ -289,7 +288,7 @@ FloatingWindow {
     /// Its name for the bar's placeholder: "Filter src" in columns, "Filter this folder" elsewhere.
     function filterPlaceholder() {
         const v = currentView()
-        if (win.pane.view === "columns" && v && v.focusUri) return "Filter " + decodeURIComponent(v.focusUri.replace(/\/+$/, "").split("/").pop() || "/")
+        if (win.pane.view === "columns" && v && v.focusUri) return Kiki.T.tr("filter.named", { name: decodeURIComponent(v.focusUri.replace(/\/+$/, "").split("/").pop() || "/") })
         return "Filter this folder"
     }
     /// The listing the bar's text is on right now. Kept, not asked for: the focus can move
@@ -324,7 +323,8 @@ FloatingWindow {
         if (scope !== "everywhere") { const l = locations.find(x => x.name === scope); if (l) req.uri = l.remoteUri }
         Kiki.Daemon.request("Search", req, (ok, err) => {
             if (err) { indexInfo = err.message; return }
-            indexInfo = scope === "everywhere" ? "index " + Math.round(ok.indexAge / 60) + " min old" + (ok.capped ? " · capped" : "") : ""
+            // No `indexAge` at all: the index has never been built (it used to read as 29 million minutes)
+            indexInfo = scope === "everywhere" ? (ok.indexAge === undefined ? Kiki.T.tr("search.noIndex") : Kiki.T.tr("search.indexAge", { n: Math.round(ok.indexAge / 60) })) + (ok.capped ? Kiki.T.tr("search.capped") : "") : ""
         })
     }
     property string indexInfo: ""
@@ -360,7 +360,7 @@ FloatingWindow {
         // tool that will not start says so — the error was dropped, and `e` on a folder did nothing.
         const started = (role, ok, err) => {
             if (ok) spawned.push({ role: role, class: ok["class"] || "", pid: ok.pid })
-            else Kiki.Jobs.showToast({ text: "Project mode: the " + role + " did not start — " + ((err && err.message) || "unknown error"), undoable: false })
+            else Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.projectRoleFailed", { role: Kiki.T.tr("role." + role), error: (err && err.message) || Kiki.T.tr("error.unknown") }), undoable: false })
         }
         Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri] }, (ok, err) => {
             started("editor", ok, err)
@@ -372,7 +372,7 @@ FloatingWindow {
         if (!Kiki.Settings.project.arrange) return
         // kiki's own window is found by this process's pid: its class is Quickshell's, not "kiki".
         const windows = [{ role: "kiki", class: "", pid: Quickshell.processId }].concat(spawned)
-        Kiki.Daemon.request("Arrange", { layout: "project", root: projectRoot, windows: windows, leftWidth: Kiki.Settings.project.width || 320 }, (ok, err) => { if (ok && ok.missing.length) Kiki.Jobs.showToast({ text: "Could not place: " + ok.missing.join(", "), undoable: false }) })
+        Kiki.Daemon.request("Arrange", { layout: "project", root: projectRoot, windows: windows, leftWidth: Kiki.Settings.project.width || 320 }, (ok, err) => { if (ok && ok.missing.length) Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.couldNotPlace", { names: ok.missing.join(", ") }), undoable: false }) })
     }
     // The tree took the keyboard when project mode began (`focus: win.projectMode`, and it forces
     // the focus as it appears); hiding it hands the focus to nobody, so every shortcut — Escape
@@ -395,10 +395,10 @@ FloatingWindow {
         // One that cannot work here — its program is not installed — stays in the menu, dimmed,
         // saying what is missing: it tells the user the thing exists and what it would take.
         const items = sharePlugins.map(p => {
-            const it = { label: "Send via " + p.name, icon: p.icon || "share", enabled: uris.length > 0 && !p.unavailable, key: p.unavailable ? "not installed" : "" }
+            const it = { label: Kiki.T.tr("menu.sendVia", { name: p.name }), icon: p.icon || "share", enabled: uris.length > 0 && !p.unavailable, key: p.unavailable ? Kiki.T.tr("menu.notInstalled") : "" }
             if (p.unavailable) return it
             if (p.targets === "none") { it.action = () => { if (uris.length) shareNow(p, null, uris) }; return it }
-            it.items = [{ label: "Looking…", enabled: false, action: () => {} }]
+            it.items = [{ id: "looking", label: Kiki.T.tr("menu.looking"), enabled: false, action: () => {} }]
             it.load = fill => shareTargetItems(p, uris, fill)
             return it
         })
@@ -408,7 +408,7 @@ FloatingWindow {
     function shareMenu() {
         if (!selectedUris().length) return
         const items = shareItems()
-        menuUnder(toolbar.viewButton, items.length ? items : [{ label: "No share plugins installed", enabled: false, action: () => {} }], true)
+        menuUnder(toolbar.viewButton, items.length ? items : [{ id: "noSharePlugins", label: Kiki.T.tr("menu.noSharePlugins"), enabled: false, action: () => {} }], true)
     }
     /// Share without asking anything first. If the plugin needs more than the files — an SMTP
     /// account wants a recipient — it says so, and the sheet opens to collect it.
@@ -424,8 +424,8 @@ FloatingWindow {
     function shareTargetItems(p, uris, fill) {
         Kiki.Daemon.request("ShareTargets", { plugin: p.id }, (ok, err) => {
             if (err) { fill([{ label: err.message, enabled: false, action: () => {} }]); return }
-            const items = ok.targets.map(t => ({ label: t.name + (t.detail ? "  ·  " + t.detail : ""), key: t.online ? "" : "offline", icon: t.icon || p.icon || "share", enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
-            fill(items.length ? items : [{ label: "Nothing found", enabled: false, action: () => {} }])
+            const items = ok.targets.map(t => ({ label: t.name + (t.detail ? "  ·  " + t.detail : ""), key: t.online ? "" : Kiki.T.tr("menu.offline"), icon: t.icon || p.icon || "share", enabled: t.online, action: () => shareSheet.open(p, t, uris) }))
+            fill(items.length ? items : [{ id: "nothingFound", label: Kiki.T.tr("menu.nothingFound"), enabled: false, action: () => {} }])
         })
     }
     // AI (plan 19)
@@ -436,8 +436,8 @@ FloatingWindow {
     function hereItems(dir, files) {
         const local = dir.indexOf("file://") === 0
         return [
-            { label: "Open AI here…", key: keymap.chordFor("ai"), sep: true, enabled: local, action: () => win.openAiHere(dir, files) },
-            { label: "Open Terminal here…", enabled: local, action: () => win.openTerminalHere(dir) },
+            { id: "openAiHere", label: Kiki.T.tr("menu.openAiHere"), key: keymap.chordFor("ai"), sep: true, enabled: local, action: () => win.openAiHere(dir, files) },
+            { id: "openTerminalHere", label: Kiki.T.tr("menu.openTerminalHere"), enabled: local, action: () => win.openTerminalHere(dir) },
         ]
     }
     /// A failure says why (the tool is not installed, the files are remote) and, when no tool
@@ -554,21 +554,21 @@ FloatingWindow {
     function pathMenu() {
         const crumb = activeCrumb()
         const items = crumb.ancestors().map(a => ({ label: a.label, action: () => win.pane.open(a.uri) }))
-        items.push({ label: "Type a path…", key: "Ctrl+L", sep: items.length > 0, action: () => crumb.edit() })
+        items.push({ id: "typePath", label: Kiki.T.tr("menu.typePath"), key: "Ctrl+L", sep: items.length > 0, action: () => crumb.edit() })
         menuUnder(crumb, items)
     }
     /// The same menu for a pane's own header: the folders above, and typing a path.
     function paneHeaderPathMenu(target, crumb) {
         const items = crumb.ancestors().map(a => ({ label: a.label, action: () => target.open(a.uri) }))
-        items.push({ label: "Type a path…", sep: items.length > 0, action: () => crumb.edit() })
+        items.push({ id: "typePath", label: Kiki.T.tr("menu.typePath"), sep: items.length > 0, action: () => crumb.edit() })
         menuUnder(crumb, items)
     }
     /// The gear: settings, the keymap, and who made this.
     function gearItems() {
         return [
-            { label: "Settings…", key: keymap.chordFor("settings"), action: () => settingsWin.open("general") },
-            { label: "Keyboard shortcuts…", key: keymap.chordFor("shortcuts"), action: () => keysWin.open() },
-            { label: "About kiki…", sep: true, action: () => aboutDlg.open() },
+            { id: "settings", label: Kiki.T.tr("menu.settings"), key: keymap.chordFor("settings"), action: () => settingsWin.open("general") },
+            { id: "shortcuts", label: Kiki.T.tr("menu.shortcuts"), key: keymap.chordFor("shortcuts"), action: () => keysWin.open() },
+            { id: "about", label: Kiki.T.tr("menu.about"), sep: true, action: () => aboutDlg.open() },
         ]
     }
     function gearMenu() { menuUnder(toolbar.gearButton, gearItems(), true) }
@@ -576,11 +576,11 @@ FloatingWindow {
     /// gear's rows at the bottom.
     function hamburgerItems() {
         const items = [
-            { label: win.inspectorRequested ? "Hide info" : "Show info", key: keymap.chordFor("inspector"), enabled: win.pane.view !== "columns" && win.inspectedUri !== "", action: () => win.inspectorRequested = !win.inspectorRequested },
+            { label: win.inspectorRequested ? Kiki.T.tr("menu.hideInfo") : Kiki.T.tr("menu.showInfo"), key: keymap.chordFor("inspector"), enabled: win.pane.view !== "columns" && win.inspectedUri !== "", action: () => win.inspectorRequested = !win.inspectorRequested },
         ]
-        if (win.remoteOpen || win.split) items.push({ label: win.split ? "One pane" : "Side by Side", key: keymap.chordFor("viewMirror"), action: () => win.toggleMirrorView() })
-        items.push({ label: "View", sep: true, items: win.viewMenuItems() })
-        items.push({ label: win.sidebarShown ? "Hide favorites" : "Show favorites", key: keymap.chordFor("sidebar"), action: () => win.sidebarShown = !win.sidebarShown })
+        if (win.remoteOpen || win.split) items.push({ label: win.split ? Kiki.T.tr("menu.onePane") : Kiki.T.tr("menu.sideBySide"), key: keymap.chordFor("viewMirror"), action: () => win.toggleMirrorView() })
+        items.push({ id: "view", label: Kiki.T.tr("menu.view"), sep: true, items: win.viewMenuItems() })
+        items.push({ label: win.sidebarShown ? Kiki.T.tr("menu.hideFavorites") : Kiki.T.tr("menu.showFavorites"), key: keymap.chordFor("sidebar"), action: () => win.sidebarShown = !win.sidebarShown })
         const gear = win.gearItems(); gear[0].sep = true
         return items.concat(gear)
     }
@@ -591,7 +591,7 @@ FloatingWindow {
     /// none of these was the current one.)
     function viewMenuItems() {
         const act = { gallery: () => win.enterGallery(), hidden: () => pane.setHidden(!pane.showHidden) }
-        return ViewMenu.items(pane.view, pane.showHidden).map(it => Object.assign(it, { action: act[it.id] || (() => win.setView(it.id)) }))
+        return ViewMenu.items(pane.view, pane.showHidden, Kiki.T.tr).map(it => Object.assign(it, { action: act[it.id] || (() => win.setView(it.id)) }))
     }
     function viewMenu() {
         const items = viewMenuItems()
@@ -614,7 +614,7 @@ FloatingWindow {
     // type and kiki's own tools, so there is a single way to open something elsewhere.
     /// Open with is the desktop's applications. The terminal tools and agents of plan 14 are
     /// their own thing (`Alt+Enter`, the editor keys) and do not belong in a list of apps.
-    function openWithItems() { return [{ label: "Looking…", enabled: false, action: () => {} }] }
+    function openWithItems() { return [{ id: "looking", label: Kiki.T.tr("menu.looking"), enabled: false, action: () => {} }] }
     function loadOpenWith(uris, apply) {
         apply(win.openWithItems())
         // A selection is offered what opens all of it, and the app is handed the lot.
@@ -629,7 +629,7 @@ FloatingWindow {
     function openWithMenu(pos) {
         const u = selectedUris(); if (!u.length) return
         win.loadOpenWith(u, list => {
-            const items = list.length ? list : [{ label: "Nothing to open it with", enabled: false, action: () => {} }]
+            const items = list.length ? list : [{ id: "nothingToOpenWith", label: Kiki.T.tr("menu.nothingToOpenWith"), enabled: false, action: () => {} }]
             if (menu.visible) menu.items = items
             else if (pos) menu.open(items, pos)
             else menuUnder(toolbar.viewButton, items, true)
@@ -652,30 +652,30 @@ FloatingWindow {
     function contextItemsForUri(uri, row) {
         const uris = [uri]
         win.openWithSub = win.openWithItems()
-        win.loadOpenWith(uris, list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
+        win.loadOpenWith(uris, list => { win.openWithSub = list; if (menu.visible) menu.refill("openWith", list) })
         const folder = uri.replace(/\/[^/]*$/, "")
         return [
-            { label: "Open", key: "Enter", action: () => row && row.isDir ? win.pane.open(uri) : win.openExternal(uri) },
-            { label: "Open with", items: win.openWithSub },
-            { label: "Get info", key: "Ctrl+I", action: () => { win.inspectedUri = uri; win.inspectedRow = row; win.inspectorRequested = true } },
-            { label: "Copy", key: "Super+C", sep: true, action: () => ops.copySelection(false, uris) },
-            { label: "Cut", key: "Super+X", action: () => ops.copySelection(true, uris) },
+            { id: "open", label: Kiki.T.tr("menu.open"), key: "Enter", action: () => row && row.isDir ? win.pane.open(uri) : win.openExternal(uri) },
+            { id: "openWith", label: Kiki.T.tr("menu.openWith"), items: win.openWithSub },
+            { id: "getInfo", label: Kiki.T.tr("menu.getInfo"), key: "Ctrl+I", action: () => { win.inspectedUri = uri; win.inspectedRow = row; win.inspectorRequested = true } },
+            { id: "copy", label: Kiki.T.tr("menu.copy"), key: "Super+C", sep: true, action: () => ops.copySelection(false, uris) },
+            { id: "cut", label: Kiki.T.tr("menu.cut"), key: "Super+X", action: () => ops.copySelection(true, uris) },
             // The same rows, in the same order, as list view's menu (`contextItems`) — this one
             // had fallen behind it: no Paste, no New folder, no "Extract to…" and none of the
             // ways of sending. Paste goes into the folder the row is in; New folder goes where
             // Ctrl+Shift+N does, inside the row when the row is a folder.
-            { label: "Paste", key: "Super+V", enabled: win.clipboard.uris.length > 0, action: () => ops.paste(folder) },
+            { id: "paste", label: Kiki.T.tr("menu.paste"), key: "Super+V", enabled: win.clipboard.uris.length > 0, action: () => ops.paste(folder) },
             // On the row the menu was raised over: the right click made that row the column's
             // highlighted one, as a right click does in a list.
-            { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
-            { label: "Rename", key: "F2", action: () => win.renameSelected() },
-            { label: "Compress…", action: () => compressDialog.open(uris, folder) },
-            { label: "Extract here", enabled: !!row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
-            { label: "Extract to…", enabled: !!row && row.kind === "archive", action: () => ops.extractTo(row.name, uri) },
-            { label: "Copy path", action: () => ops.copyPath(uris) },
+            { id: "newFolder", label: Kiki.T.tr("menu.newFolder"), key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
+            { id: "rename", label: Kiki.T.tr("menu.rename"), key: "F2", action: () => win.renameSelected() },
+            { id: "compress", label: Kiki.T.tr("menu.compress"), action: () => compressDialog.open(uris, folder) },
+            { id: "extractHere", label: Kiki.T.tr("menu.extractHere"), enabled: !!row && row.kind === "archive", action: () => Kiki.Jobs.submit({ op: "extract", archive: uri, dest: folder }) },
+            { id: "extractTo", label: Kiki.T.tr("menu.extractTo"), enabled: !!row && row.kind === "archive", action: () => ops.extractTo(row.name, uri) },
+            { id: "copyPath", label: Kiki.T.tr("menu.copyPath"), action: () => ops.copyPath(uris) },
             ...win.shareItems(uris),
             ...win.hereItems(row && row.isDir ? uri : folder, row && row.isDir ? [] : uris),
-            { label: "Move to Trash", key: "Del", danger: true, sep: true, action: () => ops.trashSelection(uris) },
+            { id: "trash", label: Kiki.T.tr("menu.trash"), key: "Del", danger: true, sep: true, action: () => ops.trashSelection(uris) },
         ]
     }
     /// The menu for the background of a folder — nothing under the pointer. The same list as a
@@ -690,8 +690,8 @@ FloatingWindow {
         // into — and the menu belongs to the column it was raised over, not to that one.
         if (folderUri) {
             for (const it of items) {
-                if (it.label === "Paste") it.action = () => ops.paste(folderUri)
-                else if (it.label === "New folder") it.action = () => ops.newFolder(folderUri)
+                if (it.id === "paste") it.action = () => ops.paste(folderUri)
+                else if (it.id === "newFolder") it.action = () => ops.newFolder(folderUri)
             }
         }
         return items
@@ -701,33 +701,33 @@ FloatingWindow {
         // moment later and replace it, even if the submenu is already showing.
         win.openWithSub = win.openWithItems()
         const chosen = win.selectedUris()
-        if (chosen.length) win.loadOpenWith(chosen, list => { win.openWithSub = list; if (menu.visible) menu.refill("Open with", list) })
+        if (chosen.length) win.loadOpenWith(chosen, list => { win.openWithSub = list; if (menu.visible) menu.refill("openWith", list) })
         const r = index >= 0 ? pane.listing.row(index) : null
         const sel = pane.selection.count() > 0
         if (pane.isTrash) {
             const info = r && win.trashInfo[r.name]
             return [
-                { label: info ? "Restore to " + Kiki.Format.display(info.path.replace(/\/[^/]*$/, "") || "/", win.home) : "Restore", key: "Enter", enabled: sel, action: () => win.restoreSelection() },
-                { label: "Copy path", enabled: sel && !!info, action: () => Quickshell.execDetached(["wl-copy", info.path]) },
-                { label: "Empty Trash", danger: true, sep: true, enabled: pane.listing.count > 0, action: () => win.emptyTrash() },
+                { label: info ? Kiki.T.tr("menu.restoreTo", { path: Kiki.Format.display(info.path.replace(/\/[^/]*$/, "") || "/", win.home) }) : Kiki.T.tr("menu.restore"), key: "Enter", enabled: sel, action: () => win.restoreSelection() },
+                { id: "copyPath", label: Kiki.T.tr("menu.copyPath"), enabled: sel && !!info, action: () => Quickshell.execDetached(["wl-copy", info.path]) },
+                { id: "emptyTrash", label: Kiki.T.tr("menu.emptyTrash"), danger: true, sep: true, enabled: pane.listing.count > 0, action: () => win.emptyTrash() },
             ]
         }
         const items = [
-            { label: "Open", key: "Enter", enabled: sel, action: () => win.openSelected() },
-            { label: "Open with", enabled: sel, items: win.openWithSub },
-            { label: "Get info", key: "Ctrl+I", enabled: sel, action: () => win.inspectorRequested = true },
-            { label: "Copy", key: "Super+C", sep: true, enabled: sel, action: () => win.copySelection(false) },
-            { label: "Cut", key: "Super+X", enabled: sel, action: () => win.copySelection(true) },
-            { label: "Paste", key: "Super+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
-            { label: "New folder", key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
-            { label: "Rename", key: "F2", enabled: sel && pane.selection.count() === 1, action: () => win.renameSelected() },
-            { label: "Compress…", enabled: sel, action: () => compressDialog.open(win.selectedUris(), pane.uri) },
-            { label: "Extract here", enabled: !!r && r.kind === "archive", action: () => ops.extractHere(r.name) },
-            { label: "Extract to…", enabled: !!r && r.kind === "archive", action: () => ops.extractTo(r.name) },
-            { label: "Copy path", enabled: sel, action: () => win.copyPath() },
+            { id: "open", label: Kiki.T.tr("menu.open"), key: "Enter", enabled: sel, action: () => win.openSelected() },
+            { id: "openWith", label: Kiki.T.tr("menu.openWith"), enabled: sel, items: win.openWithSub },
+            { id: "getInfo", label: Kiki.T.tr("menu.getInfo"), key: "Ctrl+I", enabled: sel, action: () => win.inspectorRequested = true },
+            { id: "copy", label: Kiki.T.tr("menu.copy"), key: "Super+C", sep: true, enabled: sel, action: () => win.copySelection(false) },
+            { id: "cut", label: Kiki.T.tr("menu.cut"), key: "Super+X", enabled: sel, action: () => win.copySelection(true) },
+            { id: "paste", label: Kiki.T.tr("menu.paste"), key: "Super+V", enabled: win.clipboard.uris.length > 0, action: () => win.paste() },
+            { id: "newFolder", label: Kiki.T.tr("menu.newFolder"), key: "Ctrl+Shift+N", sep: true, action: () => win.newFolder() },
+            { id: "rename", label: Kiki.T.tr("menu.rename"), key: "F2", enabled: sel && pane.selection.count() === 1, action: () => win.renameSelected() },
+            { id: "compress", label: Kiki.T.tr("menu.compress"), enabled: sel, action: () => compressDialog.open(win.selectedUris(), pane.uri) },
+            { id: "extractHere", label: Kiki.T.tr("menu.extractHere"), enabled: !!r && r.kind === "archive", action: () => ops.extractHere(r.name) },
+            { id: "extractTo", label: Kiki.T.tr("menu.extractTo"), enabled: !!r && r.kind === "archive", action: () => ops.extractTo(r.name) },
+            { id: "copyPath", label: Kiki.T.tr("menu.copyPath"), enabled: sel, action: () => win.copyPath() },
             ...win.shareItems(),
             ...win.hereItems(r && r.isDir && pane.selection.count() === 1 ? pane.childUri(r.name) : pane.uri, win.selectedUris().filter(u => !(r && r.isDir && pane.selection.count() === 1))),
-            { label: "Move to Trash", key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
+            { id: "trash", label: Kiki.T.tr("menu.trash"), key: "Del", danger: true, sep: true, enabled: sel, action: () => win.trashSelection() },
         ]
         return items
     }
@@ -796,7 +796,10 @@ FloatingWindow {
         if (r.isDir) pane.open(pane.childUri(r.name))
         else openExternal(pane.childUri(r.name))
     }
-    function openExternal(uri) { Quickshell.execDetached(["xdg-open", uri]) }
+    /// A double-click on a file: the daemon opens it with the default application for its
+    /// type, fetching a remote file to the cache first (0.2.0). It used to be `xdg-open` on the
+    /// URI here, which a remote URI gave nothing to work with.
+    function openExternal(uri) { Kiki.Daemon.request("OpenDefault", { uri: uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
     /// Right: step into the selected folder. A file has nothing to step into.
     function enterSelected() {
         const r = pane.listing.row(pane.selection.current)
@@ -893,10 +896,10 @@ FloatingWindow {
     /// What the bottom bar says about the folder. In the gallery one thing is on the stage at a
     /// time, so it is where you are among them — "7 of 31" — rather than how many are selected.
     function countText() {
-        const n = pane.listing.count, more = pane.listing.done ? "" : " …"
-        if (pane.filterText) return n + " match"
-        if (pane.view === "gallery" && !win.split && pane.selection.current >= 0 && n > 0) return (pane.selection.current + 1) + " of " + n + more
-        return n + " items" + more + (pane.selection.count() ? " · " + pane.selection.count() + " selected" : "")
+        const n = pane.listing.count, more = pane.listing.done ? "" : " " + Kiki.T.tr("count.more")
+        if (pane.filterText) return Kiki.T.tr("count.match", { n: n })
+        if (pane.view === "gallery" && !win.split && pane.selection.current >= 0 && n > 0) return Kiki.T.tr("count.ofN", { i: pane.selection.current + 1, n: n }) + more
+        return Kiki.T.tr("count.items", { n: n }) + more + (pane.selection.count() ? " · " + Kiki.T.tr("count.selected", { n: pane.selection.count() }) : "")
     }
     /// The focused pane's view item when it is the gallery, else null.
     /// The view item the focused pane is showing, whichever side it is on.
@@ -1213,7 +1216,7 @@ FloatingWindow {
             if (action === "open") activity.open(); else if (action === "close") activity.close(); else if (action === "toggle") activity.toggle(); else if (action === "clear") Kiki.Jobs.clear()
             return JSON.stringify({ open: activity.visible, orb: Kiki.Jobs.orbState(), tip: Kiki.Jobs.orbTip(), entries: Kiki.Jobs.shown().map(j => ({ id: j.id, headline: Kiki.Jobs.headline(j), state: j.state, line: Kiki.Jobs.live(j) ? Kiki.Jobs.statusLine(j) : Kiki.Jobs.completion(j) })) })
         }
-        function contextMenu(action: string): void { const it = win.contextItemsNow().find(i => i.label === action); if (it && it.enabled !== false && it.action) it.action() }
+        function contextMenu(action: string): void { const it = win.contextItemsNow().find(i => i.id === action || i.label === action); if (it && it.enabled !== false && it.action) it.action() }
         function addLocation(): void { locationDialog.open(null) }
         /// The Add-location form, for scripts and tests: pick a kind by scheme, a page or a
         /// credentials tab by name.
@@ -1328,7 +1331,7 @@ FloatingWindow {
                 width: parent.width; height: parent.height
                 localUri: win.localUri(); remoteUri: win.remoteUri(); home: win.home
                 onClosed: win.mirrorOpen = false
-                onSaveWanted: (name, reply) => portal.pick({ mode: "save", title: "Save the mirror report", currentFolder: win.home, currentName: name },
+                onSaveWanted: (name, reply) => portal.pick({ mode: "save", title: Kiki.T.tr("dialog.saveReport"), currentFolder: win.home, currentName: name },
                                                            uris => reply(uris && uris.length ? uris[0] : ""))
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
             }
@@ -1476,11 +1479,11 @@ FloatingWindow {
             id: bar
             width: parent.width
             // Side by side, Ctrl+M is the thing the layout is for, so it leads the hints.
-            keys: (win.split ? [{ key: "^M", label: "mirror" }] : []).concat(win.vimKeys ? [{ key: "h j k l", label: "move" }] : []).concat([
-                { key: "Enter", label: "open" }, { key: "←", label: "up" }, { key: "→", label: "into" },
-                { key: "^I", label: "info" }, { key: "F2", label: "rename" }, { key: "Del", label: "trash" },
-                { key: "❖C", label: "copy" }, { key: "❖V", label: "paste" }, { key: "/", label: "filter" },
-                { key: "^?", label: "keys" }])
+            keys: (win.split ? [{ key: "^M", label: Kiki.T.tr("chip.mirror") }] : []).concat(win.vimKeys ? [{ key: "h j k l", label: Kiki.T.tr("chip.move") }] : []).concat([
+                { key: "Enter", label: Kiki.T.tr("chip.open") }, { key: "←", label: Kiki.T.tr("chip.up") }, { key: "→", label: Kiki.T.tr("chip.into") },
+                { key: "^I", label: Kiki.T.tr("chip.info") }, { key: "F2", label: Kiki.T.tr("chip.rename") }, { key: "Del", label: Kiki.T.tr("chip.trash") },
+                { key: "❖C", label: Kiki.T.tr("chip.copy") }, { key: "❖V", label: Kiki.T.tr("chip.paste") }, { key: "/", label: Kiki.T.tr("chip.filter") },
+                { key: "^?", label: Kiki.T.tr("chip.keys") }])
             statusInset: 38      // the orb stands at the right end
             status: (win.runningShown ? win.runningShown + " running · " : "") + win.countText()
             toast: Kiki.Jobs.toast
@@ -1502,11 +1505,11 @@ FloatingWindow {
         favorites: win.favorites; volumes: win.volumes; locations: win.locations; devices: win.devices; currentUri: win.pane.uri
         searchOpen: searchOverlay.visible
         onSearchRequested: win.toggleSearch()
-        onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) })
+        onEjectDevice: dev => Kiki.Daemon.request("Eject", { uri: dev.uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.ejectFailed", { error: err.message }), undoable: false }) })
         onDeviceMenu: dev => menu.open([
-            { label: "Open", enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
-            { label: "Eject", key: "Ctrl+E", action: () => Kiki.Daemon.request("Eject", { uri: dev.uri }) },
-            { label: dev.busy ? "In use by " + dev.busy : dev.kind.toUpperCase() + " · " + dev.vendor + " " + dev.model, enabled: false, sep: true, action: () => {} },
+            { id: "open", label: Kiki.T.tr("menu.open"), enabled: !dev.busy, action: () => win.pane.open(dev.uri) },
+            { id: "eject", label: Kiki.T.tr("menu.eject"), key: "Ctrl+E", action: () => Kiki.Daemon.request("Eject", { uri: dev.uri }) },
+            { label: dev.busy ? Kiki.T.tr("menu.inUseBy", { what: dev.busy }) : dev.kind.toUpperCase() + " · " + dev.vendor + " " + dev.model, enabled: false, sep: true, action: () => {} },
         ], Qt.point(40, 300))
         onOpen: uri => win.pane.open(uri)
         onAddLocation: locationDialog.open(null)
@@ -1514,7 +1517,7 @@ FloatingWindow {
         onDropOn: (uri, drop) => win.pane.dropInto(uri, drop)
         onDropOnTrash: uris => ops.trashSelection(uris)
         onFavoriteMenu: (index, pos) => menu.open([
-            { label: "Remove from Sidebar", action: () => {
+            { id: "removeFromSidebar", label: Kiki.T.tr("menu.removeFromSidebar"), action: () => {
                 const list = win.favorites.slice()
                 list.splice(index, 1)
                 Kiki.Daemon.request("SetFavorites", { items: list }, () => win.loadSidebar())
@@ -1527,13 +1530,13 @@ FloatingWindow {
             list.splice(Math.max(0, Math.min(list.length, index)), 0, ...add)
             Kiki.Daemon.request("SetFavorites", { items: list }, () => win.loadSidebar())
         }
-        onMountVolume: vol => Kiki.Daemon.request("Mount", { device: vol.device }, (ok, err) => { if (ok) win.pane.open(ok.uri); else Kiki.Jobs.showToast({ text: "Mount failed: " + (err ? err.message : ""), undoable: false }) })
+        onMountVolume: vol => Kiki.Daemon.request("Mount", { device: vol.device }, (ok, err) => { if (ok) win.pane.open(ok.uri); else Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.mountFailed", { error: err ? err.message : "" }), undoable: false }) })
         onVolumeMenu: vol => menu.open([
-            { label: vol.mounted === false ? "Mount" : "Open", action: () => vol.mounted === false ? Kiki.Daemon.request("Mount", { device: vol.device }, ok => { if (ok) win.pane.open(ok.uri) }) : win.pane.open(vol.uri) },
-            { label: "Unmount", enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Unmount failed: " + err.message, undoable: false }) }) },
-            { label: "Eject", enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: "Eject failed: " + err.message, undoable: false }) }) },
+            { label: vol.mounted === false ? Kiki.T.tr("menu.mount") : Kiki.T.tr("menu.open"), action: () => vol.mounted === false ? Kiki.Daemon.request("Mount", { device: vol.device }, ok => { if (ok) win.pane.open(ok.uri) }) : win.pane.open(vol.uri) },
+            { id: "unmount", label: Kiki.T.tr("menu.unmount"), enabled: vol.mounted !== false && vol.uri !== "file:///", action: () => Kiki.Daemon.request("Unmount", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.unmountFailed", { error: err.message }), undoable: false }) }) },
+            { id: "eject", label: Kiki.T.tr("menu.eject"), enabled: !!vol.removable, action: () => Kiki.Daemon.request("Eject", { device: vol.device }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.ejectFailed", { error: err.message }), undoable: false }) }) },
         ], Qt.point(40, 200))
-        onEditLocation: loc => menu.open([{ label: "Open", action: () => win.pane.open(loc.remoteUri) }, { label: "Edit…", action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ label: "Connection Log…", sep: true, action: () => jobLog.openLocation(loc.name) }, { label: "Disconnect", action: () => win.disconnectLocation(loc.name) }, { label: "Remove", danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
+        onEditLocation: loc => menu.open([{ id: "open", label: Kiki.T.tr("menu.open"), action: () => win.pane.open(loc.remoteUri) }, { id: "edit", label: Kiki.T.tr("menu.edit"), action: () => locationDialog.open(loc) }].concat(win.locationImageItems(loc)).concat([{ id: "connectionLog", label: Kiki.T.tr("menu.connectionLog"), sep: true, action: () => jobLog.openLocation(loc.name) }, { id: "disconnect", label: Kiki.T.tr("menu.disconnect"), action: () => win.disconnectLocation(loc.name) }, { id: "remove", label: Kiki.T.tr("menu.remove"), danger: true, sep: true, action: () => Kiki.Daemon.request("RemoveLocation", { name: loc.name }, () => win.loadSidebar()) }]), Qt.point(40, 200))
     }
 
     // Mousing into the left edge brings the hidden favorites panel back.
@@ -1575,21 +1578,21 @@ FloatingWindow {
         // form, starting where the field points (or at home), answering with a plain path.
         onChooseImage: (start, reply) => win.pickLocationImage(start, path => { reply(path); locationDialog.forceActiveFocus() })
         onChooseFolder: (start, reply) => portal.pick(
-            { mode: "open", directory: true, title: "Choose the local folder", currentFolder: (start || "").replace(/^~/, win.home) || win.home },
+            { mode: "open", directory: true, title: Kiki.T.tr("dialog.chooseLocalFolder"), currentFolder: (start || "").replace(/^~/, win.home) || win.home },
             uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, "")).replace(/\/+$/, "") || "/"); locationDialog.forceActiveFocus() })
     }
     /// kiki's own chooser, asked for one picture; answers with a plain path.
     function pickLocationImage(start, reply) {
         const dir = start ? start.replace(/\/[^\/]*$/, "") : ""
-        portal.pick({ mode: "open", title: "Choose an image", currentFolder: dir || win.home,
+        portal.pick({ mode: "open", title: Kiki.T.tr("dialog.chooseImage"), currentFolder: dir || win.home,
                       filters: [{ name: "Images", patterns: ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.svg", "*.gif", "*.bmp"] }] },
             uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, ""))) })
     }
     /// The sidebar menu's part for a location's picture: set one, and take it off again.
     function locationImageItems(loc) {
         const set = image => Kiki.Daemon.request("SetLocationImage", { name: loc.name, image: image }, () => win.loadSidebar())
-        const items = [{ label: loc.image ? "Change Image…" : "Set Image…", sep: true, action: () => win.pickLocationImage(loc.image || "", set) }]
-        if (loc.image) items.push({ label: "Remove Image", action: () => set("") })
+        const items = [{ label: loc.image ? Kiki.T.tr("menu.changeImage") : Kiki.T.tr("menu.setImage"), sep: true, action: () => win.pickLocationImage(loc.image || "", set) }]
+        if (loc.image) items.push({ id: "removeImage", label: Kiki.T.tr("menu.removeImage"), action: () => set("") })
         return items
     }
     UI.PortalDialog { id: portal; objectName: "portal"; anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }

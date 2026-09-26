@@ -232,7 +232,7 @@ def run(ctx):
         os.makedirs(ftps_root)
         fport = servers.start_ftps(ftps_root)
         r = add_location(d, {"name": "e2e-mirror-ftps", "plugin": "ftps", "remoteUri": "ftps://e2e-mirror-ftps" + ftps_root, "localUri": "",
-                             "config": {"host": "127.0.0.1", "port": str(fport), "username": FTPS_USER, "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": FTPS_PASSWORD})
+                             "config": {"host": "127.0.0.1", "port": str(fport), "username": FTPS_USER, "encryption": "explicit"}}, {"password": FTPS_PASSWORD})
         if not c.check("the FTPS location is added, its certificate trusted", "ok" in r and not r["ok"].get("verify"), r):
             return
         os.makedirs(os.path.join(ftps_root, "spread"))

@@ -63,7 +63,7 @@ Rectangle {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text { anchors.verticalCenter: parent.verticalCenter; text: dlg.req ? (dlg.req.title || (dlg.req.mode === "open" ? "Open File" : "Save File")) : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                     Breadcrumb { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 300; uri: dlg.pane.uri; home: dlg.home; onNavigate: uri => dlg.pane.open(uri) }
-                    SearchBox { anchors.verticalCenter: parent.verticalCenter; width: 200; placeholder: "Search"; onChanged: text => dlg.pane.setFilter(text) }
+                    SearchBox { anchors.verticalCenter: parent.verticalCenter; width: 200; placeholder: Kiki.T.tr("search.box"); onChanged: text => dlg.pane.setFilter(text) }
                 }
             }
             Row {
@@ -73,13 +73,13 @@ Rectangle {
                     Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
                     Column {
                         anchors.fill: parent; anchors.topMargin: 8; spacing: 12
-                        SidebarSection { title: "Favorites"; Repeater { model: dlg.favorites; delegate: SidebarItem { required property var modelData; icon: modelData.name === "Home" ? "home" : "folder"; label: modelData.name; active: dlg.pane.uri === modelData.uri; onClicked: dlg.pane.open(modelData.uri) } } }
+                        SidebarSection { title: Kiki.T.tr("portal.favorites"); Repeater { model: dlg.favorites; delegate: SidebarItem { required property var modelData; icon: modelData.name === "Home" ? "home" : "folder"; label: modelData.name; active: dlg.pane.uri === modelData.uri; onClicked: dlg.pane.open(modelData.uri) } } }
                         // Not shown (plan 31, D13). Whoever asked for a file — another application
                         // through the portal, or kiki's own "local folder" and "extract to" — is
                         // going to open a path on this machine, and a location can only answer
                         // with an sftp:// URI it cannot read. Back when a pick is fetched to a
                         // local file first.
-                        SidebarSection { objectName: "chooser-locations"; visible: false; title: "Locations"; Repeater { model: dlg.locations; delegate: SidebarItem { required property var modelData; icon: "server"; iconColor: Kiki.Theme.green; label: modelData.name + " · " + modelData.plugin; onClicked: dlg.pane.open(modelData.remoteUri) } } }
+                        SidebarSection { objectName: "chooser-locations"; visible: false; title: Kiki.T.tr("portal.locations"); Repeater { model: dlg.locations; delegate: SidebarItem { required property var modelData; icon: "server"; iconColor: Kiki.Theme.green; label: modelData.name + " · " + modelData.plugin; onClicked: dlg.pane.open(modelData.remoteUri) } } }
                     }
                 }
                 Views.ListPane { width: parent.width - 180; height: parent.height; pane: dlg.pane; onActivate: i => { const r = dlg.pane.listing.row(i); if (r && r.isDir) dlg.pane.open(dlg.pane.childUri(r.name)); else dlg.accept() } }
@@ -90,13 +90,13 @@ Rectangle {
                 Row {
                     id: chooserRight
                     anchors.right: parent.right; anchors.rightMargin: 14; height: parent.height; spacing: 8
-                    Button { anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; onClicked: dlg.finish(null) }
+                    Button { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("common.cancel"); onClicked: dlg.finish(null) }
                     Button { anchors.verticalCenter: parent.verticalCenter; text: dlg.req && dlg.req.mode === "open" ? (dlg.req.directory ? "Choose" : "Open") : (dlg.req && dlg.req.mode === "saveFiles" ? "Save here" : "Save"); primary: true; onClicked: dlg.accept() }
                 }
                 Row {
                     anchors.left: parent.left; anchors.leftMargin: 14; height: parent.height; spacing: 8
                     readonly property int room: chooserRight.x - 14 - 8
-                    Text { visible: dlg.req && dlg.req.mode === "saveFiles"; anchors.verticalCenter: parent.verticalCenter; text: (dlg.req ? (dlg.req.files || []).length : 0) + " files will be saved here"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                    Text { visible: dlg.req && dlg.req.mode === "saveFiles"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("portal.filesSaved", { n: dlg.req ? (dlg.req.files || []).length : 0 }); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                     Rectangle {
                         visible: dlg.req && dlg.req.mode === "save"; anchors.verticalCenter: parent.verticalCenter; width: Math.max(120, Math.min(320, parent.room - 8)); height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: nameInput.activeFocus ? Kiki.Theme.accent : Kiki.Theme.gutter
                         TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }

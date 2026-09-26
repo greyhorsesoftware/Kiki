@@ -178,7 +178,7 @@ def run(ctx):
             port = servers.start_ftps(ftps_root)
             ports["ftps"] = port
             r = add_location(d, {"name": "e2e-ftps", "plugin": "ftps", "remoteUri": "ftps://e2e-ftps" + ftps_root, "localUri": "",
-                                 "config": {"host": "127.0.0.1", "port": str(port), "username": FTPS_USER, "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": FTPS_PASSWORD})
+                                 "config": {"host": "127.0.0.1", "port": str(port), "username": FTPS_USER, "encryption": "explicit"}}, {"password": FTPS_PASSWORD})
             if c.check("the FTPS location is added, its certificate trusted", "ok" in r and not r["ok"].get("verify"), r):
                 # Full paths, as for SFTP: an unprivileged vsftpd cannot chroot, so its "/" is the
                 # machine's, not the fixture's.

@@ -10,7 +10,7 @@ Item {
     signal contextMenu(int index, point pos)
     property int headerHeight: 30
     // Optional columns come from Settings (General → Columns); Name is always first.
-    readonly property var allColumns: ({ mtime: { role: "mtime", label: "Modified", w: 160 }, size: { role: "size", label: "Size", w: 80 }, kind: { role: "kind", label: "Kind", w: 120 }, atime: { role: "atime", label: "Accessed", w: 150 } })
+    readonly property var allColumns: ({ mtime: { role: "mtime", label: Kiki.T.tr("column.modified"), w: 160 }, size: { role: "size", label: Kiki.T.tr("column.size"), w: 80 }, kind: { role: "kind", label: Kiki.T.tr("column.kind"), w: 120 }, atime: { role: "atime", label: Kiki.T.tr("column.accessed"), w: 150 } })
     // The chosen columns as one string. `columns` below is what the header and every row's cells
     // are built from, so it must change when the SET does and at no other time: reading
     // `Settings.view.columns` straight into it made a new array on every settings write — a
@@ -40,7 +40,7 @@ Item {
         while (n > 0 && wantedColumns.slice(0, n).reduce((a, c) => a + root.columnMin(c) + 12, 0) > room) n--
         return n
     }
-    readonly property var columns: [{ role: "name", label: "Name" }].concat(wantedColumns.slice(0, keep))
+    readonly property var columns: [{ role: "name", label: Kiki.T.tr("column.name") }].concat(wantedColumns.slice(0, keep))
     /// What each shown column is drawn at, by role: the width it asks for, squeezed from the right
     /// until the set fits beside a readable name. The squeeze belongs to the pane and not to the
     /// user, so it is never written back — widen the window and the remembered widths return.

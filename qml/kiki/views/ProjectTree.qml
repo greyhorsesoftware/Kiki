@@ -43,7 +43,7 @@ Item {
                         UI.Icon { name: "mirror"; size: 10; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
                         Text { text: root.repo ? root.repo.branch + (root.repo.ahead ? " ↑" + root.repo.ahead : "") : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } } }
                 Item { width: parent.width - 220; height: 1 }
-                UI.Button { anchors.verticalCenter: parent.verticalCenter; text: "Leave"; height: 24; onClicked: root.leave() }
+                UI.Button { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("tree.leave"); height: 24; onClicked: root.leave() }
             }
         }
         Rectangle {
@@ -52,7 +52,7 @@ Item {
             Row { anchors.fill: parent; anchors.leftMargin: 8; spacing: 8
                 UI.Icon { name: "search"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
                 TextInput { id: filterInput; width: parent.width - 30; height: parent.height; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12; selectionColor: Kiki.Theme.accent; onTextChanged: root.filter(text)
-                    Text { visible: !parent.text.length && !parent.activeFocus; text: "Filter tree"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } }
+                    Text { visible: !parent.text.length && !parent.activeFocus; text: Kiki.T.tr("tree.filter"); color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter } } }
         }
         Item { width: 1; height: 6 }
         ListView {

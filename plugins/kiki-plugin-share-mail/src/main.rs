@@ -69,6 +69,34 @@ fn composer_args(compose: &Value, files: &[String]) -> Vec<String> {
     args
 }
 
+/// The plugin's words, one file per language beside it (`i18n/es.json`, `i18n/ja.json`),
+/// read in at build.
+fn words() -> sdk::Words {
+    sdk::Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])
+}
+
+/// What a share asks for, with its words.
+fn compose() -> Vec<Value> {
+    sdk::localised(vec![sdk::field("to", "To", "text", false, None), sdk::field("subject", "Subject", "text", false, None), sdk::field("body", "Message", "text", false, None)], &words())
+}
+
+/// The form, with its words (`words()` beside `sdk::common_words`).
+fn form() -> Vec<Value> {
+    sdk::localised(
+        vec![
+            sdk::select_field("mode", "Send with", &[("composer", "Mail composer"), ("smtp", "SMTP")], "composer"),
+            sdk::field("host", "SMTP server", "text", false, None),
+            sdk::field("port", "Port", "port", false, Some("587")),
+            sdk::select_field("security", "Security", &[("starttls", "STARTTLS"), ("tls", "TLS"), ("none", "None")], "starttls"),
+            sdk::field("username", "Username", "text", false, None),
+            sdk::field("password", "Password", "password", false, None),
+            sdk::field("from", "From address", "text", false, None),
+            sdk::field("trustFingerprint", "Trusted certificate (sha256, self-signed servers)", "text", false, None),
+        ],
+        &words(),
+    )
+}
+
 impl ShareHandler for Mail {
     fn describe(&self) -> ShareDescribe {
         ShareDescribe {
@@ -81,18 +109,9 @@ impl ShareHandler for Mail {
             accepts_multiple: true,
             max_bytes: Some(20 * 1024 * 1024),
             targets: "none",
-            form: vec![
-                sdk::select_field("mode", "Send with", &["composer", "smtp"], "composer"),
-                sdk::field("host", "SMTP server", "text", false, None),
-                sdk::field("port", "Port", "port", false, Some("587")),
-                sdk::select_field("security", "Security", &["starttls", "tls", "none"], "starttls"),
-                sdk::field("username", "Username", "text", false, None),
-                sdk::field("password", "Password", "password", false, None),
-                sdk::field("from", "From address", "text", false, None),
-                sdk::field("trustFingerprint", "Trusted certificate (sha256, self-signed servers)", "text", false, None),
-            ],
+            form: form(),
             secret_fields: vec!["password"],
-            compose: vec![sdk::field("to", "To", "text", false, None), sdk::field("subject", "Subject", "text", false, None), sdk::field("body", "Message", "text", false, None)],
+            compose: compose(),
             requires: vec![],
         }
     }
@@ -164,5 +183,18 @@ mod tests {
     fn empty_fields_are_left_out_rather_than_passed_empty() {
         let compose = Value::obj().s("subject", "").s("body", "").s("to", "").done();
         assert!(composer_args(&compose, &[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+
+    /// A field or option added without its Spanish and Japanese is a failed build, not an English
+    /// label on a Spanish screen (docs/0.2.0/02-localization.md, decision 7).
+    #[test]
+    fn every_label_of_the_form_has_its_words() {
+        let missing = sdk::unworded(&[form(), compose()].concat(), &["es", "ja"]);
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

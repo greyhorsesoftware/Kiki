@@ -11,7 +11,7 @@ Rectangle {
     /// view says otherwise: in columns it is the focused column's (0.1.1).
     property int count: pane ? pane.listing.count : 0
     /// "Filter this folder", or the folder's name when the view filters a column of its own.
-    property string placeholder: "Filter this folder"
+    property string placeholder: Kiki.T.tr("filter.thisFolder")
     property alias text: input.text
     signal promote(string text)
     signal closed()
@@ -55,7 +55,7 @@ Rectangle {
     ToggleButton {
         id: closeBtn
         anchors.right: parent.right; anchors.rightMargin: 4; anchors.verticalCenter: parent.verticalCenter
-        icon: "x"; tip: "Close filter (Esc)"
+        icon: "x"; tip: Kiki.T.tr("filter.closeTip")
         onClicked: bar.closed()
     }
     Timer { id: debounce; interval: Kiki.Settings.timers.searchDebounceMs; onTriggered: bar.apply(input.text) }

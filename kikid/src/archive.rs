@@ -45,14 +45,14 @@ fn format_args(format: &str) -> Result<Vec<&'static str>> {
 /// Creates `archive` from `items` (paths sharing a parent directory); `progress` gets each entry name.
 pub fn compress(items: &[PathBuf], archive: &Path, format: &str, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<()> {
     if items.is_empty() {
-        return Err(VfsError::Io("nothing to compress".into()));
+        return Err(VfsError::said(1241, &[], "nothing to compress"));
     }
     let parent = items[0].parent().ok_or(VfsError::NotFound)?;
     let mut cmd = Command::new("bsdtar");
     cmd.arg("-cvf").arg(archive).args(format_args(format)?).arg("-C").arg(parent);
     for it in items {
         if it.parent() != Some(parent) {
-            return Err(VfsError::Io("items must share a parent".into()));
+            return Err(VfsError::said(1242, &[], "items must share a parent"));
         }
         cmd.arg(it.file_name().ok_or(VfsError::NotFound)?);
     }
@@ -64,12 +64,13 @@ pub fn compress(items: &[PathBuf], archive: &Path, format: &str, cancel: &Atomic
 /// Every member's name, uncapped (`bsdtar -tf`): what the safety check reads. `list` stops at
 /// 10,000 entries because it is for showing, and a check that stops there is no check.
 fn names(archive: &Path) -> Result<Vec<String>> {
-    let out = Command::new("bsdtar")
-        .arg("-tf")
-        .arg(archive)
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
+    let out =
+        Command::new("bsdtar")
+            .arg("-tf")
+            .arg(archive)
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::said(1240, &[], "bsdtar is not installed") } else { e.into() })?;
     if !out.status.success() {
         return Err(VfsError::Io(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }
@@ -139,14 +140,14 @@ pub fn extract(archive: &Path, dest: &Path, cancel: &AtomicBool, progress: &mut 
 
 fn run(mut cmd: Command, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<()> {
     cmd.stdout(Stdio::null()).stderr(Stdio::piped()).stdin(Stdio::null());
-    let mut child = cmd.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
+    let mut child = cmd.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::said(1240, &[], "bsdtar is not installed") } else { e.into() })?;
     let stderr = child.stderr.take().unwrap();
     let mut errors = String::new();
     for line in BufReader::new(stderr).lines() {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let line = match line {
             Ok(l) => l,
@@ -175,12 +176,13 @@ pub struct Member {
 
 /// Lists members with sizes (`bsdtar -tvf`), capped at 10,000 entries.
 pub fn list(archive: &Path) -> Result<Vec<Member>> {
-    let out = Command::new("bsdtar")
-        .arg("-tvf")
-        .arg(archive)
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::Io("bsdtar is not installed".into()) } else { e.into() })?;
+    let out =
+        Command::new("bsdtar")
+            .arg("-tvf")
+            .arg(archive)
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::said(1240, &[], "bsdtar is not installed") } else { e.into() })?;
     if !out.status.success() {
         return Err(VfsError::Io(String::from_utf8_lossy(&out.stderr).trim().to_string()));
     }

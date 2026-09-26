@@ -14,11 +14,15 @@ fn enforce_guards(plan: &Plan, spec: &Spec) -> Result<(), VfsError> {
         return Ok(());
     }
     if plan.blast_radius_fraction() > spec.blast_radius && !spec.confirmed_large_delete {
-        return Err(VfsError::Io(format!("Safety: this would delete {} of {} replica items; confirm to proceed", plan.delete_count(), plan.replica_entry_count)));
+        return Err(VfsError::said(
+            1223,
+            &[("n", &plan.delete_count()), ("total", &plan.replica_entry_count)],
+            format!("Safety: this would delete {} of {} replica items; confirm to proceed", plan.delete_count(), plan.replica_entry_count),
+        ));
     }
     for a in plan.actions.iter().filter(|a| a.checked && matches!(a.kind, ActionKind::Delete | ActionKind::Rmdir)) {
         if a.rel.is_empty() || a.rel.split('/').any(|s| s == "..") || a.rel.starts_with('/') {
-            return Err(VfsError::Io(format!("Safety: refusing to delete outside the replica root: {}", a.rel)));
+            return Err(VfsError::said(1224, &[("path", &a.rel)], format!("Safety: refusing to delete outside the replica root: {}", a.rel)));
         }
     }
     Ok(())
@@ -76,7 +80,7 @@ pub fn execute(plan: &Arc<Mutex<Plan>>, spec: &Spec, ctx: &ExecCtx) -> Result<Ou
             for _ in 0..ctx.workers.max(1) {
                 handles.push(s.spawn(move || loop {
                     if ctx.cancel.load(Ordering::Relaxed) {
-                        return Err(VfsError::Io("cancelled".into()));
+                        return Err(VfsError::said(1230, &[], "cancelled"));
                     }
                     let next = { queue.lock().unwrap().next() };
                     let Some((idx, action)) = next else { return Ok(()) };
@@ -196,7 +200,7 @@ fn put(s: &Arc<locations::Session>, path: &str, bytes: u64, mtime: u64, ctx: &Ex
     let req = s.req("Write").s("path", part.clone()).u("size", bytes).u("mtime", mtime).done();
     let wrote = s.plugin.write_stream(req, || {
         if ctx.cancel.load(Ordering::Relaxed) {
-            stopped = Some(VfsError::Io("cancelled".into()));
+            stopped = Some(VfsError::said(1230, &[], "cancelled"));
             return None;
         }
         match next() {

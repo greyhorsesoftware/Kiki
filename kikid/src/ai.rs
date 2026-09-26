@@ -111,7 +111,7 @@ fn on_path(bin: &str) -> bool {
 /// A terminal window in `dir`.
 pub fn open_terminal(dir: &Uri) -> Result<(), VfsError> {
     if !dir.is_local() {
-        return Err(VfsError::Io("a terminal opens in a folder on this machine".into()));
+        return Err(VfsError::said(1251, &[], "a terminal opens in a folder on this machine"));
     }
     let argv = terminal_argv(Vec::new(), &dir.to_path(), on_path("xdg-terminal-exec"), std::env::var("TERMINAL").ok());
     // `$TERMINAL -e` with nothing after it is not a command line: the bare terminal, then.
@@ -125,13 +125,13 @@ pub fn open_terminal(dir: &Uri) -> Result<(), VfsError> {
 pub fn open_external(dir: &Uri, uris: &[Uri]) -> Result<String, VfsError> {
     let (p, _) = provider();
     if !dir.is_local() || uris.iter().any(|u| !u.is_local()) {
-        return Err(VfsError::Io("the AI works on files on this machine; copy these here first".into()));
+        return Err(VfsError::said(1252, &[], "the AI works on files on this machine; copy these here first"));
     }
     let paths: Vec<String> = uris.iter().map(|u| u.to_path().to_string_lossy().into_owned()).collect();
     let prompt = (!paths.is_empty()).then(|| opening_prompt(&paths));
-    let program = interactive_for(&p, prompt.as_deref()).ok_or_else(|| VfsError::Io("no command-line tool is set for this AI (Settings → Jarvis)".into()))?;
+    let program = interactive_for(&p, prompt.as_deref()).ok_or_else(|| VfsError::said(1253, &[], "no command-line tool is set for this AI (Settings → Jarvis)"))?;
     if !on_path(&program[0]) {
-        return Err(VfsError::Io(format!("{} is not installed", program[0])));
+        return Err(VfsError::said(1250, &[("name", &program[0])], format!("{} is not installed", program[0])));
     }
     let bin = program[0].clone();
     let argv = terminal_argv(program, &dir.to_path(), on_path("xdg-terminal-exec"), std::env::var("TERMINAL").ok());

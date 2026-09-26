@@ -121,16 +121,126 @@ pub fn on_page(page: &str, field: Value) -> Value {
     }
 }
 
-pub fn select_field(key: &str, label: &str, options: &[&str], default: &str) -> Value {
+/// A drop-down: `options` are `(value, label)` pairs. The value is what is stored and what
+/// the plugin reads back — stable, never words for a person; the label is what the window
+/// shows, in English, or in the user's language once `localised` has given it the plugin's
+/// words (docs/0.2.0/02-localization.md). Until 0.2.0 an option was one string, shown and
+/// stored alike, so translating it would have broken every saved location.
+pub fn select_field(key: &str, label: &str, options: &[(&str, &str)], default: &str) -> Value {
     Value::obj()
         .s("key", key)
         .s("label", label)
         .s("kind", "select")
         .b("required", true)
         .s("default", default)
-        .v("options", Value::Arr(options.iter().map(|o| Value::Str(o.to_string())).collect()))
+        .v("options", Value::Arr(options.iter().map(|(v, l)| Value::obj().s("value", *v).s("label", *l).done()).collect()))
         .v("group", Value::Null)
         .done()
+}
+
+/// A plugin's words for its form in other languages: one JSON file per language beside the
+/// plugin — `i18n/es.json` is `{ "Encryption": "Cifrado", "Implicit TLS": "TLS implícito" }`,
+/// keyed by the English label the form is built with — read into the binary at build:
+/// `Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])`.
+/// The plugin owns its words: a plugin from anywhere is translated by its own files, not by
+/// the window's catalog. A translator edits the JSON and never the Rust.
+pub struct Words {
+    langs: Vec<(String, HashMap<String, String>)>,
+}
+
+impl Words {
+    /// `(language, the file's text)` pairs. A file that is not a JSON object of strings is a
+    /// broken build, said at once (the plugin's `words_tests` runs this).
+    pub fn from_files(files: &[(&str, &str)]) -> Words {
+        let langs = files
+            .iter()
+            .map(|(lang, text)| {
+                let parsed = json::parse(text.as_bytes()).unwrap_or_else(|e| panic!("i18n/{lang}.json: {e:?}"));
+                let Value::Obj(m) = parsed else { panic!("i18n/{lang}.json: not an object") };
+                let words = m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_else(|| panic!("i18n/{lang}.json: {k}: not a string")).to_string())).collect();
+                (lang.to_string(), words)
+            })
+            .collect();
+        Words { langs }
+    }
+
+    /// The words for an English label, `{ "es": …, "ja": … }` — only the languages that have one.
+    fn word(&self, label: &str) -> Option<Value> {
+        let mut o = Value::obj();
+        let mut any = false;
+        for (lang, words) in &self.langs {
+            if let Some(w) = words.get(label) {
+                o = o.s(lang, w.as_str());
+                any = true;
+            }
+        }
+        any.then(|| o.done())
+    }
+}
+
+/// The words every location form asks for — Name, Host, Port, Username, Password, the paths —
+/// from the SDK's own `i18n/` files, so a plugin's files hold only what is its own.
+pub fn common_words() -> Words {
+    Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])
+}
+
+/// The form with its words: every field, and every option of a select, whose English `label`
+/// the plugin's files or `common_words` know gains `labels: { "es": …, "ja": … }` beside it (the
+/// plugin's files win, language by language). The window shows the label for its language and
+/// the English one when there is none; the `value`s and `key`s are never touched.
+pub fn localised(form: Vec<Value>, words: &Words) -> Vec<Value> {
+    let common = common_words();
+    let word = |label: &str| -> Option<Value> {
+        match (words.word(label), common.word(label)) {
+            (None, None) => None,
+            (Some(w), None) | (None, Some(w)) => Some(w),
+            (Some(Value::Obj(mut own)), Some(Value::Obj(shared))) => {
+                for (lang, w) in shared {
+                    own.entry(lang).or_insert(w);
+                }
+                Some(Value::Obj(own))
+            }
+            (Some(w), Some(_)) => Some(w),
+        }
+    };
+    let add = |v: Value| -> Value {
+        let Value::Obj(mut m) = v else { return v };
+        if let Some(labels) = m.get("label").and_then(Value::as_str).and_then(word) {
+            m.insert("labels".to_string(), labels);
+        }
+        Value::Obj(m)
+    };
+    form.into_iter()
+        .map(|f| {
+            let Value::Obj(mut m) = add(f) else { unreachable!() };
+            if let Some(Value::Arr(options)) = m.remove("options") {
+                m.insert("options".to_string(), Value::Arr(options.into_iter().map(add).collect()));
+            }
+            Value::Obj(m)
+        })
+        .collect()
+}
+
+/// What a localised form still says only in English: `"<label>: <lang>"` for each field or
+/// option label that has no word in one of `languages`. A plugin's test asserts this is empty,
+/// so a field added without its words is a failed build, not a stray English label on screen.
+pub fn unworded(form: &[Value], languages: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut check = |v: &Value| {
+        let Some(label) = v.get("label").and_then(Value::as_str) else { return };
+        for lang in languages {
+            if v.get("labels").and_then(|l| l.get(lang)).is_none() {
+                out.push(format!("{label}: {lang}"));
+            }
+        }
+    };
+    for f in form {
+        check(f);
+        for o in f.get("options").and_then(Value::as_arr).unwrap_or(&[]) {
+            check(o);
+        }
+    }
+    out
 }
 
 pub struct Features {
@@ -967,6 +1077,28 @@ pub fn percent_decode(s: &str) -> String {
 /// A service plugin's Describe (dbus, highlight, ai): fixed-name plugins the daemon uses itself.
 pub fn service_describe(id: &str, name: &str, version: &str, requests: &[&str]) -> Value {
     Value::obj().s("kind", "service").s("id", id).s("name", name).s("version", version).v("requests", Value::Arr(requests.iter().map(|r| Value::Str(r.to_string())).collect())).done()
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+
+    fn words() -> Words {
+        Words::from_files(&[("es", r#"{ "Encryption": "Cifrado", "Implicit TLS": "TLS implícito", "Host": "Anfitrión" }"#), ("ja", r#"{ "Encryption": "暗号化", "Implicit TLS": "暗黙的 TLS" }"#)])
+    }
+
+    #[test]
+    fn a_form_gains_its_words_and_the_plugins_files_win_over_the_common_ones() {
+        let form = localised(vec![field("host", "Host", "text", true, None), select_field("encryption", "Encryption", &[("explicit", "Explicit TLS"), ("implicit", "Implicit TLS")], "explicit")], &words());
+        assert_eq!(form[0].get("labels").and_then(|l| l.get("es")).and_then(Value::as_str), Some("Anfitrión"), "the plugin's own word, not the common one");
+        assert_eq!(form[0].get("labels").and_then(|l| l.get("ja")).and_then(Value::as_str), Some("ホスト"), "the common word where the plugin's files have none");
+        assert_eq!(form[1].get("labels").and_then(|l| l.get("ja")).and_then(Value::as_str), Some("暗号化"));
+        let options = form[1].get("options").and_then(Value::as_arr).unwrap();
+        assert!(options[0].get("labels").is_none(), "no word for it: no labels, the window shows the English");
+        assert_eq!(options[1].get("labels").and_then(|l| l.get("es")).and_then(Value::as_str), Some("TLS implícito"));
+        assert_eq!(options[1].get("value").and_then(Value::as_str), Some("implicit"), "values are never touched");
+        assert_eq!(unworded(&form, &["es", "ja"]), vec!["Explicit TLS: es", "Explicit TLS: ja"]);
+    }
 }
 
 #[cfg(test)]

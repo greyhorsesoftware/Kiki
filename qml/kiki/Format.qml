@@ -12,17 +12,17 @@ QtObject {
     }
     // "just now", "5 min ago", "3 h ago", "2 days ago", "3 weeks ago", "5 months ago", "2 years ago"
     function relative(ms) {
-        if (!ms) return "—"
+        if (!ms) return Kiki.T.tr("date.never")
         const s = Math.max(0, (Date.now() - ms) / 1000)
-        if (s < 45) return "just now"
-        if (s < 3600) return Math.round(s / 60) + " min ago"
-        if (s < 86400) return Math.round(s / 3600) + " h ago"
+        if (s < 45) return Kiki.T.tr("date.justNow")
+        if (s < 3600) return Kiki.T.tr("date.minutesAgo", { n: Math.round(s / 60) })
+        if (s < 86400) return Kiki.T.tr("date.hoursAgo", { n: Math.round(s / 3600) })
         const d = Math.round(s / 86400)
-        if (d < 14) return d + (d === 1 ? " day ago" : " days ago")
-        if (d < 60) return Math.round(d / 7) + " weeks ago"
-        if (d < 365) return Math.round(d / 30) + " months ago"
+        if (d < 14) return Kiki.T.tr("date.daysAgo", { n: d })
+        if (d < 60) return Kiki.T.tr("date.weeksAgo", { n: Math.round(d / 7) })
+        if (d < 365) return Kiki.T.tr("date.monthsAgo", { n: Math.round(d / 30) })
         const y = Math.round(d / 365)
-        return y + (y === 1 ? " year ago" : " years ago")
+        return Kiki.T.tr("date.yearsAgo", { n: y })
     }
     // Heat for an access time: the accent colour at full strength for the last hour, fading on a
     // log scale to nothing at about a year. Returns a colour with alpha, meant as a cell background.
@@ -40,13 +40,13 @@ QtObject {
         if (!ms) return ""
         const d = new Date(ms), now = new Date()
         const s = (now.getTime() - ms) / 1000
-        if (s >= 0 && s < 45) return "just now"
-        if (s >= 0 && s < 3600) return Math.round(s / 60) + " min ago"
+        if (s >= 0 && s < 45) return Kiki.T.tr("date.justNow")
+        if (s >= 0 && s < 3600) return Kiki.T.tr("date.minutesAgo", { n: Math.round(s / 60) })
         const sameDay = d.toDateString() === now.toDateString()
-        if (s >= 0 && s < 86400 && sameDay) return Math.round(s / 3600) + " h ago"
+        if (s >= 0 && s < 86400 && sameDay) return Kiki.T.tr("date.hoursAgo", { n: Math.round(s / 3600) })
         const y = new Date(now); y.setDate(now.getDate() - 1)
         const hm = d.toLocaleTimeString(Qt.locale(), "HH:mm")
-        if (d.toDateString() === y.toDateString()) return "yesterday " + hm
+        if (d.toDateString() === y.toDateString()) return Kiki.T.tr("date.yesterdayAt", { time: hm })
         if (s > 0 && s < 6 * 86400) return d.toLocaleDateString(Qt.locale(), "dddd") + " " + hm
         if (d.getFullYear() === now.getFullYear()) return d.toLocaleString(Qt.locale(), "d MMM HH:mm")
         return d.toLocaleString(Qt.locale(), "d MMM yyyy")
@@ -106,9 +106,9 @@ QtObject {
             m = hit[1].trim()
         }
         // The daemon's bare codes, as words: "report.pdf: NotFound" reads like a stack trace.
-        const words = { NotFound: "not found", Denied: "permission denied", Exists: "already exists", NotEmpty: "the folder is not empty", Unsupported: "not supported here" }
+        const words = { NotFound: Kiki.T.tr("error.notFound"), Denied: Kiki.T.tr("error.denied"), Exists: Kiki.T.tr("error.exists"), NotEmpty: Kiki.T.tr("error.notEmpty"), Unsupported: Kiki.T.tr("error.unsupported") }
         m = m.replace(/(^|: )(NotFound|Denied|Exists|NotEmpty|Unsupported)$/, (all, lead, code) => lead + words[code])
-        return m || "Failed"
+        return m || Kiki.T.tr("error.failed")
     }
     /// A length of time as a player shows it: 0:07, 3:40, 1:02:05.
     function clock(ms) {
@@ -136,7 +136,8 @@ QtObject {
     /// `a` moved `t` of the way towards `b`.
     function mix(a, b, t) { return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1) }
     function kindLabel(kind) {
-        return { folder: "Folder", image: "Image", video: "Video", audio: "Audio", code: "Code", text: "Text", document: "Document", pdf: "PDF document", archive: "Archive", link: "Link", file: "File", other: "Other" }[kind] || "File"
+        const known = ["folder", "image", "video", "audio", "code", "text", "document", "pdf", "archive", "link", "file", "other"]
+        return Kiki.T.tr("kind." + (known.indexOf(kind) >= 0 ? kind : "file"))
     }
     // ~-shortened display of a URI, as the daemon's Uri::display does. A bare filesystem path —
     // the trash's record of where a file came from is one — is shortened the same way; it used to

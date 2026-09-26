@@ -59,7 +59,7 @@ Rectangle {
                 Keys.onUpPressed: list.move(-1)
                 Text {
                     visible: !input.text.length; anchors.verticalCenter: parent.verticalCenter
-                    text: "Search everywhere"; color: Kiki.Theme.muted; font: input.font
+                    text: Kiki.T.tr("search.placeholder"); color: Kiki.Theme.muted; font: input.font
                 }
             }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
@@ -68,7 +68,7 @@ Rectangle {
             id: scopes
             x: 12; y: field.height + 8; spacing: 6; height: 24
             Repeater {
-                model: [{ id: "everywhere", label: "Everywhere" }].concat(ov.locations.map(l => ({ id: l.name, label: l.name })))
+                model: [{ id: "everywhere", label: Kiki.T.tr("search.everywhere") }].concat(ov.locations.map(l => ({ id: l.name, label: l.name })))
                 delegate: Rectangle {
                     required property var modelData
                     height: 24; radius: 12; width: chip.implicitWidth + 20
@@ -87,7 +87,7 @@ Rectangle {
             y: scopes.y + scopes.height + 8
             width: parent.width; height: Math.max(0, parent.height - y)
             results: ov.results; query: input.text; home: ov.home; indexInfo: ov.indexInfo
-            scopeLabel: ov.scope === "everywhere" ? "Everywhere" : ov.scope
+            scopeLabel: ov.scope === "everywhere" ? Kiki.T.tr("search.everywhere") : ov.scope
             onOpen: uri => { ov.close(); ov.openUri(uri) }
             onReveal: uri => { ov.close(); ov.revealUri(uri) }
         }

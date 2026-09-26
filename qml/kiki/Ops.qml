@@ -62,14 +62,14 @@ QtObject {
     function newFolder(dest) {
         if (pane.isTrash) return
         const into = dest || pane.uri
-        let name = "New folder", n = 2
+        let name = Kiki.T.tr("ops.newFolder"), n = 2
         const names = new Set()
         // Only a folder a view is showing has a listing to check the name against; elsewhere the
         // daemon answers with a collision and the prompt handles it. That same view is what puts
         // the new row in the editor, so it is asked for once, here.
         const site = _site(into)
         if (site) for (let i = 0; i < site.count(); i++) { const r = site.row(i); if (r) names.add(r.name) }
-        while (names.has(name)) name = "New folder " + n++
+        while (names.has(name)) name = Kiki.T.tr("ops.newFolderN", { n: n++ })
         // Set before submitting, not in the reply: on a fast filesystem the watcher's Reset can
         // arrive first, and the row would land with nothing waiting to rename it. A folder made
         // where nobody is looking has no row to rename, so it is left alone.
@@ -97,9 +97,9 @@ QtObject {
         if (!remote.length) return
         const host = Kiki.Format.authority(remote[0])
         const what = remote.length === 1
-            ? decodeURIComponent(remote[0].replace(/\/+$/, "").split("/").pop()) + " is on " + host + ", which has no trash. It will be deleted for good, and this cannot be undone."
-            : "These " + remote.length + " items are on " + host + ", which has no trash. They will be deleted for good, and this cannot be undone."
-        confirmNeeded({ title: "Delete permanently?", message: what, label: "Delete" }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: remote }) })
+            ? Kiki.T.tr("ops.remoteTrashOne", { name: decodeURIComponent(remote[0].replace(/\/+$/, "").split("/").pop()), host: host })
+            : Kiki.T.tr("ops.remoteTrashMany", { n: remote.length, host: host })
+        confirmNeeded({ title: Kiki.T.tr("ops.deleteTitle"), message: what, label: Kiki.T.tr("ops.delete") }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: remote }) })
     }
     function restoreSelection() { const n = selectedNames(); if (n.length) Kiki.Jobs.submit({ op: "restore", names: n }) }
 
@@ -108,13 +108,13 @@ QtObject {
         const u = uris || selectedUris(); if (!u.length) return
         if (pane.isTrash) { Kiki.Jobs.submit({ op: "delete", items: u }); return }
         const what = u.length === 1
-            ? decodeURIComponent(u[0].split("/").pop()) + " will be deleted, not moved to the trash. This cannot be undone."
-            : u.length + " items will be deleted, not moved to the trash. This cannot be undone."
-        confirmNeeded({ title: "Delete permanently?", message: what, label: "Delete" }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: u }) })
+            ? Kiki.T.tr("ops.deleteOne", { name: decodeURIComponent(u[0].split("/").pop()) })
+            : Kiki.T.tr("ops.deleteMany", { n: u.length })
+        confirmNeeded({ title: Kiki.T.tr("ops.deleteTitle"), message: what, label: Kiki.T.tr("ops.delete") }, yes => { if (yes) Kiki.Jobs.submit({ op: "delete", items: u }) })
     }
 
     function emptyTrash() {
-        confirmNeeded({ title: "Empty the trash?", message: pane.listing.count + " items will be deleted for good.", label: "Empty Trash" },
+        confirmNeeded({ title: Kiki.T.tr("ops.emptyTrashTitle"), message: Kiki.T.tr("ops.emptyTrashMessage", { n: pane.listing.count }), label: Kiki.T.tr("ops.emptyTrash") },
                       yes => { if (yes) Kiki.Jobs.submit({ op: "emptyTrash" }) })
     }
 
@@ -128,7 +128,7 @@ QtObject {
     /// where the row may live in a folder the pane is not standing in; the chooser starts there.
     function extractTo(name, at) {
         const archive = at || pane.childUri(name)
-        folderNeeded({ title: "Extract " + name + " to…", start: at ? at.replace(/\/[^/]*$/, "") : pane.uri }, dest => {
+        folderNeeded({ title: Kiki.T.tr("ops.extractTo", { name: name }), start: at ? at.replace(/\/[^/]*$/, "") : pane.uri }, dest => {
             if (dest) Kiki.Jobs.submit({ op: "extract", archive: archive, dest: dest })
         })
     }

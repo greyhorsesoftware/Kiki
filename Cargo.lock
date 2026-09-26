@@ -1089,11 +1089,11 @@ dependencies = [
 
 [[package]]
 name = "kiki-json"
-version = "0.1.1"
+version = "0.2.0"
 
 [[package]]
 name = "kiki-plugin-dbus"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-plugin-sdk",
  "tokio",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-ftps"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-plugin-sdk",
  "ring",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-gio"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "gio",
  "glib",
@@ -1122,7 +1122,7 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-sdk"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-json",
  "log",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-sftp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-plugin-sdk",
  "rand",
@@ -1141,7 +1141,7 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-share-mail"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-plugin-sdk",
  "ring",
@@ -1151,14 +1151,14 @@ dependencies = [
 
 [[package]]
 name = "kiki-plugin-share-tailscale"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "kiki-plugin-sdk",
 ]
 
 [[package]]
 name = "kikid"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "image",
  "kiki-json",

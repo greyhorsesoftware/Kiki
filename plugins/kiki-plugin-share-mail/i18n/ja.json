@@ -1,0 +1,15 @@
+{
+  "Send with": "送信方法",
+  "Mail composer": "メール作成アプリ",
+  "SMTP": "SMTP",
+  "SMTP server": "SMTP サーバー",
+  "Security": "セキュリティ",
+  "STARTTLS": "STARTTLS",
+  "TLS": "TLS",
+  "None": "なし",
+  "From address": "送信元アドレス",
+  "Trusted certificate (sha256, self-signed servers)": "信頼する証明書（sha256、自己署名サーバー）",
+  "To": "宛先",
+  "Subject": "件名",
+  "Message": "メッセージ"
+}

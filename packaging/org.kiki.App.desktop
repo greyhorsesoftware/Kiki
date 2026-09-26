@@ -2,7 +2,11 @@
 Type=Application
 Name=kiki
 GenericName=File Manager
+GenericName[es]=Gestor de archivos
+GenericName[ja]=ファイルマネージャー
 Comment=Browse files locally and on SFTP, FTPS and SMB locations
+Comment[es]=Explora archivos locales y en ubicaciones SFTP, FTPS y SMB
+Comment[ja]=ローカルと SFTP・FTPS・SMB の場所のファイルを閲覧
 Exec=kiki %U
 Icon=org.kiki.App
 Terminal=false

@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "." as Kiki
 
 // The one connection to kikid. Newline-delimited JSON over the Unix socket:
 // requests carry an id and get one reply; events carry "event" and a lid.
@@ -30,7 +31,7 @@ Singleton {
     function request(type, fields, cb) {
         const id = _nextId++
         const msg = Object.assign({ id: id, type: type }, fields || {})
-        if (!socket) { if (cb) cb(undefined, { code: "Disconnected", message: "not connected to the daemon" }); return id }
+        if (!socket) { if (cb) cb(undefined, { code: "Disconnected", message: Kiki.T.tr("daemon.notConnected") }); return id }
         if (cb) _pending[id] = cb
         socket.write(JSON.stringify(msg) + "\n")
         socket.flush()
@@ -51,6 +52,9 @@ Singleton {
         let msg
         try { msg = JSON.parse(line) } catch (e) { console.warn("kikid: bad json", line); return }
         if (msg.id !== undefined && (msg.ok !== undefined || msg.err !== undefined)) {
+            // A numbered error is said in the window's language here, once, for every caller:
+            // `message` becomes the sentence, `raw` keeps the daemon's English (0.2.0).
+            if (msg.err && msg.err.n !== undefined) { msg.err.raw = msg.err.message; msg.err.message = Kiki.T.errorText(msg.err) }
             const cb = _pending[msg.id]
             if (cb) { delete _pending[msg.id]; cb(msg.ok, msg.err) }
             else if (msg.err) console.warn("kikid error", msg.err.code, msg.err.message)

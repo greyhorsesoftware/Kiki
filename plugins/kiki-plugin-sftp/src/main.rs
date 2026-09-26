@@ -597,6 +597,36 @@ fn parse_stat_record(buf: &mut Vec<u8>, root: &str, recursive: bool) -> Option<E
     })
 }
 
+/// The plugin's words, one file per language beside it (`i18n/es.json`, `i18n/ja.json`),
+/// read in at build.
+fn words() -> sdk::Words {
+    sdk::Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])
+}
+
+/// The form, with its words (`words()` beside `sdk::common_words`).
+fn form() -> Vec<Value> {
+    sdk::localised(
+        vec![
+            sdk::field("name", "Name", "text", true, None),
+            sdk::field("host", "Host", "text", true, None),
+            sdk::field("port", "Port", "port", true, Some("22")),
+            sdk::field("username", "Username", "text", true, None),
+            // `keys`: the form lists what `browse` finds, ticks the first, and lets any
+            // number be ticked; none ticked is a password-only location. The password is an
+            // equal, not a fallback of last resort.
+            // Two tabs, one way in: the form sends only the chosen tab's fields, and says
+            // which it was in `auth`.
+            sdk::field_in("Password", "password", "Password", "password", false, None),
+            sdk::field_in("Key", "identityFile", "Keys", "keys", false, None),
+            sdk::field_in("Key", "passphrase", "Key passphrase", "password", false, None),
+            // Where it is, apart from how to get in.
+            sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", true, Some("/"))),
+            sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
+        ],
+        &words(),
+    )
+}
+
 impl Handler for Sftp {
     /// The `keys` field: every private key in `~/.ssh`, found afresh each time the form asks,
     /// so a key made a minute ago is there without restarting anything.
@@ -618,23 +648,7 @@ impl Handler for Sftp {
             scheme: "sftp",
             display_name: "SFTP",
             version: "1.0",
-            form: vec![
-                sdk::field("name", "Name", "text", true, None),
-                sdk::field("host", "Host", "text", true, None),
-                sdk::field("port", "Port", "port", true, Some("22")),
-                sdk::field("username", "Username", "text", true, None),
-                // `keys`: the form lists what `browse` finds, ticks the first, and lets any
-                // number be ticked; none ticked is a password-only location. The password is an
-                // equal, not a fallback of last resort.
-                // Two tabs, one way in: the form sends only the chosen tab's fields, and says
-                // which it was in `auth`.
-                sdk::field_in("Password", "password", "Password", "password", false, None),
-                sdk::field_in("Key", "identityFile", "Keys", "keys", false, None),
-                sdk::field_in("Key", "passphrase", "Key passphrase", "password", false, None),
-                // Where it is, apart from how to get in.
-                sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", true, Some("/"))),
-                sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
-            ],
+            form: form(),
             defaults: Value::obj().s("port", "22").s("remotePath", "/").done(),
             secret_fields: vec!["passphrase", "password"],
             detector_upload: "sizeMtime",
@@ -1078,5 +1092,18 @@ mod key_tests {
         assert_eq!(field("localPath").str_field("page"), Some("Locations"));
         assert_eq!(field("host").str_field("page"), None);
         assert!(sftp.describe().defaults.str_field("identityFile").is_none(), "no key is assumed by the plugin: the form ticks the first one found");
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+
+    /// A field or option added without its Spanish and Japanese is a failed build, not an English
+    /// label on a Spanish screen (docs/0.2.0/02-localization.md, decision 7).
+    #[test]
+    fn every_label_of_the_form_has_its_words() {
+        let missing = sdk::unworded(&form(), &["es", "ja"]);
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

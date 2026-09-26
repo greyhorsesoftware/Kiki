@@ -1,0 +1,12 @@
+{
+  "Security": "セキュリティ",
+  "HTTPS": "HTTPS",
+  "Plain HTTP": "暗号化なしの HTTP",
+  "Path prefix": "パスの接頭辞",
+  "Volume": "ボリューム",
+  "Authentication": "認証",
+  "Guest": "ゲスト",
+  "Kerberos": "Kerberos",
+  "Share": "共有",
+  "Domain / workgroup": "ドメイン／ワークグループ"
+}

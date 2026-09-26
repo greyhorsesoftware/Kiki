@@ -198,7 +198,9 @@ fn make_rename_delete_and_stamp_a_local_file() {
     assert_eq!(e.code(), "Io");
     assert!(e.message().contains("no location for nosuch://server"), "{}", e.message());
     let e = kikid::listing::open(&unknown).map(|_| ()).unwrap_err();
-    assert!(matches!(e, VfsError::Io(_)), "{}", e.message());
+    // Numbered (1260, "no location for {scheme}://{host}") since 0.2.0: still an Io to a client.
+    assert!(matches!(e, VfsError::Said { n: 1260, .. }), "{}", e.message());
+    assert_eq!(e.code(), "Io");
     // And a job over one is refused rather than run against a local path of the same name.
     refused(Value::obj().s("op", "mkdir").s("uri", "nosuch://server/made-up").done(), "no location for nosuch://server");
     assert!(!PathBuf::from("/made-up").exists());

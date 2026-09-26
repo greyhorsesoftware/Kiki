@@ -102,7 +102,7 @@ fn scan_local(root: &Path, prefix: &str, w: &mut Walk, out: &mut SideMap) -> Res
     let dir = if prefix.is_empty() { root.to_path_buf() } else { root.join(prefix) };
     for e in std::fs::read_dir(&dir)? {
         if w.cancel.load(Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let e = e?;
         let name = e.file_name().to_string_lossy().into_owned();
@@ -127,7 +127,7 @@ fn scan_local(root: &Path, prefix: &str, w: &mut Walk, out: &mut SideMap) -> Res
 
 fn scan_remote(session: &Arc<Session>, root: &str, prefix: &str, w: &mut Walk, out: &mut SideMap) -> Result<(), VfsError> {
     if w.cancel.load(Ordering::Relaxed) {
-        return Err(VfsError::Io("cancelled".into()));
+        return Err(VfsError::said(1230, &[], "cancelled"));
     }
     let path = join_rel(root, prefix);
     let req = session.req("Scan").s("path", path).done();
@@ -213,11 +213,11 @@ pub(super) fn overlap(master: &Uri, replica: &Uri) -> Result<(), VfsError> {
     }
     let inside = |inner: &str, outer: &str| inner.strip_prefix(outer.trim_end_matches('/')).is_some_and(|rest| rest.starts_with('/'));
     if master.path == replica.path {
-        Err(VfsError::Io("the source and the destination are the same folder".into()))
+        Err(VfsError::said(1220, &[], "the source and the destination are the same folder"))
     } else if inside(&replica.path, &master.path) {
-        Err(VfsError::Io("the destination is inside the source folder".into()))
+        Err(VfsError::said(1221, &[], "the destination is inside the source folder"))
     } else if inside(&master.path, &replica.path) {
-        Err(VfsError::Io("the source is inside the destination folder".into()))
+        Err(VfsError::said(1222, &[], "the source is inside the destination folder"))
     } else {
         Ok(())
     }
@@ -248,7 +248,7 @@ pub fn scan_counting(spec: &mut Spec, cancel: &AtomicBool, report: &dyn Fn(u64))
         fill_local_digests(&master_side, &mut master, &replica, cancel);
         fill_local_digests(&replica_side, &mut replica, &master, cancel);
         if cancel.load(Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
     }
     if spec.clock_offset_auto && detector != Detector::Digest {

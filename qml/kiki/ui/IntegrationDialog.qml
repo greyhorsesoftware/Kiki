@@ -12,10 +12,10 @@ Rectangle {
     property var results: []
     property bool busy: false
     readonly property var items: [
-        { id: "mime", label: "Open folders from other applications", detail: "inode/directory in ~/.config/mimeapps.list" },
-        { id: "dbus", label: "\"Show in folder\" from browsers and chat apps", detail: "user D-Bus activation for org.freedesktop.FileManager1" },
-        { id: "hypr", label: "Keys: Super+Shift+F opens kiki, Super+Alt+Shift+F opens the terminal's folder", detail: "a marked block in ~/.config/hypr/bindings.conf, rolled back if Hyprland rejects it" },
-        { id: "portal", label: "Open and Save dialogs from other applications", detail: "FileChooser=kiki;gtk in ~/.config/xdg-desktop-portal/portals.conf" },
+        { id: "mime", label: Kiki.T.tr("integration.mime"), detail: "inode/directory in ~/.config/mimeapps.list" },
+        { id: "dbus", label: Kiki.T.tr("integration.dbus"), detail: "user D-Bus activation for org.freedesktop.FileManager1" },
+        { id: "hypr", label: Kiki.T.tr("integration.hypr"), detail: "a marked block in ~/.config/hypr/bindings.conf, rolled back if Hyprland rejects it" },
+        { id: "portal", label: Kiki.T.tr("integration.portal"), detail: "FileChooser=kiki;gtk in ~/.config/xdg-desktop-portal/portals.conf" },
     ]
     function open() { results = []; Kiki.Daemon.request("Integration", {}, ok => { if (ok) status = ok; visible = true }) }
     function decide(apply) {
@@ -35,8 +35,8 @@ Rectangle {
         anchors.centerIn: parent; width: 640; height: col.height + 48; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             id: col; x: 24; y: 24; width: parent.width - 48; spacing: 12
-            Text { text: "Make kiki your file manager?"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-            Text { width: parent.width; wrapMode: Text.WordWrap; text: "These are per-user settings and each one can be removed later from Settings → Omarchy."; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+            Text { text: Kiki.T.tr("integration.title"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
+            Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("integration.note"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             Repeater {
                 model: dlg.items
                 delegate: Row {
@@ -56,10 +56,10 @@ Rectangle {
                     }
                 }
             }
-            Text { visible: !!dlg.status.hyprConfigErrors && dlg.status.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: "Hyprland reports config errors already; the keybinding step will refuse until they are fixed:\n" + (dlg.status.hyprConfigErrors || []).join("\n"); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { visible: !!dlg.status.hyprConfigErrors && dlg.status.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("integration.hyprErrors", { errors: (dlg.status.hyprConfigErrors || []).join("\n") }); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Row {
                 spacing: 8; anchors.right: parent.right
-                Button { text: "Not now"; onClicked: dlg.decide(false) }
+                Button { text: Kiki.T.tr("integration.notNow"); onClicked: dlg.decide(false) }
                 Button { text: dlg.busy ? "Applying…" : "Make kiki the default"; primary: true; enabled: !dlg.busy; onClicked: dlg.decide(true) }
             }
         }

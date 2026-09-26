@@ -21,7 +21,7 @@ Rectangle {
             if (!uri) return
             Kiki.Daemon.request("MirrorReport", { job: scanJob, saveTo: uri }, (ok, err) => {
                 if (ok) reportText = ok.text
-                saved = err ? err.message : "Report saved to " + Kiki.Format.display(uri, home)
+                saved = err ? err.message : Kiki.T.tr("mirror.reportSaved", { path: Kiki.Format.display(uri, home) })
                 Kiki.Jobs.showToast({ text: saved, undoable: false })
             })
         })
@@ -90,8 +90,8 @@ Rectangle {
         const a = (upload ? localUri : remoteUri).replace(/\/+$/, ""), b = (upload ? remoteUri : localUri).replace(/\/+$/, "")
         if (!a || !b) return ""
         if (a === b) return "The source and the destination are the same folder."
-        if (b.indexOf(a + "/") === 0) return "The destination is inside the source folder."
-        if (a.indexOf(b + "/") === 0) return "The source is inside the destination folder."
+        if (b.indexOf(a + "/") === 0) return Kiki.T.tr("mirror.destInsideSource")
+        if (a.indexOf(b + "/") === 0) return Kiki.T.tr("mirror.sourceInsideDest")
         return ""
     }
     function preflight() {
@@ -108,7 +108,7 @@ Rectangle {
     /// What the Preflight screen says: which folder is being compared, and how far the daemon has
     /// got. There is no bar, because there is no total to fill one with.
     function comparingText() {
-        return "Comparing " + Kiki.Format.display(localUri, home) + "…" + (scanSeen > 0 ? "  " + grouped(scanSeen) + " items so far" : "")
+        return Kiki.T.tr("mirror.comparing", { path: Kiki.Format.display(localUri, home) }) + (scanSeen > 0 ? Kiki.T.tr("mirror.soFar", { n: grouped(scanSeen) }) : "")
     }
     /// 12400 → "12,400". Long numbers are read in threes, and this one is watched while it moves.
     function grouped(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",") }
@@ -164,29 +164,27 @@ Rectangle {
     /// replica.mtime` is the comparison, so a positive offset says the source's times read later
     /// than the destination's for the same file — a destination whose clock is behind.
     readonly property string offsetText: {
-        if (offsetAuto) return "Determined automatically from files present on both sides"
-        if (offsetHours === 0) return "Both sides' clocks read the same"
+        if (offsetAuto) return Kiki.T.tr("mirror.offsetAuto")
+        if (offsetHours === 0) return Kiki.T.tr("mirror.clocksSame")
         const h = Math.abs(offsetHours) + (Math.abs(offsetHours) === 1 ? " hour" : " hours")
-        return "The destination's clock is " + h + (offsetHours > 0 ? " behind the source" : " ahead of the source")
+        return Kiki.T.tr(offsetHours > 0 ? "mirror.clockBehind" : "mirror.clockAhead", { h: h })
     }
     /// What the Review footer adds up. The two copy counts are added, not written one after the
     /// other: 3 new and 1 changed used to read as "31 copy", because the string in front of them
     /// turned the sum into a join.
-    readonly property string planSummary: ((counts.new || 0) + (counts.changed || 0)) + " copy · " + (counts.deletes || 0) + " delete · "
-        + Kiki.Format.bytes(counts.copyBytes || 0) + " to transfer · " + (counts.filtered || 0) + " filtered out"
+    readonly property string planSummary: Kiki.T.tr("mirror.planSummary", { copies: (counts.new || 0) + (counts.changed || 0), deletes: counts.deletes || 0, bytes: Kiki.Format.bytes(counts.copyBytes || 0), filtered: counts.filtered || 0 })
     /// What it asks, in one place, so the dialog and a script read the same sentence.
-    readonly property string largeDeleteText: "This will delete " + (counts.deletes || 0) + " of " + (counts.replicaEntries || 0) + " items ("
-        + Math.round(100 * (counts.deletes || 0) / Math.max(1, counts.replicaEntries || 1)) + "%) on the destination. Proceed?"
+    readonly property string largeDeleteText: Kiki.T.tr("mirror.largeDeleteText", { n: counts.deletes || 0, total: counts.replicaEntries || 0, pct: Math.round(100 * (counts.deletes || 0) / Math.max(1, counts.replicaEntries || 1)) })
     /// What the footer says about a run: while one is going, that there is no undo; once it is
     /// over, what it came to (plan 08's Done summary). A run that was stopped says so — it used
     /// to go on offering the advice it gives before one starts.
     readonly property string doneText: {
         const j = runInfo
         if (!j || j.state === "running" || j.state === "queued") return "a mirror run is not undoable; re-run to converge"
-        if (j.state === "failed") return "Mirror failed: " + Kiki.Format.cleanError(j.error)
+        if (j.state === "failed") return Kiki.T.tr("mirror.failed", { error: j.errorN ? Kiki.T.errorText({ n: j.errorN, params: j.errorParams, message: j.error }) : Kiki.Format.cleanError(j.error) })
         if (j.state === "cancelled") return "Mirror cancelled"
         const r = j.result || ({})
-        return "Mirror complete · " + (r.copies || 0) + " copied · " + (r.deletes || 0) + " deleted · " + Kiki.Format.bytes(j.bytes) + (r.skipped ? " · " + r.skipped + " skipped" : "")
+        return Kiki.T.tr("mirror.complete", { copies: r.copies || 0, deletes: r.deletes || 0, bytes: Kiki.Format.bytes(j.bytes) }) + (r.skipped ? Kiki.T.tr("mirror.skippedSuffix", { n: r.skipped }) : "")
     }
     /// The plan as text (plan 08's report), built by the daemon from the spec and the plan.
     /// `then` is what to do with it once it is here; it is kept in `reportText` either way.
@@ -338,7 +336,7 @@ Rectangle {
                 anchors.centerIn: parent; spacing: 24
                 Column { width: head.sideWidth; spacing: 4
                     Icon { anchors.right: parent.right; name: "hdd"; size: 36; strokeWidth: 1; color: Kiki.Theme.fgDim }
-                    Text { anchors.right: parent.right; text: "local"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
+                    Text { anchors.right: parent.right; text: Kiki.T.tr("mirror.local"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                     Text { objectName: "mirror-local-path"; width: parent.width; horizontalAlignment: Text.AlignRight; wrapMode: Text.WrapAnywhere; text: Kiki.Format.display(ws.localUri, ws.home); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                 }
                 Row { spacing: 4; anchors.verticalCenter: parent.verticalCenter
@@ -371,7 +369,7 @@ Rectangle {
                 id: footLeft
                 objectName: "mirror-footer-left"
                 anchors.left: parent.left; anchors.leftMargin: 20; height: parent.height; spacing: 8
-                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: "Back"; onClicked: ws.back() }
+                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("common.back"); onClicked: ws.back() }
                 Text { objectName: "mirror-plan-summary"; anchors.verticalCenter: parent.verticalCenter; visible: ws.screen === "review"; text: "  " + ws.planSummary; elide: Text.ElideRight; width: Math.min(implicitWidth, Math.max(0, footRight.x - footLeft.x - 90)); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                 Text { objectName: "mirror-done-summary"; anchors.verticalCenter: parent.verticalCenter; visible: ws.screen === "running"; text: ws.doneText; elide: Text.ElideRight; width: Math.min(implicitWidth, Math.max(0, footRight.x - footLeft.x - 16)); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
@@ -379,16 +377,16 @@ Rectangle {
                 id: footRight
                 objectName: "mirror-footer-right"
                 anchors.right: parent.right; anchors.rightMargin: 20; height: parent.height; spacing: 8
-                Button { visible: ws.screen !== "running" && ws.screen !== "preflight"; anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; onClicked: ws.leave() }
-                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: "Save report…"; onClicked: ws.saveReport() }
-                Button { visible: ws.screen === "configure"; anchors.verticalCenter: parent.verticalCenter; text: "Preflight"; primary: true; onClicked: ws.preflight() }
-                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: "Mirror"; primary: true; onClicked: ws.mirror(false) }
+                Button { visible: ws.screen !== "running" && ws.screen !== "preflight"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("common.cancel"); onClicked: ws.leave() }
+                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.saveReport"); onClicked: ws.saveReport() }
+                Button { visible: ws.screen === "configure"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.preflight"); primary: true; onClicked: ws.preflight() }
+                Button { visible: ws.screen === "review"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.go"); primary: true; onClicked: ws.mirror(false) }
                 // The one button that stops what is going, in the place a button that does
                 // something is looked for: the compare on Preflight, the run on Running. It used
                 // to read "Back" on Preflight, which is not what somebody waiting on a compare of
                 // a server is looking for.
-                Button { objectName: "mirror-stop"; visible: ws.screen === "preflight" || (ws.screen === "running" && ws.runInfo && (ws.runInfo.state === "running" || ws.runInfo.state === "queued")); anchors.verticalCenter: parent.verticalCenter; text: "Cancel"; primary: true; onClicked: ws.stop() }
-                Button { visible: ws.screen === "running" && ws.runInfo && ws.runInfo.state !== "running" && ws.runInfo.state !== "queued"; anchors.verticalCenter: parent.verticalCenter; text: "Close"; primary: true; onClicked: ws.leave() }
+                Button { objectName: "mirror-stop"; visible: ws.screen === "preflight" || (ws.screen === "running" && ws.runInfo && (ws.runInfo.state === "running" || ws.runInfo.state === "queued")); anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("common.cancel"); primary: true; onClicked: ws.stop() }
+                Button { visible: ws.screen === "running" && ws.runInfo && ws.runInfo.state !== "running" && ws.runInfo.state !== "queued"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("common.close"); primary: true; onClicked: ws.leave() }
             }
         }
     }
@@ -420,43 +418,43 @@ Rectangle {
             Column {
                 anchors.horizontalCenter: parent.horizontalCenter; y: configScreen.topGap; width: Math.min(620, parent.width - 48); spacing: configScreen.gap
                 Row { id: detectRow; spacing: 12; height: 30; width: parent.width
-                    Text { width: 150; anchors.verticalCenter: parent.verticalCenter; text: "Detect changes by"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    Text { width: 150; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.detectBy"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     Rectangle { width: Math.max(160, detectRow.width - 162); height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter
-                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: ({ auto: "Automatic (size + date)", sizeMtime: "Size + modification date", sizeOnly: "Size only" })[ws.detector]; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.detector." + ws.detector); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         Icon { anchors.right: parent.right; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; name: "chev-d"; size: 12; color: Kiki.Theme.muted }
                         MouseArea { anchors.fill: parent; onClicked: ws.cycleDetector() } }
                 }
-                Check { on: ws.deleteExtras; label: "Delete files on the destination that aren't on the source"; onToggled: ws.toggleDeletes() }
+                Check { on: ws.deleteExtras; label: Kiki.T.tr("mirror.deleteExtras"); onToggled: ws.toggleDeletes() }
                 // The rules can be edited whether or not the check is on: what they say is worth
                 // seeing before deciding to apply them.
                 Row { spacing: 12; height: 30
-                    Check { on: ws.applyFilters; label: "Skip items matching the filter rules"; onToggled: ws.toggleFilters() }
-                    Button { objectName: "mirror-edit-rules"; anchors.verticalCenter: parent.verticalCenter; text: "Edit rules…"; onClicked: ws.editRules() }
+                    Check { on: ws.applyFilters; label: Kiki.T.tr("mirror.applyFilters"); onToggled: ws.toggleFilters() }
+                    Button { objectName: "mirror-edit-rules"; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.editRules"); onClicked: ws.editRules() }
                 }
                 Row { spacing: 8
-                    Check { on: ws.windowOn; label: "Only mirror files modified in the last"; onToggled: ws.toggleWindow() }
+                    Check { on: ws.windowOn; label: Kiki.T.tr("mirror.window"); onToggled: ws.toggleWindow() }
                     Rectangle { width: 70; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter; opacity: ws.windowOn ? 1 : 0.5
                         TextInput { anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: ws.windowValue; enabled: ws.windowOn; inputMethodHints: Qt.ImhDigitsOnly; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onTextChanged: ws.windowValue = parseInt(text) || 1 } }
                     Rectangle { width: 100; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter; opacity: ws.windowOn ? 1 : 0.5
-                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: ws.windowUnit; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { x: 10; anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.unit." + ws.windowUnit); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                         MouseArea { anchors.fill: parent; enabled: ws.windowOn; onClicked: ws.cycleWindowUnit() } }
                 }
                 Column { spacing: 2; width: parent.width
-                    Text { text: "Modification date offset"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                    Text { text: Kiki.T.tr("mirror.offset"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     Row { spacing: 8; height: 30
-                        Check { on: !ws.offsetAuto; label: "Set manually"; onToggled: ws.toggleOffsetAuto() }
+                        Check { on: !ws.offsetAuto; label: Kiki.T.tr("mirror.setManually"); onToggled: ws.toggleOffsetAuto() }
                         Rectangle { objectName: "mirror-offset-box"; width: 70; height: 30; radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.gutter; opacity: ws.offsetAuto ? 0.5 : 1
                             TextInput { objectName: "mirror-offset-hours"; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; text: ws.offsetHours; enabled: !ws.offsetAuto; inputMethodHints: Qt.ImhFormattedNumbersOnly; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; onTextChanged: ws.setOffsetHours(text) } }
-                        Text { anchors.verticalCenter: parent.verticalCenter; text: "hours"; color: ws.offsetAuto ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.hours"); color: ws.offsetAuto ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
                     Text { objectName: "mirror-offset-note"; text: ws.offsetText; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
                 Rectangle { objectName: "mirror-plan-box"; width: parent.width; height: Math.min(planText.contentHeight + 40, configScreen.planRoom); radius: 2; color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.line; clip: true
                     Column { anchors.fill: parent; anchors.margins: 14; spacing: 6
-                        Text { text: "PLAN"; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1 }
+                        Text { text: Kiki.T.tr("mirror.plan"); color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 1 }
                         // StyledText rather than RichText: only the former lets the type shrink
                         // to fit (`fontSizeMode`), and it has `<font color>` for the emphasis.
                         Text { id: planText; objectName: "mirror-plan-text"; width: parent.width; height: configScreen.planRoom - 40 + 6 - 11; wrapMode: Text.WordWrap; lineHeight: 1.4; textFormat: Text.StyledText; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono
                             font.pixelSize: Kiki.Theme.fontSize; fontSizeMode: Text.VerticalFit; minimumPixelSize: 12
-                            text: "Mirror the <font color='" + Kiki.Theme.fg + "'><b>" + (ws.upload ? "local" : "remote") + "</b></font> folder to the <font color='" + Kiki.Theme.fg + "'><b>" + (ws.upload ? "remote" : "local") + "</b></font> folder. New and changed files are copied; " + (ws.deleteExtras ? "<font color='" + Kiki.Theme.danger + "'><b>files missing on the source are deleted</b></font>." : "nothing is deleted.") + (ws.applyFilters ? " Files matching your filter rules are ignored." : "") } }
+                            text: Kiki.T.tr("mirror.explain", { src: "<font color='" + Kiki.Theme.fg + "'><b>" + Kiki.T.tr(ws.upload ? "mirror.local" : "mirror.remote") + "</b></font>", dest: "<font color='" + Kiki.Theme.fg + "'><b>" + Kiki.T.tr(ws.upload ? "mirror.remote" : "mirror.local") + "</b></font>" }) + (ws.deleteExtras ? "<font color='" + Kiki.Theme.danger + "'><b>" + Kiki.T.tr("mirror.explainDelete") + "</b></font>." : Kiki.T.tr("mirror.explainKeep")) + (ws.applyFilters ? Kiki.T.tr("mirror.explainFilters") : "") } }
                 }
                 Text { objectName: "mirror-status"; visible: ws.status !== ""; text: ws.status; color: ws.statusError ? Kiki.Theme.danger : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
@@ -489,7 +487,7 @@ Rectangle {
                 MouseArea { anchors.fill: parent; enabled: r && r.action !== "skip"; onClicked: ws.toggleRow(index, !r.checked) } }
             Row { width: Math.min(150, Math.floor(parent.width * 0.3)); spacing: 6; anchors.verticalCenter: parent.verticalCenter; clip: true
                 Icon { anchors.verticalCenter: parent.verticalCenter; size: 12; name: r ? (r.action === "delete" || r.action === "rmdir" ? "x" : (r.action === "skip" ? "equals" : (ws.upload ? "arr-u" : "arr-dn"))) : "equals"; color: r ? (r.action === "delete" || r.action === "rmdir" ? Kiki.Theme.danger : (r.reason === "changed" ? Kiki.Theme.yellow : (r.action === "skip" ? Kiki.Theme.gutter : Kiki.Theme.accent))) : Kiki.Theme.gutter }
-                Text { text: r ? (r.action === "copy" ? "copy (" + r.reason + ")" : (r.action === "skip" ? "unchanged" : r.action)) : ""; color: r && (r.action === "delete" || r.action === "rmdir") ? Kiki.Theme.danger : (r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fgDim); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
+                Text { text: r ? (r.action === "copy" ? Kiki.T.tr("mirror.copyReason", { reason: r.reason }) : (r.action === "skip" ? Kiki.T.tr("mirror.unchanged") : r.action)) : ""; color: r && (r.action === "delete" || r.action === "rmdir") ? Kiki.Theme.danger : (r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fgDim); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize } }
             Text { width: Math.max(60, parent.width - 16 - 12 - Math.min(150, Math.floor(parent.width * 0.3)) - 12 - 90 - (running ? 232 : 0)); anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideMiddle; text: r ? r.rel : ""; color: r && r.action === "skip" ? Kiki.Theme.muted : Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Text { width: 90; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; text: r && r.bytes ? Kiki.Format.bytes(r.bytes) : "—"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
             Row { visible: running; width: 220; spacing: 6; anchors.verticalCenter: parent.verticalCenter
@@ -497,7 +495,7 @@ Rectangle {
                 Icon { visible: r && r.state === "skipped"; name: "warn"; size: 14; color: Kiki.Theme.yellow; anchors.verticalCenter: parent.verticalCenter }
                 Rectangle { visible: r && r.state === "running"; width: 120; height: 4; radius: 2; color: Kiki.Theme.surface; anchors.verticalCenter: parent.verticalCenter
                     Rectangle { height: 4; radius: 2; color: Kiki.Theme.accent; width: parent.width * 0.5; SequentialAnimation on width { loops: Animation.Infinite; NumberAnimation { from: 10; to: 120; duration: 900 } } } }
-                Text { anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight; width: 90; text: r ? (r.state === "skipped" ? "skipped · " + (r.error || "") : (r.state === "pending" ? "queued" : r.state)) : ""; color: r && r.state === "done" ? Kiki.Theme.green : (r && r.state === "skipped" ? Kiki.Theme.yellow : (r && r.state === "pending" ? Kiki.Theme.gutter : Kiki.Theme.fgDim)); font.family: Kiki.Theme.mono; font.pixelSize: 12 } }
+                Text { anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideRight; width: 90; text: r ? (r.state === "skipped" ? Kiki.T.tr("mirror.skippedError", { error: r.error || "" }) : (r.state === "pending" ? Kiki.T.tr("mirror.queued") : r.state)) : ""; color: r && r.state === "done" ? Kiki.Theme.green : (r && r.state === "skipped" ? Kiki.Theme.yellow : (r && r.state === "pending" ? Kiki.Theme.gutter : Kiki.Theme.fgDim)); font.family: Kiki.Theme.mono; font.pixelSize: 12 } }
         }
     }
 
@@ -505,13 +503,13 @@ Rectangle {
         id: review
         Column {
             Row { height: 36; spacing: 20; x: 20
-                Repeater { model: [{ id: "all", l: "All" }, { id: "new", l: "New" }, { id: "changed", l: "Changed" }, { id: "equal", l: "Unchanged" }, { id: "delete", l: "Delete" }]
-                    delegate: Item { required property var modelData; width: tl.implicitWidth + 24; height: 36
+                Repeater { model: ["all", "new", "changed", "equal", "delete"]
+                    delegate: Item { required property string modelData; width: tl.implicitWidth + 24; height: 36
                         Row { id: tl; anchors.centerIn: parent; spacing: 6
-                            Text { text: modelData.l; color: ws.reviewTab === modelData.id ? Kiki.Theme.fg : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
-                            Text { text: modelData.id === "all" ? ws.plan.count : (modelData.id === "delete" ? (ws.counts.deletes || 0) : (ws.counts[modelData.id] || 0)); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter } }
-                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: ws.reviewTab === modelData.id ? Kiki.Theme.accent : "transparent" }
-                        MouseArea { anchors.fill: parent; onClicked: ws.setTab(modelData.id) } } }
+                            Text { text: Kiki.T.tr("mirror.tab." + modelData); color: ws.reviewTab === modelData ? Kiki.Theme.fg : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                            Text { text: modelData === "all" ? ws.plan.count : (modelData === "delete" ? (ws.counts.deletes || 0) : (ws.counts[modelData] || 0)); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter } }
+                        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: ws.reviewTab === modelData ? Kiki.Theme.accent : "transparent" }
+                        MouseArea { anchors.fill: parent; onClicked: ws.setTab(modelData) } } }
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             ListView { id: reviewList; width: parent.width; height: parent.height - 37; clip: true; reuseItems: true; model: ws.plan.count
@@ -530,11 +528,11 @@ Rectangle {
             Column { width: parent.width; spacing: 10; padding: 0
                 Item { width: parent.width; height: 52
                     Row { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 12
-                        Text { anchors.verticalCenter: parent.verticalCenter; text: "Mirroring " + (ws.upload ? "local to " + (ws.remoteUri.split("://")[1] || "").split("/")[0] : (ws.remoteUri.split("://")[1] || "").split("/")[0] + " to local"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr(ws.upload ? "mirror.mirroringUp" : "mirror.mirroringDown", { host: (ws.remoteUri.split("://")[1] || "").split("/")[0] }); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                         Item { width: parent.width - 620; height: 1 }
-                        Text { anchors.verticalCenter: parent.verticalCenter; text: ws.runInfo ? ws.runInfo.done + " of " + ws.runInfo.total + " items · " + Kiki.Format.bytes(ws.runInfo.bytes) + " of " + Kiki.Format.bytes(ws.runInfo.bytesTotal) : ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                        Text { anchors.verticalCenter: parent.verticalCenter; text: ws.runInfo ? Kiki.T.tr("mirror.runProgress", { done: ws.runInfo.done, total: ws.runInfo.total, bytes: Kiki.Format.bytes(ws.runInfo.bytes), bytesTotal: Kiki.Format.bytes(ws.runInfo.bytesTotal) }) : ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
                         Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 22; width: 100; radius: 2; border.width: 1; border.color: Kiki.Theme.gutter; color: "transparent"
-                            Text { anchors.centerIn: parent; text: ws.concurrency + " at a time"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+                            Text { anchors.centerIn: parent; text: Kiki.T.tr("mirror.atATime", { n: ws.concurrency }); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
                     }
                 }
                 Rectangle { width: parent.width - 40; x: 20; height: 6; radius: 3; color: Kiki.Theme.surface
@@ -558,11 +556,11 @@ Rectangle {
         MouseArea { anchors.fill: parent }
         Rectangle { anchors.centerIn: parent; width: 460; height: 160; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.danger
             Column { anchors.fill: parent; anchors.margins: 20; spacing: 14
-                Text { text: "Large delete"; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+                Text { text: Kiki.T.tr("mirror.largeDelete"); color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
                 Text { width: parent.width; wrapMode: Text.WordWrap; text: ws.largeDeleteText; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                 Row { spacing: 8; anchors.right: parent.right
-                    Button { text: "Cancel"; onClicked: ws.answerLargeDelete(false) }
-                    Button { text: "Delete and mirror"; primary: true; onClicked: ws.answerLargeDelete(true) } }
+                    Button { text: Kiki.T.tr("common.cancel"); onClicked: ws.answerLargeDelete(false) }
+                    Button { text: Kiki.T.tr("mirror.deleteAndMirror"); primary: true; onClicked: ws.answerLargeDelete(true) } }
             }
         }
     }

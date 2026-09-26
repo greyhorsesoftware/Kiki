@@ -313,51 +313,72 @@ impl Gio {
     }
 }
 
-impl Handler for Gio {
-    fn describe(&self) -> Describe {
-        let (display, form): (&'static str, Vec<Value>) = match self.scheme.as_str() {
-            "dav" => (
-                "WebDAV",
+/// The plugin's words, one file per language beside it (`i18n/es.json`, `i18n/ja.json`),
+/// read in at build.
+fn words() -> sdk::Words {
+    sdk::Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])
+}
+
+/// The display name and the form of one scheme, the form with its words (`words()` beside
+/// `sdk::common_words`).
+fn form_for(scheme: &str) -> (&'static str, Vec<Value>) {
+    match scheme {
+        "dav" => (
+            "WebDAV",
+            sdk::localised(
                 vec![
                     sdk::field("name", "Name", "text", true, None),
                     sdk::field("host", "Host", "text", true, None),
                     sdk::field("port", "Port", "port", false, None),
-                    sdk::select_field("security", "Security", &["https", "plain"], "https"),
+                    sdk::select_field("security", "Security", &[("https", "HTTPS"), ("plain", "Plain HTTP")], "https"),
                     sdk::field("prefix", "Path prefix", "text", false, Some("/")),
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
                     sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
                     sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
+                &words(),
             ),
-            "afp" => (
-                "AFP",
+        ),
+        "afp" => (
+            "AFP",
+            sdk::localised(
                 vec![
                     sdk::field("name", "Name", "text", true, None),
                     sdk::field("host", "Host", "browse", true, None),
                     sdk::field("volume", "Volume", "browse", true, None),
-                    sdk::select_field("auth", "Authentication", &["password", "guest"], "password"),
+                    sdk::select_field("auth", "Authentication", &[("password", "Password"), ("guest", "Guest")], "password"),
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
                     sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
                     sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
+                &words(),
             ),
-            _ => (
-                "SMB",
+        ),
+        _ => (
+            "SMB",
+            sdk::localised(
                 vec![
                     sdk::field("name", "Name", "text", true, None),
                     sdk::field("host", "Host", "browse", true, None),
                     sdk::field("share", "Share", "browse", true, None),
-                    sdk::select_field("auth", "Authentication", &["password", "kerberos", "guest"], "password"),
+                    sdk::select_field("auth", "Authentication", &[("password", "Password"), ("kerberos", "Kerberos"), ("guest", "Guest")], "password"),
                     sdk::field("username", "Username", "text", false, None),
                     sdk::field("password", "Password", "password", false, None),
                     sdk::field("domain", "Domain / workgroup", "text", false, Some("WORKGROUP")),
                     sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", false, Some("/"))),
                     sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
                 ],
+                &words(),
             ),
-        };
+        ),
+    }
+}
+
+impl Handler for Gio {
+    fn describe(&self) -> Describe {
+        let (display, form) = form_for(&self.scheme);
         let available = gio::Vfs::default().is_active() && gio::Vfs::default().supported_uri_schemes().iter().any(|s| s.as_str() == self.scheme || (self.scheme == "dav" && s.as_str() == "davs"));
         Describe {
             scheme: Box::leak(self.scheme.clone().into_boxed_str()),
@@ -599,5 +620,18 @@ mod tests {
         assert_eq!(root_uri("smb", &Value::obj().s("host", "nas").s("share", "media").done()).unwrap(), "smb://nas/media/");
         assert!(root_uri("smb", &Value::obj().s("host", "nas").done()).is_err(), "a share is required");
         assert!(root_uri("nonsense", &Value::obj().s("host", "nas").done()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+
+    /// A field or option added without its Spanish and Japanese is a failed build, not an English
+    /// label on a Spanish screen (docs/0.2.0/02-localization.md, decision 7).
+    #[test]
+    fn every_label_of_the_form_has_its_words() {
+        let missing = sdk::unworded(&["dav", "afp", "smb"].iter().flat_map(|s| form_for(s).1).collect::<Vec<_>>(), &["es", "ja"]);
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

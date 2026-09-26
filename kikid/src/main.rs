@@ -39,7 +39,9 @@ fn serve() {
         }
     };
     kikid::dbus::start();
+    kikid::openback::clear();
     kikid::plugin::start_reaper();
+    kikid::locations::migrate_option_labels();
     kikid::devices::start();
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(30));

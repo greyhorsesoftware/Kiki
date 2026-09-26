@@ -144,7 +144,12 @@ class Servers:
                 "require_ssl_reuse=" + ("NO" if os.environ.get("KIKI_E2E_VSFTPD_NO_REUSE") else "YES"),
                 "pasv_enable=YES", "pasv_address=127.0.0.1", "pasv_min_port=30000", "pasv_max_port=60000",
                 "use_localtime=NO", "xferlog_enable=NO", "dual_log_enable=NO", f"vsftpd_log_file={d}/vsftpd.log",
-                "max_clients=50", "max_per_ip=50", "idle_session_timeout=600", "data_connection_timeout=120", "",
+                "max_clients=50", "max_per_ip=50", "idle_session_timeout=600", "data_connection_timeout=120",
+                # The data connection is held to 100 MB/s, so an upload of `remote_transfers`' big
+                # file lasts 15 s whatever the machine: long enough to be listed beside and
+                # cancelled mid-file on purpose, not by luck (2026-09-25: over loopback into tmpfs
+                # the whole 1.5 GB was in before the folder beside it had listed).
+                "anon_max_rate=104857600", "",
             ]))
         log = open(os.path.join(d, "vsftpd.out"), "w")
         p = subprocess.Popen([vsftpd_bin(), conf], stdout=log, stderr=subprocess.STDOUT)

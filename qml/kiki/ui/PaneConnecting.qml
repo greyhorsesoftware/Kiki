@@ -41,7 +41,7 @@ Rectangle {
         Text {
             objectName: "pane-connecting-text"
             width: parent.width; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideMiddle
-            text: pc.host ? "Connecting to " + pc.host + "…" : "Connecting…"
+            text: pc.host ? Kiki.T.tr("pane.connectingTo", { host: pc.host }) : Kiki.T.tr("pane.connecting")
             color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize + 1; font.bold: true
         }
     }

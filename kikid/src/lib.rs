@@ -21,6 +21,7 @@ pub mod listing;
 pub mod locations;
 pub mod md5;
 pub mod mirror;
+pub mod openback;
 pub mod openin;
 pub mod ops;
 pub mod plugin;

@@ -4,7 +4,7 @@ import ".." as Kiki
 // Filters the current listing as you type (plan 12 adds scopes).
 Rectangle {
     id: box
-    property string placeholder: "Search"
+    property string placeholder: Kiki.T.tr("search.box")
     property alias text: input.text
     property bool active: input.activeFocus
     property string scope: "folder"       // folder | everywhere | <location name>

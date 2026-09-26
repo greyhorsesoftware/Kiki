@@ -40,6 +40,9 @@ impl State {
 
 pub struct Job {
     pub id: u64,
+    /// The number and params of the failure, when it had one (`VfsError::Said`): `errorN` and
+    /// `errorParams` on the wire beside the English `error`.
+    pub failure: Mutex<Option<(u16, Value)>>,
     pub op: Value,
     pub kind: String,
     pub title: String,
@@ -201,9 +204,11 @@ pub fn broadcast(v: Value) {
 
 pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
     let kind = op.str_field("op").ok_or(("Protocol", "missing op".to_string()))?.to_string();
-    let title = title_for(&op);
+    // An op may name itself ("Save notes.txt back to homelab"); most are named for what they do.
+    let title = op.str_field("title").map(str::to_string).unwrap_or_else(|| title_for(&op));
     let undoable = !matches!(kind.as_str(), "delete" | "deleteCopies" | "emptyTrash" | "mirrorScan" | "mirrorRun" | "share");
     let (ptx, prx) = mpsc::channel();
+    let policy = op.str_field("policy").map(str::to_string);
     let job = {
         let mut q = queue().lock().unwrap();
         let id = q.next_id;
@@ -211,6 +216,7 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
         let about = about(&kind, &op);
         let job = Arc::new(Job {
             id,
+            failure: Mutex::new(None),
             about,
             live: Mutex::new(Live::default()),
             op,
@@ -222,7 +228,9 @@ pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static
             status: Mutex::new(Status { state: State::Queued, done: 0, total: 0, bytes: 0, bytes_total: 0, undoable, last_emit: None }),
             prompt: Mutex::new(Some(prx)),
             prompt_tx: Mutex::new(Some(ptx)),
-            policy: Mutex::new(None),
+            // A policy given with the op ("replace" | "keepBoth" | "skip") answers every collision
+            // without asking: what a write-back needs, with no window to ask.
+            policy: Mutex::new(policy),
             partial: Mutex::new(None),
         });
         q.jobs.push(Arc::clone(&job));
@@ -305,6 +313,7 @@ fn pump() {
                         } else {
                             crate::joblog::say(job.id, "error", format!("failed: {}", e.message()));
                             crate::joblog::keep_failure(job.id, &job.title, &e.message());
+                            *job.failure.lock().unwrap() = e.said_json();
                             State::Failed(e.message())
                         };
                         // What it got done before it stopped — and only what is really there: a copy
@@ -463,6 +472,10 @@ impl Job {
             State::Failed(m) => Value::Str(m.clone()),
             _ => Value::Null,
         };
+        let (err_n, err_params) = match self.failure.lock().unwrap().clone() {
+            Some((n, p)) if matches!(st.state, State::Failed(_)) => (Value::Uint(n as u64), p),
+            _ => (Value::Null, Value::Null),
+        };
         let running = st.state == State::Running;
         let unfinished = running || st.state == State::Queued;
         let live = self.live.lock().unwrap();
@@ -482,6 +495,8 @@ impl Job {
             .u("bytesTotal", st.bytes_total)
             .s("title", self.title.clone())
             .v("error", err)
+            .v("errorN", err_n)
+            .v("errorParams", err_params)
             .b("undoable", st.undoable)
             // For the activity view (plan 32).
             .s("name", self.about.name.clone())
@@ -813,7 +828,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             crate::transfer::delete_items(job, &uri_values(op, "items")?, &cancel)?;
             None
         }
-        "trash" if remote_op(op) => return Err(VfsError::Io("a server has no trash: use Delete (Shift+Del), which cannot be undone".into())),
+        "trash" if remote_op(op) => return Err(VfsError::said(1201, &[], "a server has no trash: use Delete (Shift+Del), which cannot be undone")),
         "mkdir" if remote_op(op) => {
             crate::transfer::make_dir(&uri_value(op, "uri")?)?;
             job.set_totals(1, 0);
@@ -852,7 +867,7 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
             let mut failed: Vec<(PathBuf, String)> = Vec::new();
             for src in &items {
                 if cancel.load(Ordering::Relaxed) {
-                    return Err(VfsError::Io("cancelled".into()));
+                    return Err(VfsError::said(1230, &[], "cancelled"));
                 }
                 let name = src.file_name().ok_or(VfsError::NotFound)?.to_string_lossy().into_owned();
                 let mut target = dest.join(&name);
@@ -901,7 +916,13 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 let first: Vec<String> = failed.iter().take(3).map(|(p, why)| format!("{} ({why})", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).collect();
                 let more = if failed.len() > 3 { format!(", and {} more — see the log", failed.len() - 3) } else { String::new() };
                 let what = if job.kind == "move" { "moved; their originals are untouched" } else { "copied" };
-                return Err(VfsError::Io(format!("{} of {} could not be {what}: {}{more}", failed.len(), files.max(items.len() as u64), first.join(", "))));
+                let (n, total, first) = (failed.len(), files.max(items.len() as u64), first.join(", "));
+                let extra = failed.len().saturating_sub(3);
+                return Err(VfsError::said(
+                    if job.kind == "move" { 1203 } else { 1202 },
+                    &[("n", &n), ("total", &total), ("first", &first), ("more", &extra)],
+                    format!("{n} of {total} could not be {what}: {first}{more}"),
+                ));
             }
             if job.kind == "copy" {
                 Some(copy_inverse(&created))
@@ -1036,7 +1057,9 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
                 }
                 let first: Vec<String> = failed.iter().take(3).map(|(p, why)| format!("{} ({why})", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())).collect();
                 let more = if failed.len() > 3 { format!(", and {} more — see the log", failed.len() - 3) } else { String::new() };
-                return Err(VfsError::Io(format!("{} of {} could not be changed: {}{more}", failed.len(), items.len().max(prev.len() + failed.len()), first.join(", "))));
+                let (n, total, first) = (failed.len(), items.len().max(prev.len() + failed.len()), first.join(", "));
+                let extra = failed.len().saturating_sub(3);
+                return Err(VfsError::said(1204, &[("n", &n), ("total", &total), ("first", &first), ("more", &extra)], format!("{n} of {total} could not be changed: {first}{more}")));
             }
             Some(chmod_inverse(&prev))
         }
@@ -1057,11 +1080,11 @@ fn run(job: &Job) -> Result<Option<Value>, VfsError> {
         "compress" => {
             let items = uris(op, "items")?;
             let archive = uri(op, "archive")?;
-            let format = op
-                .str_field("format")
-                .map(str::to_string)
-                .or_else(|| archive.file_name().and_then(|n| crate::archive::format_from_name(&n.to_string_lossy())).map(str::to_string))
-                .ok_or(VfsError::Io("unknown archive format".into()))?;
+            let format = op.str_field("format").map(str::to_string).or_else(|| archive.file_name().and_then(|n| crate::archive::format_from_name(&n.to_string_lossy())).map(str::to_string)).ok_or(VfsError::said(
+                1243,
+                &[],
+                "unknown archive format",
+            ))?;
             let (files, bytes) = items.iter().map(|p| ops::tree_size(p)).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
             job.set_totals(files.max(1), bytes);
             crate::archive::compress(&items, &archive, &format, &cancel, &mut |_| job.progress(1, 0))?;
@@ -1240,8 +1263,9 @@ fn title_for(op: &Value) -> String {
     }
 }
 
-/// For this module's tests, which is all that calls it: a short poll is fine there.
-#[cfg(test)]
+/// Blocks until the job has ended, or `timeout` — for the tests, and for the one caller in the
+/// daemon that waits on a job of its own making off the request loop (`desktop::open_default`,
+/// on a thread of its own). A short poll: nothing here is hot.
 pub fn wait(id: u64, timeout: Duration) -> Option<State> {
     let start = Instant::now();
     loop {
@@ -1455,6 +1479,14 @@ mod tests {
             .unwrap();
         let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
         assert!(why.starts_with("1 of 3 could not be copied: locked.txt"), "{why}");
+        // The failure carries its number and params for the window to say in its own language.
+        let j = queue().lock().unwrap().jobs.iter().find(|j| j.id == id).map(|j| j.json()).unwrap();
+        assert_eq!(j.u64_field("errorN"), Some(1202), "{}", crate::json::to_string(&j));
+        let p = j.get("errorParams").unwrap();
+        assert_eq!(p.str_field("n"), Some("1"));
+        assert_eq!(p.str_field("total"), Some("3"));
+        assert!(p.str_field("first").unwrap().starts_with("locked.txt"));
+        assert_eq!(p.str_field("more"), Some("0"));
         assert!(d.join("dst/site/a.txt").exists() && d.join("dst/site/img/z.bin").exists(), "the others arrived, the one after it included");
         assert!(!d.join("dst/site/locked.txt").exists());
         let uid = undo(Some(tx)).unwrap();

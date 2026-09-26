@@ -1,7 +1,7 @@
 # Maintainer: David Clark <david.j.clark@icloud.com>
 # Source package: builds kiki from the repository checkout one level up.
 pkgname=kiki
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')
@@ -14,6 +14,7 @@ depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 
          'udisks2' 'git' 'qt6-declarative' 'glib2' 'gvfs')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf' 'glib2')
 optdepends=('poppler: PDF thumbnails'
+            'noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
             'openssh: SFTP host key tools'
             'gvfs-smb: SMB (Windows share) locations'
             'gvfs-wsdd: find Windows computers on the network'

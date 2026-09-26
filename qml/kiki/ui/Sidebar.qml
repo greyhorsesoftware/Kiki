@@ -81,7 +81,7 @@ Rectangle {
             SidebarItem {
                 objectName: "sidebar-search"
                 compact: sidebar.compact
-                icon: "search"; label: "Search"; tipText: "Search everywhere · Ctrl+Shift+F"
+                icon: "search"; label: Kiki.T.tr("sidebar.search"); tipText: Kiki.T.tr("sidebar.searchTip")
                 keyed: sidebar.keyIndex === 0
                 active: sidebar.searchOpen
                 droppable: false
@@ -106,7 +106,7 @@ Rectangle {
             SidebarSection {
                 id: favSection
                 compact: sidebar.compact
-                title: "Favorites"
+                title: Kiki.T.tr("sidebar.favorites")
                 Repeater {
                     model: sidebar.favorites
                     delegate: SidebarItem {
@@ -145,11 +145,11 @@ Rectangle {
             }
             SidebarSection {
                 compact: sidebar.compact
-                title: "Locations"; plus: true
+                title: Kiki.T.tr("sidebar.locations"); plus: true
                 onPlusClicked: sidebar.addLocation()
                 SidebarItem {
                     compact: sidebar.compact
-                    icon: "trash"; label: "Trash"
+                    icon: "trash"; label: Kiki.T.tr("sidebar.trash")
                     keyed: sidebar.keyIndex === sidebar.keyOffset("trash", 0)
                     active: sidebar.currentUri.startsWith("trash://")
                     droppable: true
@@ -176,7 +176,7 @@ Rectangle {
                 SidebarItem {
                     visible: sidebar.compact
                     compact: true
-                    icon: "plus"; label: "Add location"; tipText: "Add location · Ctrl+Shift+L"
+                    icon: "plus"; label: Kiki.T.tr("sidebar.addLocation"); tipText: Kiki.T.tr("sidebar.addLocationTip")
                     onClicked: sidebar.addLocation()
                 }
             }
@@ -188,7 +188,7 @@ Rectangle {
             visible: sidebar.devices.length > 0
             SidebarSection {
                 compact: sidebar.compact
-                title: "Devices"
+                title: Kiki.T.tr("sidebar.devices")
                 Repeater {
                     model: sidebar.devices
                     delegate: SidebarItem {

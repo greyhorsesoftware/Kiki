@@ -216,6 +216,17 @@ fn main() {
                         Value::Arr(vec![
                             Value::obj().s("key", "name").s("label", "Name").s("kind", "text").b("required", true).v("default", Value::Null).v("options", Value::Null).v("group", Value::Null).done(),
                             Value::obj().s("key", "greeting").s("label", "Greeting").s("kind", "text").b("required", false).s("default", "hi").v("options", Value::Null).v("group", Value::Null).done(),
+                            // A select, as the SDK spells one: (value, label) pairs. The tests use it for
+                            // the 0.2.0 migration of values stored as labels.
+                            Value::obj()
+                                .s("key", "flavour")
+                                .s("label", "Flavour")
+                                .s("kind", "select")
+                                .b("required", false)
+                                .s("default", "mild")
+                                .v("options", Value::Arr(vec![Value::obj().s("value", "mild").s("label", "Mild").done(), Value::obj().s("value", "hot").s("label", "Hot").done()]))
+                                .v("group", Value::Null)
+                                .done(),
                         ]),
                     )
                     .v("defaults", Value::obj().s("greeting", "hi").done())

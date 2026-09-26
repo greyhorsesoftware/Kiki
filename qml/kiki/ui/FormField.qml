@@ -6,7 +6,17 @@ import ".." as Kiki
 Column {
     id: f
     property var field: ({})            // { key, label, kind, required, default, options }
+    /// A select's options as `{ value, label, labels? }` (0.2.0; a bare string is both). What is
+    /// shown for a value is the plugin's word for it in this language when it sent one, else its
+    /// English label: the value is what is stored, and it is never translated.
+    readonly property var options: (field.options || []).map(o => typeof o === "string" ? ({ value: o, label: o }) : o)
+    function wordFor(value) {
+        const o = options.find(x => x.value === value)
+        return o ? Kiki.T.sent(o) : value
+    }
     objectName: "field-" + (field.key || "")
+    /// The field's label the same way: the plugin's word in this language, else the English.
+    readonly property string label: Kiki.T.sent(field)
     property string value: ""
     property string error: ""
     signal edited(string value)
@@ -33,7 +43,7 @@ Column {
     }
     width: parent ? parent.width : 300
     spacing: 6
-    Text { text: field.label ? field.label.toUpperCase() : ""; color: f.error ? Kiki.Theme.danger : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.6 }
+    Text { objectName: "field-label"; text: f.label.toUpperCase(); color: f.error ? Kiki.Theme.danger : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.6 }
     Rectangle {
         objectName: "keys-box"
         visible: f.field.kind === "keys"
@@ -47,7 +57,7 @@ Column {
                 objectName: "keys-none"
                 visible: f.choices.length === 0 && f.picked.length === 0
                 x: 6; height: 28; verticalAlignment: Text.AlignVCenter
-                text: "No keys found in ~/.ssh"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
+                text: Kiki.T.tr("form.noKeys"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
             }
             Repeater {
                 model: f.choices
@@ -79,7 +89,7 @@ Column {
                     Row {
                         anchors.fill: parent; anchors.leftMargin: 6; spacing: 8
                         Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 14; height: 14; radius: 2; color: Kiki.Theme.accent }
-                        Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 40; elide: Text.ElideMiddle; text: modelData + "  (not found)"; color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                        Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 40; elide: Text.ElideMiddle; text: Kiki.T.tr("form.notFound", { name: modelData }); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                     }
                     MouseArea { anchors.fill: parent; onClicked: f.toggle(modelData) }
                 }
@@ -99,7 +109,7 @@ Column {
                 color: f.pickable && pickArea.containsMouse ? Kiki.Theme.accent : Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter
                 // A bigger target than a 14 px glyph, and a tip that says what it does.
                 MouseArea { id: pickArea; objectName: "field-pick"; enabled: f.pickable; visible: f.pickable; anchors.centerIn: parent; width: 26; height: 26; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: f.pick() }
-                Tip { visible: f.pickable && pickArea.containsMouse; text: "Choose a folder…" }
+                Tip { visible: f.pickable && pickArea.containsMouse; text: Kiki.T.tr("form.chooseFolder") }
             }
             TextInput {
                 activeFocusOnTab: true
@@ -115,17 +125,18 @@ Column {
             Text {
                 visible: f.field.kind === "select"
                 anchors.verticalCenter: parent.verticalCenter; width: parent.width - 30; elide: Text.ElideRight
-                text: f.value; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
+                objectName: "select-word"
+                text: f.wordFor(f.value); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
             }
             Icon { visible: f.field.kind === "select"; name: "chev-d"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter }
             // browse: the plugin lists choices (hosts, shares) for this field
             Rectangle { visible: f.field.kind === "browse"; anchors.verticalCenter: parent.verticalCenter; width: 76; height: 24; radius: 2; color: bh.containsMouse ? Kiki.Theme.surface : "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
-                Text { anchors.centerIn: parent; text: "Browse…"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                Text { anchors.centerIn: parent; text: Kiki.T.tr("form.browse"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                 MouseArea { id: bh; anchors.fill: parent; hoverEnabled: true; onClicked: f.browse() } }
         }
         MouseArea {
             visible: f.field.kind === "select"; anchors.fill: parent
-            onClicked: { const o = f.field.options || []; const i = o.indexOf(f.value); f.value = o[(i + 1) % o.length]; f.edited(f.value) }
+            onClicked: { const o = f.options; if (!o.length) return; const i = o.findIndex(x => x.value === f.value); f.value = o[(i + 1) % o.length].value; f.edited(f.value) }
         }
     }
     Text { visible: f.error !== ""; text: f.error; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }

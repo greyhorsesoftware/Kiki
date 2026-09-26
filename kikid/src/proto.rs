@@ -175,6 +175,12 @@ pub fn err(id: u64, code: &str, message: impl Into<String>) -> Value {
     Value::obj().u("id", id).v("err", Value::obj().s("code", code).s("message", message).done()).done()
 }
 
+/// An error with a number the window can say in its own language: `n` and `params` beside the
+/// English `message` (0.2.0).
+pub fn err_said(id: u64, code: &str, message: impl Into<String>, n: u16, params: Value) -> Value {
+    Value::obj().u("id", id).v("err", Value::obj().s("code", code).s("message", message).u("n", n as u64).v("params", params).done()).done()
+}
+
 pub fn event(name: &str) -> json::Obj {
     Value::obj().s("event", name)
 }

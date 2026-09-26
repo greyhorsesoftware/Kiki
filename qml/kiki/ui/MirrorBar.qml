@@ -28,7 +28,7 @@ Rectangle {
         Icon { anchors.verticalCenter: parent.verticalCenter; name: bar.localLeft ? "server" : "hdd"; size: 14; color: bar.localLeft ? Kiki.Theme.green : Kiki.Theme.fgDim }
         Text { anchors.verticalCenter: parent.verticalCenter; text: bar.rightPane ? Kiki.Format.display(bar.rightPane.uri, bar.home) : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12; elide: Text.ElideMiddle; width: Math.min(implicitWidth, 260) }
         Item { width: parent.width - 14 * 2 - 26 - 10 * 7 - 14 * 2 - lhs.width - rhs.width - status.width - action.width; height: 1; property Item lhs: parent.children[1]; property Item rhs: parent.children[4] }
-        Text { id: status; anchors.verticalCenter: parent.verticalCenter; text: bar.lastMirrored ? "last mirrored " + Kiki.Format.relative(bar.lastMirrored) : "not mirrored yet"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+        Text { id: status; anchors.verticalCenter: parent.verticalCenter; text: bar.lastMirrored ? Kiki.T.tr("mirror.lastMirrored", { when: Kiki.Format.relative(bar.lastMirrored) }) : Kiki.T.tr("mirror.notYet"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         // The action: accent split button with the direction arrow, the label, the key chip and an options chevron.
         Rectangle {
             id: action
@@ -37,7 +37,7 @@ Rectangle {
             Row {
                 id: actionRow; anchors.verticalCenter: parent.verticalCenter; x: 12; spacing: 10
                 Icon { anchors.verticalCenter: parent.verticalCenter; name: "arr-u"; size: 14; color: Kiki.Theme.bg }
-                Text { anchors.verticalCenter: parent.verticalCenter; text: "Mirror to " + (bar.remoteName || "remote"); color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
+                Text { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("mirror.barMirrorTo", { name: bar.remoteName || Kiki.T.tr("mirror.remote") }); color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                 Rectangle { anchors.verticalCenter: parent.verticalCenter; width: chip.width + 12; height: 18; radius: 2; color: "transparent"; border.width: 1; border.color: Qt.rgba(Kiki.Theme.bg.r, Kiki.Theme.bg.g, Kiki.Theme.bg.b, 0.35)
                     Text { id: chip; anchors.centerIn: parent; text: "⌃M"; color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: 10 } }
                 Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 22; height: 22; color: "transparent"

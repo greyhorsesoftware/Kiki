@@ -30,6 +30,6 @@ Rectangle {
             width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
             text: pe.message; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
         }
-        Button { objectName: "pane-error-retry"; anchors.horizontalCenter: parent.horizontalCenter; text: "Try again"; onClicked: pe.retry() }
+        Button { objectName: "pane-error-retry"; anchors.horizontalCenter: parent.horizontalCenter; text: Kiki.T.tr("pane.tryAgain"); onClicked: pe.retry() }
     }
 }

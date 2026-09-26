@@ -28,7 +28,7 @@ Rectangle {
             Text { width: parent.width; wrapMode: Text.WordWrap; text: dlg.message; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             Row {
                 spacing: 8; anchors.right: parent.right
-                Button { text: "Cancel"; onClicked: dlg.answer(false) }
+                Button { text: Kiki.T.tr("common.cancel"); onClicked: dlg.answer(false) }
                 Rectangle {
                     width: okText.width + 32; height: 30; radius: 2; color: dlg.danger ? Kiki.Theme.danger : Kiki.Theme.accent
                     Text { id: okText; anchors.centerIn: parent; text: dlg.confirmLabel + "  ⏎"; color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }

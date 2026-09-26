@@ -48,7 +48,7 @@ def run(ctx):
             root = os.path.join(base, "ftps-root"); os.makedirs(root)
             port = servers.start_ftps(root)
             r = add_location(d, {"name": "big-ftps", "plugin": "ftps", "remoteUri": "ftps://big-ftps" + root, "localUri": "",
-                                 "config": {"host": "127.0.0.1", "port": str(port), "username": FTPS_USER, "encryption": "Explicit TLS (AUTH TLS)"}}, {"password": FTPS_PASSWORD})
+                                 "config": {"host": "127.0.0.1", "port": str(port), "username": FTPS_USER, "encryption": "explicit"}}, {"password": FTPS_PASSWORD})
             if "ok" in r:
                 ends["ftps"] = (root, lambda rel, root=root: "ftps://big-ftps" + os.path.join(root, rel))
         c.check("at least one server could be started", bool(ends), missing() or "")

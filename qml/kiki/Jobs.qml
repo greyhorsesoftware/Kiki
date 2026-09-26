@@ -13,7 +13,7 @@ QtObject {
 
     function submit(op, cb) { Kiki.Daemon.request("Submit", { op: op }, cb) }
     function cancel(id) { Kiki.Daemon.request("Cancel", { job: id }) }
-    function undo() { Kiki.Daemon.request("Undo", {}, (ok, err) => { if (err) jobs.showToast({ text: "Nothing to undo", undoable: false }) }) }
+    function undo() { Kiki.Daemon.request("Undo", {}, (ok, err) => { if (err) jobs.showToast({ text: Kiki.T.tr("jobs.nothingToUndo"), undoable: false }) }) }
     function redo() { Kiki.Daemon.request("Redo", {}) }
     function reply(choice, all) { if (prompt) { Kiki.Daemon.request("PromptReply", { job: prompt.job, choice: choice, applyToAll: !!all }); prompt = null } }
     function live(j) { return j.state === "running" || j.state === "queued" }
@@ -43,16 +43,16 @@ QtObject {
     function orbState() { return unseenFailures().length ? "failed" : (running().filter(j => !j.hidden).length ? "running" : "idle") }
     function orbTip() {
         const f = unseenFailures().length, r = running().filter(j => !j.hidden).length
-        return f ? f + " failed" + (r ? " · " + r + " running" : "") : (r ? r + " running" : "No activity")
+        return f ? Kiki.T.tr("orb.failed", { n: f }) + (r ? " · " + Kiki.T.tr("orb.running", { n: r }) : "") : (r ? Kiki.T.tr("orb.running", { n: r }) : Kiki.T.tr("orb.idle"))
     }
 
     function isTransfer(j) { return j.op === "copy" || j.op === "move" || j.op === "share" }
     function isMirror(j) { return j.op === "mirrorRun" }
     /// The bold line: the thing itself, not a sentence about it.
     function headline(j) {
-        if (j.cancelling && live(j)) return "Cancelling…"
+        if (j.cancelling && live(j)) return Kiki.T.tr("jobs.cancelling")
         if (!j.name) return j.title
-        return j.count > 1 ? j.name + " and " + (j.count - 1) + " more" : j.name
+        return j.count > 1 ? Kiki.T.tr("jobs.andMore", { name: j.name, n: j.count - 1 }) : j.name
     }
     /// No bar at all / a bar with no length yet / a fraction.
     function barMode(j) { return !live(j) ? "none" : (j.state === "queued" || j.phase === "preparing" || j.cancelling || !(j.total || j.bytesTotal) ? "busy" : "value") }
@@ -61,19 +61,19 @@ QtObject {
         if (j.total <= 1 && j.bytesTotal) return Math.min(1, j.bytes / j.bytesTotal)
         return j.total ? Math.min(1, j.done / j.total) : 0
     }
-    function rateText(j) { return j.rate > 0 ? Kiki.Format.transferSize(j.rate) + "/sec" : "" }
+    function rateText(j) { return j.rate > 0 ? Kiki.T.tr("jobs.rate", { rate: Kiki.Format.transferSize(j.rate) }) : "" }
     /// The dim line under the bar while it runs.
     function statusLine(j) {
-        if (j.state === "queued") return "Waiting…"
+        if (j.state === "queued") return Kiki.T.tr("jobs.waiting")
         if (j.cancelling) return ""
-        if (j.phase === "preparing") return isMirror(j) ? "Preparing…" : (isTransfer(j) ? "Preparing to transfer…" : "Preparing…")
+        if (j.phase === "preparing") return isTransfer(j) ? Kiki.T.tr("jobs.preparingTransfer") : Kiki.T.tr("jobs.preparing")
         const rate = rateText(j)
-        if (isMirror(j)) return j.done + " of " + j.total + " items · " + Kiki.Format.transferSize(j.bytes) + " of " + Kiki.Format.transferSize(j.bytesTotal) + (rate ? " · " + rate : "")
+        if (isMirror(j)) return Kiki.T.tr("jobs.mirrorProgress", { done: j.done, total: j.total, bytes: Kiki.Format.transferSize(j.bytes), bytesTotal: Kiki.Format.transferSize(j.bytesTotal) }) + (rate ? " · " + rate : "")
         if (isTransfer(j) || j.op === "extract" || j.op === "compress") {
-            if (j.total <= 1 && j.bytesTotal) return Kiki.Format.transferSize(j.bytes) + " of " + Kiki.Format.transferSize(j.bytesTotal) + (rate ? " (" + rate + ")" : "")
-            return j.done + " of " + j.total + " transferred — " + Math.floor(fraction(j) * 100) + "% complete"
+            if (j.total <= 1 && j.bytesTotal) { const p = Kiki.T.tr("jobs.bytesProgress", { bytes: Kiki.Format.transferSize(j.bytes), bytesTotal: Kiki.Format.transferSize(j.bytesTotal) }); return rate ? Kiki.T.tr("jobs.withRate", { progress: p, rate: rate }) : p }
+            return Kiki.T.tr("jobs.transferProgress", { done: j.done, total: j.total, pct: Math.floor(fraction(j) * 100) })
         }
-        return "Processing " + j.done + " of " + j.total + " items"
+        return Kiki.T.tr("jobs.processing", { done: j.done, total: j.total })
     }
     /// The file in hand, for the row that opens under a transfer. "" when there is nothing to add
     /// to the line above — one file is its own detail.
@@ -82,31 +82,33 @@ QtObject {
         if (!c || !(j.total > 1 || isMirror(j))) return ""
         if (!c.size) return ""
         const rate = rateText(j)
-        return Kiki.Format.transferSize(c.bytes) + " of " + Kiki.Format.transferSize(c.size) + (rate ? " (" + rate + ")" : "")
+        const p = Kiki.T.tr("jobs.bytesProgress", { bytes: Kiki.Format.transferSize(c.bytes), bytesTotal: Kiki.Format.transferSize(c.size) })
+        return rate ? Kiki.T.tr("jobs.withRate", { progress: p, rate: rate }) : p
     }
     function hasDetail(j) { return live(j) && j.phase !== "preparing" && !j.cancelling && !!j.current && (j.total > 1 || isMirror(j)) }
-    function items(n) { return n + (n === 1 ? " item" : " items") }
+    function items(n) { return Kiki.T.tr("count.items", { n: n }) }
     /// What replaces the bar once it is over.
     function completion(j) {
-        if (j.state === "failed") return Kiki.Format.cleanError(j.error)
-        if (j.state === "cancelled") return isMirror(j) ? "Mirror cancelled" : "Cancelled"
+        if (j.state === "failed") return j.errorN ? Kiki.T.errorText({ n: j.errorN, params: j.errorParams, message: j.error }) : Kiki.Format.cleanError(j.error)
+        if (j.state === "cancelled") return isMirror(j) ? Kiki.T.tr("jobs.mirrorCancelled") : Kiki.T.tr("jobs.cancelled")
         if (isMirror(j)) {
             const r = j.result || {}
-            return (r.copies || 0) + " copied, " + (r.deletes || 0) + " deleted" + (r.skipped ? ", " + r.skipped + " skipped" : "")
+            const a = { copies: r.copies || 0, deletes: r.deletes || 0, skipped: r.skipped || 0 }
+            return r.skipped ? Kiki.T.tr("jobs.mirrorResultSkipped", a) : Kiki.T.tr("jobs.mirrorResult", a)
         }
         const n = items(Math.max(j.done, 1))
         switch (j.op) {
         case "copy": case "move":
-            if (j.direction === "download") return "Downloaded " + n
-            if (j.direction === "upload") return "Uploaded " + n
-            return (j.op === "move" ? "Moved " : "Copied ") + n
-        case "delete": return "Deleted " + n
-        case "trash": return "Moved " + n + " to the trash"
-        case "chmod": return "Changed permissions on " + n
-        case "extract": return "Extracted"
-        case "compress": return "Compressed " + n
-        case "share": return "Shared " + n
-        default: return "Done"
+            if (j.direction === "download") return Kiki.T.tr("jobs.downloaded", { what: n })
+            if (j.direction === "upload") return Kiki.T.tr("jobs.uploaded", { what: n })
+            return Kiki.T.tr(j.op === "move" ? "jobs.moved" : "jobs.copied", { what: n })
+        case "delete": return Kiki.T.tr("jobs.deleted", { what: n })
+        case "trash": return Kiki.T.tr("jobs.trashed", { what: n })
+        case "chmod": return Kiki.T.tr("jobs.chmod", { what: n })
+        case "extract": return Kiki.T.tr("jobs.extracted")
+        case "compress": return Kiki.T.tr("jobs.compressed", { what: n })
+        case "share": return Kiki.T.tr("jobs.shared", { what: n })
+        default: return Kiki.T.tr("jobs.done")
         }
     }
 

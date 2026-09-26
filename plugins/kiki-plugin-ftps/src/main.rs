@@ -284,7 +284,7 @@ fn server_of(config: &Value) -> String {
 /// without a server.
 fn identity(config: &Value, password: &str) -> String {
     let port = cfg(config, "port").parse::<u16>().unwrap_or(21);
-    let implicit = cfg(config, "encryption").starts_with("Implicit");
+    let implicit = cfg(config, "encryption") == "implicit";
     let insecure = config.get("insecure").and_then(Value::as_bool).unwrap_or(false);
     // Joined on NUL, which `on_the_wire` keeps out of every one of these fields, so no two
     // different sign-ins can spell the same identity.
@@ -300,7 +300,7 @@ fn open_ftp(config: &Value, password: &str, reusing: bool) -> Result<(RustlsFtpS
     on_the_wire("password", password)?;
     let host = cfg(config, "host").to_string();
     let port: u16 = cfg(config, "port").parse().unwrap_or(21);
-    let implicit = cfg(config, "encryption").starts_with("Implicit");
+    let implicit = cfg(config, "encryption") == "implicit";
     let seen = Arc::new(Mutex::new(None));
     let rejected = Arc::new(AtomicBool::new(false));
     let tls = tls_config(config.str_field("trustedFingerprint").map(str::to_string), config.get("insecure").and_then(Value::as_bool).unwrap_or(false), Arc::clone(&seen), Arc::clone(&rejected), reusing);
@@ -370,23 +370,37 @@ fn finish_upload(socket: std::net::TcpStream) {
     while matches!(socket.read(&mut sink), Ok(n) if n > 0) {}
 }
 
+/// The plugin's words, one file per language beside it (`i18n/es.json`, `i18n/ja.json`),
+/// read in at build.
+fn words() -> sdk::Words {
+    sdk::Words::from_files(&[("es", include_str!("../i18n/es.json")), ("ja", include_str!("../i18n/ja.json"))])
+}
+
+/// The form, with its words (`words()` beside `sdk::common_words`).
+fn form() -> Vec<Value> {
+    sdk::localised(
+        vec![
+            sdk::field("name", "Name", "text", true, None),
+            sdk::field("host", "Host", "text", true, None),
+            sdk::field("port", "Port", "port", true, Some("21")),
+            sdk::field("username", "Username", "text", true, None),
+            sdk::field("password", "Password", "password", true, None),
+            sdk::select_field("encryption", "Encryption", &[("explicit", "Explicit TLS (AUTH TLS)"), ("implicit", "Implicit TLS")], "explicit"),
+            sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", true, Some("/"))),
+            sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
+        ],
+        &words(),
+    )
+}
+
 impl Handler for Ftps {
     fn describe(&self) -> Describe {
         Describe {
             scheme: "ftps",
             display_name: "FTPS",
             version: "1.0",
-            form: vec![
-                sdk::field("name", "Name", "text", true, None),
-                sdk::field("host", "Host", "text", true, None),
-                sdk::field("port", "Port", "port", true, Some("21")),
-                sdk::field("username", "Username", "text", true, None),
-                sdk::field("password", "Password", "password", true, None),
-                sdk::select_field("encryption", "Encryption", &["Explicit TLS (AUTH TLS)", "Implicit TLS"], "Explicit TLS (AUTH TLS)"),
-                sdk::on_page("Locations", sdk::field("remotePath", "Remote path", "path", true, Some("/"))),
-                sdk::on_page("Locations", sdk::field("localPath", "Local path", "path", false, None)),
-            ],
-            defaults: Value::obj().s("port", "21").s("remotePath", "/").s("encryption", "Explicit TLS (AUTH TLS)").done(),
+            form: form(),
+            defaults: Value::obj().s("port", "21").s("remotePath", "/").s("encryption", "explicit").done(),
             secret_fields: vec!["password"],
             detector_upload: "sizeOnly",
             detector_download: "sizeMtime",
@@ -573,7 +587,7 @@ mod session_cache_tests {
     use super::*;
 
     fn server(fields: &[(&str, &str)]) -> Value {
-        let mut o = Value::obj().s("name", "homelab").s("host", "files.example").s("port", "21").s("username", "dave").s("encryption", "Explicit TLS (AUTH TLS)");
+        let mut o = Value::obj().s("name", "homelab").s("host", "files.example").s("port", "21").s("username", "dave").s("encryption", "explicit");
         for (k, v) in fields {
             o = o.s(k, *v);
         }
@@ -589,7 +603,7 @@ mod session_cache_tests {
         let base = server(&[]);
         assert_eq!(identity(&base, "hunter2"), identity(&server(&[]), "hunter2"), "the same details are the same session");
 
-        for (field, other) in [("host", "nas.example"), ("port", "2121"), ("username", "root"), ("encryption", "Implicit TLS"), ("trustedFingerprint", "SHA256:someone-else")] {
+        for (field, other) in [("host", "nas.example"), ("port", "2121"), ("username", "root"), ("encryption", "implicit"), ("trustedFingerprint", "SHA256:someone-else")] {
             assert_ne!(identity(&server(&[(field, other)]), "hunter2"), identity(&base, "hunter2"), "a different {field} is a different server");
         }
         assert_ne!(identity(&base, "hunter3"), identity(&base, "hunter2"), "a different password is a different sign-in");
@@ -610,5 +624,18 @@ mod session_cache_tests {
 
         // Two fields cannot be run together into one identity by moving a character between them.
         assert_ne!(identity(&server(&[("host", "files.example2121"), ("port", "")]), "x"), identity(&server(&[("host", "files.example"), ("port", "2121")]), "x"));
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+
+    /// A field or option added without its Spanish and Japanese is a failed build, not an English
+    /// label on a Spanish screen (docs/0.2.0/02-localization.md, decision 7).
+    #[test]
+    fn every_label_of_the_form_has_its_words() {
+        let missing = sdk::unworded(&form(), &["es", "ja"]);
+        assert!(missing.is_empty(), "{missing:?}");
     }
 }

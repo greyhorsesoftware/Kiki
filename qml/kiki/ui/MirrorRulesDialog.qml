@@ -136,7 +136,7 @@ Rectangle {
         Column {
             id: col
             x: 22; y: 22; width: parent.width - 44; spacing: 12
-            Text { text: "Filter rules"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+            Text { text: Kiki.T.tr("mirror.rulesTitle"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
             Text {
                 objectName: "mirror-rules-explanation"
                 width: parent.width; wrapMode: Text.WordWrap; lineHeight: 1.3
@@ -200,7 +200,7 @@ Rectangle {
                                 objectName: "rule-hint-" + ruleRow.index
                                 visible: ruleRow.rule.kind === "startsWith" && ruleRow.rule.value === "."
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: "hidden files"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
+                                text: Kiki.T.tr("mirror.hiddenFiles"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
                             }
                             Rectangle {
                                 objectName: "rule-remove-" + ruleRow.index
@@ -218,7 +218,7 @@ Rectangle {
                     Text {
                         objectName: "mirror-rules-empty"
                         visible: dlg.rows.length === 0
-                        text: "No rules: everything is transferred."
+                        text: Kiki.T.tr("mirror.noRules")
                         color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
                     }
                 }
@@ -234,13 +234,13 @@ Rectangle {
                 width: parent.width; height: 30
                 Row {
                     spacing: 8; anchors.left: parent.left
-                    Button { objectName: "mirror-rules-add"; text: "+ Add rule"; onClicked: dlg.addRule() }
-                    Button { objectName: "mirror-rules-restore"; text: "Restore defaults"; onClicked: dlg.restoreDefaults() }
+                    Button { objectName: "mirror-rules-add"; text: Kiki.T.tr("mirror.addRule"); onClicked: dlg.addRule() }
+                    Button { objectName: "mirror-rules-restore"; text: Kiki.T.tr("mirror.restoreDefaults"); onClicked: dlg.restoreDefaults() }
                 }
                 Row {
                     spacing: 8; anchors.right: parent.right
-                    Button { objectName: "mirror-rules-cancel"; text: "Cancel"; onClicked: dlg.cancel() }
-                    Button { objectName: "mirror-rules-done"; text: "Done"; primary: true; onClicked: dlg.save() }
+                    Button { objectName: "mirror-rules-cancel"; text: Kiki.T.tr("common.cancel"); onClicked: dlg.cancel() }
+                    Button { objectName: "mirror-rules-done"; text: Kiki.T.tr("common.done"); primary: true; onClicked: dlg.save() }
                 }
             }
         }

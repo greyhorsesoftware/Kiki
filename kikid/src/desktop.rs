@@ -388,6 +388,36 @@ pub fn spawn_detached_in(argv: &[String], dir: Option<&std::path::Path>) -> Resu
     cmd.spawn().map(|_| ()).map_err(|e| format!("{}: {e}", argv[0]))
 }
 
+// ---------------------------------------------------------------- what a double-click does
+
+/// What a double-click on a file does (0.2.0; owner, 2026-09-24: "double clicking a file should
+/// open it in the default editor; double clicking a remote file should download and then open
+/// in the default editor for the type"): the default application for the file's type, `xdg-open`
+/// when none is registered. A remote file is fetched first and written back when saved
+/// (`openback`); the fetch job's id is answered so the window can follow it. `KIKI_OPEN_WITH`
+/// names a program to run on the file instead of any application: what the tests set.
+pub fn open_default(uri: &crate::vfs::uri::Uri) -> Result<Option<u64>, String> {
+    crate::openback::localise(std::slice::from_ref(uri), |local| {
+        if let Some(u) = local.first() {
+            if let Err(e) = open_local(&u.to_path()) {
+                eprintln!("open {}: {e}", u.to_path().display());
+            }
+        }
+    })
+}
+
+fn open_local(path: &Path) -> Result<(), String> {
+    if let Ok(cmd) = std::env::var("KIKI_OPEN_WITH") {
+        return spawn_detached(&[cmd, path.to_string_lossy().into_owned()]);
+    }
+    let apps = apps_for(&mime_of(path));
+    let pick = apps.iter().find(|(_, default)| *default).or(apps.first());
+    match pick {
+        Some((app, _)) => launch(&app.id, &[crate::vfs::uri::Uri::from_path(path).to_string()]),
+        None => spawn_detached(&["xdg-open".to_string(), path.to_string_lossy().into_owned()]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -25,7 +25,7 @@ Rectangle {
         anchors.centerIn: parent; width: 460; height: 210; color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             anchors.fill: parent; anchors.margins: 20; spacing: 14
-            Text { text: "Compress " + (dlg.items.length === 1 ? "1 item" : dlg.items.length + " items"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+            Text { text: Kiki.T.tr("compress.title", { n: dlg.items.length }); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
             Row {
                 spacing: 8; width: parent.width
                 Rectangle {
@@ -46,13 +46,13 @@ Rectangle {
             // the archive is going.
             Text {
                 width: parent.width; elide: Text.ElideMiddle
-                text: "Into " + Kiki.Format.display(dlg.dest, Quickshell.env("HOME"))
+                text: Kiki.T.tr("compress.into", { folder: Kiki.Format.display(dlg.dest, Quickshell.env("HOME")) })
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
             Row {
                 spacing: 8; anchors.right: parent.right
-                Button { text: "Cancel"; onClicked: dlg.visible = false }
-                Button { text: "Compress"; primary: true; onClicked: dlg.go() }
+                Button { text: Kiki.T.tr("common.cancel"); onClicked: dlg.visible = false }
+                Button { text: Kiki.T.tr("compress.go"); primary: true; onClicked: dlg.go() }
             }
         }
     }

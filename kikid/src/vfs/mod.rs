@@ -76,6 +76,15 @@ pub enum VfsError {
     /// Refused because doing it would be dangerous: an archive entry that escapes its folder.
     Unsafe(String),
     Io(String),
+    /// A failure the user is told about, by number: the window says it in its own language
+    /// from `n` and `params` (docs/0.2.0/02-localization.md, L5 — owner, 2026-09-25: "the daemon
+    /// should return numeric values and localization should happen in the UI"). The English
+    /// `message` travels too, for logs and for a window that has no words for the number.
+    Said {
+        n: u16,
+        params: Vec<(String, String)>,
+        message: String,
+    },
 }
 
 impl VfsError {
@@ -87,14 +96,34 @@ impl VfsError {
             VfsError::NotEmpty => "NotEmpty",
             VfsError::Unsupported => "Unsupported",
             VfsError::Unsafe(_) => "Unsafe",
-            VfsError::Io(_) => "Io",
+            VfsError::Io(_) | VfsError::Said { .. } => "Io",
         }
     }
     pub fn message(&self) -> String {
         match self {
-            VfsError::Io(m) | VfsError::Unsafe(m) => m.clone(),
+            VfsError::Io(m) | VfsError::Unsafe(m) | VfsError::Said { message: m, .. } => m.clone(),
             VfsError::Denied(m) if !m.is_empty() => m.clone(),
             other => other.code().to_string(),
+        }
+    }
+}
+
+impl VfsError {
+    /// A numbered failure: `VfsError::said(1201, &[("host", host)], "a server has no trash…")`.
+    pub fn said(n: u16, params: &[(&str, &dyn std::fmt::Display)], message: impl Into<String>) -> VfsError {
+        VfsError::Said { n, params: params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), message: message.into() }
+    }
+    /// The number and params, for the wire; none for an error without a number.
+    pub fn said_json(&self) -> Option<(u16, crate::json::Value)> {
+        match self {
+            VfsError::Said { n, params, .. } => {
+                let mut o = crate::json::Value::obj();
+                for (k, v) in params {
+                    o = o.s(k, v.clone());
+                }
+                Some((*n, o.done()))
+            }
+            _ => None,
         }
     }
 }

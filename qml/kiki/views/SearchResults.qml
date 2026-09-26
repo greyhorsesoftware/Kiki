@@ -7,7 +7,7 @@ Item {
     id: root
     property Kiki.WindowCache results
     property string query: ""
-    property string scopeLabel: "Everywhere"
+    property string scopeLabel: ""
     property string home: ""
     property string indexInfo: ""
     property int current: -1
@@ -29,9 +29,9 @@ Item {
         Row {
             anchors.verticalCenter: parent.verticalCenter; x: 16; spacing: 6
             Text { text: results.count; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-            Text { text: "results for"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { text: Kiki.T.tr("search.resultsFor"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Text { text: root.query; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-            Text { text: "in"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { text: Kiki.T.tr("search.in"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Text { text: root.scopeLabel; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         }
         Text { anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter; text: root.indexInfo; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }

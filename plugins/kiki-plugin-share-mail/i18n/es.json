@@ -1,0 +1,15 @@
+{
+  "Send with": "Enviar con",
+  "Mail composer": "Cliente de correo",
+  "SMTP": "SMTP",
+  "SMTP server": "Servidor SMTP",
+  "Security": "Seguridad",
+  "STARTTLS": "STARTTLS",
+  "TLS": "TLS",
+  "None": "Ninguna",
+  "From address": "Dirección del remitente",
+  "Trusted certificate (sha256, self-signed servers)": "Certificado de confianza (sha256, servidores autofirmados)",
+  "To": "Para",
+  "Subject": "Asunto",
+  "Message": "Mensaje"
+}

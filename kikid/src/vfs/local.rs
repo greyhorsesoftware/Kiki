@@ -33,7 +33,7 @@ impl DirHandle {
     pub fn open(path: &Path) -> Result<DirHandle> {
         let file = File::open(path)?;
         if !file.metadata()?.is_dir() {
-            return Err(VfsError::Io("not a directory".into()));
+            return Err(VfsError::said(1281, &[], "not a directory"));
         }
         Ok(DirHandle { file })
     }

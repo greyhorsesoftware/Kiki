@@ -57,6 +57,22 @@ TestCase {
     }
 
     // ---------------------------------------------------------------- what is offered
+    // A double-click on a file (0.2.0) asks the daemon for the default application — which
+    // fetches a remote file first — rather than running xdg-open on the URI here; a folder is
+    // entered, and asks for nothing.
+    function test_a_double_click_on_a_file_asks_the_daemon_to_open_it_with_the_default_application() {
+        select("a.txt")
+        shell.openSelected()
+        const r = Wire.last("OpenDefault")
+        verify(r, "the daemon is asked")
+        compare(r.uri, "file:///home/t/a.txt")
+        compare(Wire.count("OpenIn"), 0, "not a tool")
+        Wire.reset()
+        select("Projects")
+        shell.openSelected()
+        compare(Wire.count("OpenDefault"), 0, "a folder is entered, not opened")
+        compare(shell.pane.uri, "file:///home/t/Projects")
+    }
     function test_an_entry_whose_binary_is_absent_is_not_offered() {
         compare(shell.openInTools.map(t => t.id), ["neovim", "claude", "terminal"])
         // And it cannot be reached by name either: asking for it opens nothing rather than

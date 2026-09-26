@@ -23,7 +23,7 @@ Rectangle {
     property bool follow: true
 
     function openJob(j) { job = j; location = ""; heading = Kiki.Jobs.headline(j) + " — log"; _begin() }
-    function openLocation(name) { job = null; location = name; heading = name + " — connection log"; _begin() }
+    function openLocation(name) { job = null; location = name; heading = Kiki.T.tr("log.connectionLog", { name: name }); _begin() }
     function close() { visible = false }
     function _begin() { lines = []; next = 0; dropped = 0; filter = ""; filterInput.text = ""; follow = true; visible = true; fetch(); filterInput.forceActiveFocus() }
 
@@ -44,7 +44,7 @@ Rectangle {
     readonly property var shownLines: filter === "" ? lines : lines.filter(l => (l.text + " " + l.source).toLowerCase().indexOf(filter.toLowerCase()) >= 0)
     readonly property double t0: lines.length ? lines[0].t : 0
     function stamp(t) { const s = Math.max(0, (t - t0) / 1000); return "+" + (s < 100 ? s.toFixed(2) : Math.round(s)) + "s" }
-    function asText() { return (dropped ? "… " + dropped + " earlier lines dropped\n" : "") + shownLines.map(l => stamp(l.t) + "  " + l.level.padEnd(5) + "  " + l.source + "  " + l.text).join("\n") + "\n" }
+    function asText() { return (dropped ? Kiki.T.tr("log.dropped", { n: dropped }) + "\n" : "") + shownLines.map(l => stamp(l.t) + "  " + l.level.padEnd(5) + "  " + l.source + "  " + l.text).join("\n") + "\n" }
 
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; hoverEnabled: true; onPressed: win.close(); onWheel: wheel => wheel.accepted = true }
     Keys.onEscapePressed: win.close()
@@ -71,11 +71,11 @@ Rectangle {
                         color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
                         onTextChanged: win.filter = text
                         Keys.onEscapePressed: { if (text !== "") text = ""; else win.close() }
-                        Text { visible: !parent.text.length; text: "Filter"; color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter }
+                        Text { visible: !parent.text.length; text: Kiki.T.tr("log.filter"); color: Kiki.Theme.muted; font: parent.font; anchors.verticalCenter: parent.verticalCenter }
                     }
                 }
-                Button { objectName: "joblog-copy"; text: "Copy all"; onClicked: win.copyText(win.asText()) }
-                Button { objectName: "joblog-close"; text: "Close"; onClicked: win.close() }
+                Button { objectName: "joblog-copy"; text: Kiki.T.tr("log.copyAll"); onClicked: win.copyText(win.asText()) }
+                Button { objectName: "joblog-close"; text: Kiki.T.tr("common.close"); onClicked: win.close() }
             }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
         }
@@ -85,7 +85,7 @@ Rectangle {
             objectName: "joblog-dropped"
             visible: win.dropped > 0
             anchors.top: top.bottom; x: 16; height: visible ? 24 : 0; verticalAlignment: Text.AlignVCenter
-            text: "… " + win.dropped + " earlier lines dropped"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
+            text: Kiki.T.tr("log.dropped", { n: win.dropped }); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
         }
 
         ListView {

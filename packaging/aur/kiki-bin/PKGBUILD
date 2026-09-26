@@ -4,7 +4,7 @@
 # root is how kiki is installed. Kept for the day the AUR is an option again.
 pkgname=kiki-bin
 _pkgname=kiki
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
 arch=('x86_64' 'aarch64')
@@ -14,6 +14,7 @@ license=('MIT')
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'
          'udisks2' 'git' 'qt6-declarative' 'glib2' 'gvfs')
 optdepends=('poppler: PDF thumbnails'
+            'noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
             'openssh: SFTP host key tools'
             'gvfs-smb: SMB (Windows share) locations'
             'gvfs-wsdd: find Windows computers on the network'

@@ -115,9 +115,11 @@ impl Client {
     }
 
     fn reply(&self, id: u64, r: Result<Value, (&str, String)>) {
-        let v = match r {
-            Ok(v) => proto::ok(id, v),
-            Err((code, msg)) => proto::err(id, code, msg),
+        let said = SAID.with(|s| s.borrow_mut().take());
+        let v = match (r, said) {
+            (Ok(v), _) => proto::ok(id, v),
+            (Err((code, msg)), Some((n, params))) => proto::err_said(id, code, msg, n, params),
+            (Err((code, msg)), None) => proto::err(id, code, msg),
         };
         let _ = self.tx.send(v);
     }
@@ -133,6 +135,7 @@ impl Client {
     }
 
     fn handle(&mut self, req: Request) {
+        SAID.with(|s| *s.borrow_mut() = None);
         static TRACE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("KIKI_TRACE").is_some_and(|v| v == "1"));
         let id = req.id;
         let b = &req.body;
@@ -301,8 +304,36 @@ impl Client {
                 let key = b.str_field("tool").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
                 let class = crate::openin::find(&key).and_then(|t| t.str_field("id").map(crate::openin::window_class)).unwrap_or_default();
-                crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).s("class", class).done())).map_err(|e| ("Invalid", e))
+                // A remote file is fetched first and the tool opened on the copy when it has
+                // arrived (0.2.0): the reply then names the fetch job instead of a pid.
+                if uris.iter().any(|u| !u.is_local()) {
+                    let line = b.u64_field("line");
+                    crate::openback::localise(&uris, move |local| {
+                        if let Err(e) = crate::openin::open(&key, &local, line) {
+                            eprintln!("open in {key}: {e}");
+                        }
+                    })
+                    .map(|job| Some(Value::obj().u("job", job.unwrap_or(0)).s("class", class).done()))
+                    .map_err(|m| ("Io", m))
+                } else {
+                    crate::openin::open(&key, &uris, b.u64_field("line")).map(|(pid, reused)| Some(Value::obj().u("pid", pid as u64).b("reused", reused).s("class", class).done())).map_err(|e| ("Invalid", e))
+                }
             }
+            // A double-click on a file (0.2.0): the default application, a remote file fetched first.
+            "OpenDefault" => match parse_uri(b, "uri") {
+                Ok(u) => {
+                    crate::access::record(&u.to_string());
+                    crate::desktop::open_default(&u)
+                        .map(|job| {
+                            Some(match job {
+                                Some(j) => Value::obj().u("job", j).done(),
+                                None => Value::obj().done(),
+                            })
+                        })
+                        .map_err(|e| ("Io", e))
+                }
+                Err(e) => Err(e),
+            },
             "OpenInTest" => {
                 let key = b.str_field("tool").or(b.str_field("role")).unwrap_or("").to_string();
                 let uris: Vec<Uri> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(|v| v.as_str()).filter_map(|s| Uri::parse(s).ok()).collect()).unwrap_or_default();
@@ -795,7 +826,13 @@ impl Client {
         self.searches.insert(lid, rows);
         let _ = self.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", true).done());
         let _ = self.tx.send(proto::event("Reset").u("lid", lid).u("n", n).done());
-        Ok(Some(Value::obj().u("n", n).b("capped", capped).u("indexAge", crate::ops::unix_now().saturating_sub(crate::index::with_index(|ix| ix.built_at))).done()))
+        // `indexAge` only once there is an index: never built, its age is not a number to show.
+        let built = crate::index::with_index(|ix| ix.built_at);
+        let mut reply = Value::obj().u("n", n).b("capped", capped);
+        if built > 0 {
+            reply = reply.u("indexAge", crate::ops::unix_now().saturating_sub(built));
+        }
+        Ok(Some(reply.done()))
     }
 
     fn plugin_ping(&mut self, b: &Value) -> Result<Option<Value>, (&'static str, String)> {
@@ -905,11 +942,23 @@ impl Client {
             }
             "ClearAccessLog" => crate::access::clear().map(|_| Some(Value::obj().done())).map_err(|e| ("Io", e.to_string())),
             "Launch" => {
-                let uris: Vec<String> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-                let uris: Vec<String> = uris.iter().map(|u| Uri::parse(u).ok().and_then(|x| crate::ops::local_path(&x).ok()).map(|p| Uri::from_path(&p).to_string()).unwrap_or_else(|| u.clone())).collect();
-                crate::desktop::launch(b.str_field("app").unwrap_or(""), &uris).map_err(|m| ("Io", m))?;
+                let asked: Vec<String> = b.get("uris").and_then(Value::as_arr).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+                let uris: Vec<Uri> = asked.iter().filter_map(|u| Uri::parse(u).ok()).map(|x| crate::ops::local_path(&x).ok().map(|p| Uri::from_path(&p)).unwrap_or(x)).collect();
                 for u in &uris {
-                    crate::access::record(u);
+                    crate::access::record(&u.to_string());
+                }
+                let app = b.str_field("app").unwrap_or("").to_string();
+                // Remote files are fetched first and the application started on the copies
+                // when they have arrived (0.2.0); the reply then carries the fetch job.
+                let job = crate::openback::localise(&uris, move |local| {
+                    let paths: Vec<String> = local.iter().map(|u| u.to_string()).collect();
+                    if let Err(e) = crate::desktop::launch(&app, &paths) {
+                        eprintln!("launch {app}: {e}");
+                    }
+                })
+                .map_err(|m| ("Io", m))?;
+                if let Some(j) = job {
+                    return Ok(Some(Value::obj().u("job", j).done()));
                 }
                 Ok(Some(Value::obj().done()))
             }
@@ -964,6 +1013,14 @@ fn parse_uri(b: &Value, key: &str) -> Result<Uri, (&'static str, String)> {
     Uri::parse(s).map_err(|e| ("Protocol", format!("bad uri: {}", e.0)))
 }
 
+// A numbered error keeps its number across the `(code, message)` tuple every handler returns:
+// `vfs_err` leaves it here, on the request's own thread, and `reply` — the next thing that
+// runs — picks it up and puts `n` and `params` beside the message. Nothing else sets or reads
+// it; a reply with no number finds it empty.
+thread_local! {
+    static SAID: std::cell::RefCell<Option<(u16, Value)>> = const { std::cell::RefCell::new(None) };
+}
 fn vfs_err(e: VfsError) -> (&'static str, String) {
+    SAID.with(|s| *s.borrow_mut() = e.said_json());
     (e.code(), e.message())
 }

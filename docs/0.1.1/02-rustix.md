@@ -10,7 +10,7 @@ Out of the lock: `rustix` 0.38.44 and `linux-raw-sys` 0.4.15 — two crates, not
 `flat10k.enrich_ms` 2.43 → 2.72 — noise, as the plan expected. `make lint` clean; `cargo test -p
 kikid` green, `tests/watch.rs` three times over.
 
-**Status:** planned 2026-09-24, moved here from the 0.2.0 dependencies plan (owner: small enough for 0.1.1).
+**Status:** planned 2026-09-24, moved here from the dependency survey (owner: small enough for this release).
 
 ## Goal
 

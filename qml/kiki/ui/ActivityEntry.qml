@@ -97,10 +97,10 @@ Item {
     Row {
         id: buttons
         anchors.right: parent.right; anchors.rightMargin: 10; anchors.verticalCenter: parent.verticalCenter; spacing: 2
-        RoundButton_ { objectName: "activity-log"; icon: "doc"; tip: "Log"; onClicked: e.log() }
-        RoundButton_ { objectName: "activity-cancel"; visible: e.live; enabled: !e.job.cancelling; icon: "x"; tip: "Cancel"; danger: true; onClicked: Kiki.Jobs.cancel(e.job.id) }
-        RoundButton_ { objectName: "activity-reveal"; visible: !e.live && !!e.job.revealUri; icon: "folder"; tip: "Reveal"; onClicked: e.reveal() }
-        RoundButton_ { objectName: "activity-dismiss"; visible: !e.live && !e.job.revealUri; icon: "x"; tip: "Dismiss"; onClicked: Kiki.Jobs.dismiss(e.job.id) }
+        RoundButton_ { objectName: "activity-log"; icon: "doc"; tip: Kiki.T.tr("activity.log"); onClicked: e.log() }
+        RoundButton_ { objectName: "activity-cancel"; visible: e.live; enabled: !e.job.cancelling; icon: "x"; tip: Kiki.T.tr("activity.cancel"); danger: true; onClicked: Kiki.Jobs.cancel(e.job.id) }
+        RoundButton_ { objectName: "activity-reveal"; visible: !e.live && !!e.job.revealUri; icon: "folder"; tip: Kiki.T.tr("activity.reveal"); onClicked: e.reveal() }
+        RoundButton_ { objectName: "activity-dismiss"; visible: !e.live && !e.job.revealUri; icon: "x"; tip: Kiki.T.tr("activity.dismiss"); onClicked: Kiki.Jobs.dismiss(e.job.id) }
     }
 
     component RoundButton_: Item {

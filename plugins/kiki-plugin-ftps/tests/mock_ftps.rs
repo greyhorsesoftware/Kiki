@@ -647,7 +647,7 @@ impl Plugin {
             .s("port", port.to_string())
             .s("username", "kiki")
             .s("remotePath", "/")
-            .s("encryption", if implicit { "Implicit TLS" } else { "Explicit TLS (AUTH TLS)" })
+            .s("encryption", if implicit { "implicit" } else { "explicit" })
             .opt_s("trustedFingerprint", pin)
             .done();
         let (_, r) = self.req(Value::obj().s("type", "Connect").s("location", "lab").s("role", "browse").v("config", cfg).v("secrets", Value::obj().s("password", password).done()).done());

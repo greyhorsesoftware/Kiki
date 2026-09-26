@@ -160,7 +160,7 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
     let mut files: Vec<String> = Vec::new();
     for (n, u) in uris.iter().enumerate() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let local = if u.is_local() {
             u.to_path()

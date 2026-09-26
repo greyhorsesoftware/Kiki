@@ -25,7 +25,7 @@ pub fn get(name: &str) -> Result<Arc<Plugin>, VfsError> {
             return Ok(Arc::clone(p));
         }
     }
-    let bin = find(name).ok_or_else(|| VfsError::Io(format!("{name} is not installed")))?;
+    let bin = find(name).ok_or_else(|| VfsError::said(1250, &[("name", &name)], format!("{name} is not installed")))?;
     let p = Plugin::spawn_path(&bin, name)?;
     if let Ok(d) = p.request(crate::json::Value::obj().s("type", "Describe").done()) {
         let _ = p.set_describe(d);

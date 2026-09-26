@@ -56,14 +56,14 @@ Item {
         Item {
             id: header
             width: parent.width; height: 40
-            Text { anchors.centerIn: parent; text: "Activity"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 13; font.bold: true }
+            Text { anchors.centerIn: parent; text: Kiki.T.tr("activity.title"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 13; font.bold: true }
             Rectangle {
                 objectName: "activity-clear"
                 visible: pop.entries.some(j => !Kiki.Jobs.live(j))
                 anchors.right: parent.right; anchors.rightMargin: 12; anchors.verticalCenter: parent.verticalCenter
                 width: clearText.implicitWidth + 20; height: 22; radius: 11
                 color: clearArea.containsMouse ? Kiki.Theme.surface : "transparent"; border.width: 1; border.color: Kiki.Theme.gutter
-                Text { id: clearText; anchors.centerIn: parent; text: "Clear"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+                Text { id: clearText; anchors.centerIn: parent; text: Kiki.T.tr("activity.clear"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
                 MouseArea { id: clearArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: Kiki.Jobs.clear() }
             }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
@@ -81,7 +81,7 @@ Item {
                     objectName: "activity-empty"
                     visible: pop.entries.length === 0
                     width: parent.width; height: 64; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                    text: "No activity"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
+                    text: Kiki.T.tr("orb.idle"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
                 }
                 Repeater {
                     // Newest at the top; an entry keeps its place when it finishes.

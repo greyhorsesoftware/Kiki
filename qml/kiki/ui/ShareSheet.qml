@@ -27,14 +27,14 @@ Rectangle {
         anchors.centerIn: parent; width: 480; height: 120 + (sheet.plugin ? (sheet.plugin.compose || []).length * 66 : 0); color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             anchors.fill: parent; anchors.margins: 20; spacing: 12
-            Text { text: "Share " + sheet.uris.length + (sheet.uris.length === 1 ? " item" : " items") + " via " + (sheet.plugin ? sheet.plugin.name : "") + (sheet.target ? " to " + sheet.target.name : ""); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+            Text { text: Kiki.T.tr(sheet.target ? "share.titleTo" : "share.title", { n: sheet.uris.length, plugin: sheet.plugin ? sheet.plugin.name : "", target: sheet.target ? sheet.target.name : "" }); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
             Repeater {
                 model: sheet.plugin ? sheet.plugin.compose : []
                 delegate: FormField { required property var modelData; field: modelData; value: sheet.values[modelData.key] || ""; onEdited: v => { const nv = Object.assign({}, sheet.values); nv[modelData.key] = v; sheet.values = nv } }
             }
             Row { spacing: 8; anchors.right: parent.right
-                Button { text: "Cancel"; onClicked: sheet.visible = false }
-                Button { text: "Send"; primary: true; onClicked: sheet.send() } }
+                Button { text: Kiki.T.tr("common.cancel"); onClicked: sheet.visible = false }
+                Button { text: Kiki.T.tr("share.send"); primary: true; onClicked: sheet.send() } }
         }
     }
     Keys.onEscapePressed: visible = false

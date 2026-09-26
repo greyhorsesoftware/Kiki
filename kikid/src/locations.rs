@@ -12,11 +12,65 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 // ---------------------------------------------------------------- config file
 
-pub fn all() -> Vec<Value> {
+/// The saved locations, as the file has them.
+fn raw() -> Vec<Value> {
     let v = crate::config::read_named("locations.toml");
     match v.get("location") {
         Some(Value::Arr(a)) => a.clone(),
         _ => Vec::new(),
+    }
+}
+
+/// The saved locations, each read the way its plugin means it (`normalise_options`).
+pub fn all() -> Vec<Value> {
+    raw().into_iter().map(|l| normalise_options(&l).unwrap_or(l)).collect()
+}
+
+/// A select field's value stored as its *label* — how every location saved before 0.2.0
+/// spelled it, when an option was one string shown and stored alike (`encryption = "Implicit
+/// TLS"`) — read as the value it means (`"implicit"`), by the plugin's own form. `None` when
+/// nothing needed changing. Read for every caller of `all`, so an old file works as it is;
+/// `migrate_option_labels` rewrites the file once, at the daemon's start.
+fn normalise_options(loc: &Value) -> Option<Value> {
+    let scheme = loc.str_field("plugin")?;
+    let form = crate::plugin::describe(scheme)?.get("form")?.as_arr()?.to_vec();
+    let mut config = match loc.get("config") {
+        Some(Value::Obj(m)) => m.clone(),
+        _ => return None,
+    };
+    let mut changed = false;
+    for field in form.iter().filter(|f| f.str_field("kind") == Some("select")) {
+        let (Some(key), Some(options)) = (field.str_field("key"), field.get("options").and_then(Value::as_arr)) else { continue };
+        let Some(Value::Str(stored)) = config.get(key) else { continue };
+        if options.iter().any(|o| o.str_field("value") == Some(stored)) {
+            continue; // already a value
+        }
+        if let Some(value) = options.iter().find(|o| o.str_field("label") == Some(stored)).and_then(|o| o.str_field("value")) {
+            config.insert(key.to_string(), Value::Str(value.to_string()));
+            changed = true;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    let mut out = match loc {
+        Value::Obj(m) => m.clone(),
+        _ => return None,
+    };
+    out.insert("config".into(), Value::Obj(config));
+    Some(Value::Obj(out))
+}
+
+/// Writes every location whose select values were stored as labels back as values, once.
+pub fn migrate_option_labels() {
+    for l in raw() {
+        if let Some(fixed) = normalise_options(&l) {
+            let name = l.str_field("name").unwrap_or("").to_string();
+            match upsert(fixed) {
+                Ok(()) => eprintln!("locations: {name}: select values rewritten from their labels"),
+                Err(e) => eprintln!("locations: {name}: could not rewrite: {e}"),
+            }
+        }
     }
 }
 
@@ -109,7 +163,7 @@ pub mod keyring {
         if st.success() {
             Ok(())
         } else {
-            Err(VfsError::Io("keyring refused the secret (is a Secret Service running?)".into()))
+            Err(VfsError::said(1261, &[], "keyring refused the secret (is a Secret Service running?)"))
         }
     }
 
@@ -309,7 +363,7 @@ pub fn resolve(uri: &Uri) -> Result<(Arc<Session>, String), VfsError> {
 
 /// The same, given up on when `cancel` is set (see `connect_cancellable`).
 pub fn resolve_cancellable(uri: &Uri, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<(Arc<Session>, String), VfsError> {
-    let loc = resolve_authority(&uri.scheme, &uri.authority).ok_or_else(|| VfsError::Io(format!("no location for {}://{}", uri.scheme, uri.authority)))?;
+    let loc = resolve_authority(&uri.scheme, &uri.authority).ok_or_else(|| VfsError::said(1260, &[("scheme", &uri.scheme), ("host", &uri.authority)], format!("no location for {}://{}", uri.scheme, uri.authority)))?;
     let s = connect_cancellable(&loc, &role_here(), None, cancel)?;
     Ok((s, uri.path.clone()))
 }

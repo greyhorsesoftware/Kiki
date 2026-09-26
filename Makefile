@@ -35,6 +35,8 @@ test-rust:
 ## Leaf and interaction tests: no compositor, about five seconds. Offscreen, so the developer's
 ## own pointer and windows cannot make a test flaky; QT_QPA_PLATFORM in the environment wins.
 test-qml: export QT_QPA_PLATFORM ?= offscreen
+# The words the tests compare are English whatever the desktop speaks (docs/0.2.0/02-localization.md).
+test-qml: export LANGUAGE = en
 test-qml:
 	@# tst_LocationImage writes its swatch under target/, which only a cargo build makes.
 	@mkdir -p target
@@ -71,6 +73,8 @@ fmt:
 
 lint: clippy
 	$(CARGO) fmt --all -- --check
+	@# The catalogs stay whole: every key asked for exists in every language, none is unasked (docs/0.2.0/02-localization.md).
+	python3 tests/i18n_check.py
 
 clean:
 	$(CARGO) clean

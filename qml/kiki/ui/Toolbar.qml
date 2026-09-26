@@ -81,7 +81,7 @@ Rectangle {
         }
         flat: true; iconSize: 20
         icon: "mirror"; active: bar.mirror
-        tip: "Mirror… (Ctrl+M)"
+        tip: Kiki.T.tr("toolbar.mirrorTip")
         onClicked: bar.toggleMirror()
     }
     // Side by side goes with them (owner, 2026-09-21): it is a server and the folder it is kept
@@ -98,7 +98,7 @@ Rectangle {
         // Never flat: lit — box and all — while it is on, as it always was.
         iconSize: bar.split ? 20 : 16
         icon: "split"; active: bar.split
-        tip: (bar.split ? "Back to one pane" : "Side by Side") + " (Ctrl+4)"
+        tip: bar.split ? Kiki.T.tr("toolbar.onePane") : Kiki.T.tr("toolbar.sideBySide")
         onClicked: bar.toggleSplit()
     }
     // Beside it while a pane is on a server: let go of that server. The way to it was the
@@ -112,7 +112,7 @@ Rectangle {
         x: mirrorBtn.x + mirrorBtn.width + 4
         flat: true; iconSize: 20
         icon: "disconnect"
-        tip: "Disconnect from " + bar.remoteHost
+        tip: Kiki.T.tr("toolbar.disconnectTip", { host: bar.remoteHost })
         onClicked: bar.disconnect()
     }
     Row {
@@ -156,7 +156,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             icon: "info"; active: bar.inspector && bar.inspectorAvailable
             enabled: bar.inspectorAvailable
-            tip: bar.inspectorAvailable ? (bar.inspector ? "Hide info" : "Show info") + " (Ctrl+I)" : ""
+            tip: bar.inspectorAvailable ? (bar.inspector ? Kiki.T.tr("toolbar.hideInfo") : Kiki.T.tr("toolbar.showInfo")) : ""
             onClicked: bar.toggleInspector()
         }
         // Where the side-by-side button stands while there is one pane and a server in it: the
@@ -169,7 +169,7 @@ Rectangle {
             objectName: "toolbar-menu"
             visible: bar.compact
             anchors.verticalCenter: parent.verticalCenter
-            icon: "menu"; tip: "Menu"
+            icon: "menu"; tip: Kiki.T.tr("toolbar.menu")
             onClicked: bar.hamburger(menuBtn)
         }
         // A menu, not a button: the chevron says so, the way the view switcher does.

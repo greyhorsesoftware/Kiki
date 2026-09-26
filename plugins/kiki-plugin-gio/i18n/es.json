@@ -1,0 +1,12 @@
+{
+  "Security": "Seguridad",
+  "HTTPS": "HTTPS",
+  "Plain HTTP": "HTTP sin cifrar",
+  "Path prefix": "Prefijo de ruta",
+  "Volume": "Volumen",
+  "Authentication": "Autenticación",
+  "Guest": "Invitado",
+  "Kerberos": "Kerberos",
+  "Share": "Recurso compartido",
+  "Domain / workgroup": "Dominio / grupo de trabajo"
+}

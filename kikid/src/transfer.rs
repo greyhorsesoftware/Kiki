@@ -60,7 +60,7 @@ fn delete(s: &Side, rel: &str, is_dir: bool, cancel: &AtomicBool) -> Result<(), 
             inside.sort_by(|a, b| a.1.cmp(&b.1).then(b.0.matches('/').count().cmp(&a.0.matches('/').count())));
             for (r, _) in &inside {
                 if cancel.load(Ordering::Relaxed) {
-                    return Err(VfsError::Io("cancelled".into()));
+                    return Err(VfsError::said(1230, &[], "cancelled"));
                 }
                 request(&root, "Delete", r)?;
             }
@@ -276,7 +276,7 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     for it in &plan {
         if cancel.load(Ordering::Relaxed) {
             made.journal(job);
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         // Did every part of this item arrive? Decides whether a move may take the original away.
         let mut whole = true;
@@ -303,7 +303,7 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
             for (rel, is_dir, size, mtime) in &it.tree {
                 if cancel.load(Ordering::Relaxed) {
                     made.journal(job);
-                    return Err(VfsError::Io("cancelled".into()));
+                    return Err(VfsError::said(1230, &[], "cancelled"));
                 }
                 let shown = format!("{}/{rel}", it.name);
                 // A file inside a folder that failed is not attempted: there is nowhere for it.
@@ -389,10 +389,12 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
     if !lost.is_empty() {
         let first: Vec<String> = lost.iter().take(3).map(|(n, why)| format!("{n} ({why})")).collect();
         let more = if lost.len() > 3 { format!(", and {} more — see the log", lost.len() - 3) } else { String::new() };
-        return Err(VfsError::Io(format!("{} of {} could not be {}: {}{more}", lost.len(), files.max(plan.len() as u64), if moving { "moved; their originals are untouched" } else { "copied" }, first.join(", "))));
+        let (n, total, first, what, extra) = (lost.len(), files.max(plan.len() as u64), first.join(", "), if moving { "moved; their originals are untouched" } else { "copied" }, lost.len().saturating_sub(3));
+        return Err(VfsError::said(if moving { 1203 } else { 1202 }, &[("n", &n), ("total", &total), ("first", &first), ("more", &extra)], format!("{n} of {total} could not be {what}: {first}{more}")));
     }
     if !kept.is_empty() {
-        return Err(VfsError::Io(format!("copied, but the original could not be removed: {}", kept.join(", "))));
+        let which = kept.join(", ");
+        return Err(VfsError::said(1210, &[("which", &which)], format!("copied, but the original could not be removed: {which}")));
     }
     Ok(match made.inverse() {
         Some(inv) => Some(inv),
@@ -431,7 +433,7 @@ fn arrived_whole(to: &Side, rel: &str, size: u64) -> Result<(), VfsError> {
     if got == size {
         Ok(())
     } else {
-        Err(VfsError::Io(format!("arrived as {got} bytes of {size}; the original is kept")))
+        Err(VfsError::said(1211, &[("got", &got), ("size", &size)], format!("arrived as {got} bytes of {size}; the original is kept")))
     }
 }
 
@@ -479,7 +481,7 @@ pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack
     };
     for f in &files {
         if cancel.load(Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let a = f.as_arr().unwrap_or_default();
         let Some(uri) = a.first().and_then(Value::as_str).and_then(|s| Uri::parse(s).ok()) else { continue };
@@ -508,7 +510,7 @@ pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack
     dirs.sort_by_key(|u| std::cmp::Reverse(u.path.matches('/').count()));
     for uri in &dirs {
         if cancel.load(Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let parent = uri.parent().ok_or(VfsError::NotFound)?;
         match names(&side(uri)?, cancel) {
@@ -556,7 +558,7 @@ pub fn delete_items(job: &Job, items: &[Uri], cancel: &AtomicBool) -> Result<(),
     job.set_totals(items.len() as u64, 0);
     for u in items {
         if cancel.load(Ordering::Relaxed) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let parent = u.parent().ok_or(VfsError::NotFound)?;
         let s = side(&parent)?;
@@ -578,7 +580,7 @@ pub fn make_dir(uri: &Uri) -> Result<(), VfsError> {
 
 pub fn rename_item(item: &Uri, name: &str) -> Result<Uri, VfsError> {
     if name.is_empty() || name.contains('/') {
-        return Err(VfsError::Io("a name cannot be empty or contain /".into()));
+        return Err(VfsError::said(1212, &[], "a name cannot be empty or contain /"));
     }
     let parent = item.parent().ok_or(VfsError::NotFound)?;
     let s = side(&parent)?;

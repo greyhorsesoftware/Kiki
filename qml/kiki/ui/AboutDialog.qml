@@ -36,7 +36,7 @@ Rectangle {
 
         ToggleButton {
             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
-            icon: "x"; tip: "Close"; onClicked: dlg.close()
+            icon: "x"; tip: Kiki.T.tr("common.close"); onClicked: dlg.close()
         }
 
         Column {
@@ -59,14 +59,14 @@ Rectangle {
             }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "The Omarchiest of file managers"
+                text: Kiki.T.tr("about.tagline")
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
             Item { width: 1; height: 10 }
             Text {
                 objectName: "about-version"
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Version " + (dlg.about.version || "—") + " (" + (dlg.about.build || "dev") + ")"
+                text: Kiki.T.tr("about.version", { version: dlg.about.version || "—", build: dlg.about.build || "dev" })
                 color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12
             }
             Item { width: 1; height: 16 }
@@ -74,7 +74,7 @@ Rectangle {
             Item { width: 1; height: 14 }
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Crafted by Grey Horse Softworks"
+                text: Kiki.T.tr("about.crafted")
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
         }

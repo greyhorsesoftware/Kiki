@@ -59,21 +59,21 @@ Rectangle {
                 width: parent.width; height: 28
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Keyboard shortcuts"; color: Kiki.Theme.fg
+                    text: Kiki.T.tr("keys.title"); color: Kiki.Theme.fg
                     font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true
                 }
                 Row {
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 8
-                    Button { objectName: "keys-reset-all"; height: 26; text: "Reset all"; onClicked: win.keymap.resetAll() }
-                    ToggleButton { icon: "x"; tip: "Close"; onClicked: win.close() }
+                    Button { objectName: "keys-reset-all"; height: 26; text: Kiki.T.tr("keys.resetAll"); onClicked: win.keymap.resetAll() }
+                    ToggleButton { icon: "x"; tip: Kiki.T.tr("keys.close"); onClicked: win.close() }
                 }
             }
             Text {
                 width: parent.width
                 text: win.recording
-                    ? (win.clash ? "Those keys are already " + win.keymap.find(win.clash).label.toLowerCase() + " — try another combination, or Esc to stop."
-                                 : "Press the keys for " + win.keymap.find(win.recording).label.toLowerCase() + ", or Esc to stop.")
-                    : "Click a shortcut to change it. Arrow keys, Enter and Backspace belong to whichever view is open and are not listed."
+                    ? (win.clash ? Kiki.T.tr("keys.clash", { action: win.keymap.find(win.clash).label.toLowerCase() })
+                                 : Kiki.T.tr("keys.press", { action: win.keymap.find(win.recording).label.toLowerCase() }))
+                    : Kiki.T.tr("keys.intro")
                 wrapMode: Text.WordWrap
                 color: win.clash ? Kiki.Theme.danger : (win.recording ? Kiki.Theme.accent : Kiki.Theme.muted)
                 font.family: Kiki.Theme.mono; font.pixelSize: 11
@@ -95,7 +95,7 @@ Rectangle {
                             width: rows.width; spacing: 2
                             Item { width: 1; height: 10 }
                             Text {
-                                text: modelData.toUpperCase(); color: Kiki.Theme.muted
+                                text: win.keymap.groupLabel(modelData).toUpperCase(); color: Kiki.Theme.muted
                                 font.family: Kiki.Theme.mono; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1
                             }
                             Repeater {
@@ -120,7 +120,7 @@ Rectangle {
                                         Text {
                                             visible: win.keymap.isCustom(modelData.id)
                                             anchors.verticalCenter: parent.verticalCenter
-                                            text: "changed"; color: Kiki.Theme.accent
+                                            text: Kiki.T.tr("keys.changed"); color: Kiki.Theme.accent
                                             font.family: Kiki.Theme.mono; font.pixelSize: 10
                                         }
                                         Rectangle {
@@ -138,7 +138,7 @@ Rectangle {
                                         }
                                         ToggleButton {
                                             visible: win.keymap.isCustom(modelData.id)
-                                            icon: "x"; tip: "Back to " + modelData.def
+                                            icon: "x"; tip: Kiki.T.tr("keys.backTo", { key: modelData.def })
                                             onClicked: win.keymap.reset(modelData.id)
                                         }
                                     }

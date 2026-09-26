@@ -43,7 +43,7 @@ fn stub_plugin_end_to_end() {
     assert!(plugin::available().contains(&"stub".to_string()), "{:?}", plugin::available());
     let described = plugin::describe_all();
     let stub = described.iter().find(|d| d.str_field("scheme") == Some("stub")).expect("the stub describes itself");
-    assert_eq!(stub.get("form").unwrap().as_arr().unwrap().len(), 2);
+    assert_eq!(stub.get("form").unwrap().as_arr().unwrap().len(), 3);
 
     // Validate rejects a missing name with the field named
     let p = plugin::get("stub").unwrap();

@@ -138,7 +138,7 @@ Rectangle {
             status = err ? err.message : ""
             if (!ok) return
             const items = (ok.options || []).map(o => ({ label: o.label || o.value, action: () => { const nv = Object.assign({}, dlg.values); nv[key] = o.value; dlg.values = nv } }))
-            if (!items.length) items.push({ label: "Nothing found", enabled: false, action: () => {} })
+            if (!items.length) items.push({ label: Kiki.T.tr("menu.nothingFound"), enabled: false, action: () => {} })
             browseMenu.open(items, Qt.point(80, 200))
         })
     }
@@ -177,7 +177,7 @@ Rectangle {
     function validate() {
         const e = {}
         if (!(values.name || "").trim()) e.name = "name is required"
-        for (const f of current().form) if (shown(f) && f.required && !(values[f.key] || "").trim() && !e[f.key]) e[f.key] = f.label + " is required"
+        for (const f of current().form) if (shown(f) && f.required && !(values[f.key] || "").trim() && !e[f.key]) e[f.key] = Kiki.T.tr("location.required", { field: Kiki.T.sent(f) })
         errors = e
         const bad = current().form.find(f => e[f.key])
         if (bad && pages().length && pageOf(bad) !== page && !current().form.some(f => e[f.key] && pageOf(f) === page)) page = pageOf(bad)
@@ -192,7 +192,7 @@ Rectangle {
         if (!usable) return
         if (thenOpen !== undefined) openAfter = thenOpen === true
         if (!validate()) return
-        busy = true; status = trust ? "Saving…" : (openAfter ? "Connecting…" : "Saving…")
+        busy = true; status = trust ? Kiki.T.tr("location.saving") : (openAfter ? Kiki.T.tr("location.connecting") : Kiki.T.tr("location.saving"))
         const req = build()
         if (trust) req.trust = trust
         // "Add" takes what was typed: nothing is looked up or connected to. Only "Add and
@@ -220,7 +220,7 @@ Rectangle {
         color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         ToggleButton {
             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
-            z: 2; icon: "x"; tip: "Close (Esc)"
+            z: 2; icon: "x"; tip: Kiki.T.tr("location.closeTip")
             onClicked: dlg.visible = false
         }
         Column {
@@ -228,7 +228,7 @@ Rectangle {
             Row {
                 id: header
                 width: parent.width
-                Text { text: dlg.editingName ? "Edit location" : "Add location"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+                Text { text: dlg.editingName ? Kiki.T.tr("location.editTitle") : Kiki.T.tr("location.addTitle"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
             }
             Row {
             id: body
@@ -288,7 +288,7 @@ Rectangle {
                             // An error on a page you are not looking at shows on its tab.
                             readonly property bool bad: dlg.current() ? dlg.current().form.some(f => dlg.errors[f.key] && dlg.pageOf(f) === modelData) : false
                             width: Math.max(110, pageText.implicitWidth + 32); height: 30; color: "transparent"
-                            Text { id: pageText; anchors.centerIn: parent; text: modelData; color: parent.bad ? Kiki.Theme.danger : (parent.on ? Kiki.Theme.fg : (pageHover.containsMouse ? Kiki.Theme.fgDim : Kiki.Theme.muted)); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: parent.on }
+                            Text { id: pageText; anchors.centerIn: parent; text: Kiki.T.has("location.page." + modelData.toLowerCase()) ? Kiki.T.tr("location.page." + modelData.toLowerCase()) : modelData; color: parent.bad ? Kiki.Theme.danger : (parent.on ? Kiki.Theme.fg : (pageHover.containsMouse ? Kiki.Theme.fgDim : Kiki.Theme.muted)); font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: parent.on }
                             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 2; color: parent.on ? Kiki.Theme.accent : Kiki.Theme.line }
                             MouseArea { id: pageHover; anchors.fill: parent; hoverEnabled: true; onClicked: dlg.page = modelData }
                         }
@@ -298,7 +298,7 @@ Rectangle {
                     objectName: "location-unavailable"
                     visible: !dlg.usable
                     width: parent.width; spacing: 10; topPadding: 24
-                    Text { text: dlg.current() ? dlg.current().displayName + " is not available on this machine" : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
+                    Text { text: dlg.current() ? Kiki.T.tr("location.notAvailable", { plugin: dlg.current().displayName }) : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
                     Text { objectName: "location-unavailable-reason"; width: parent.width; wrapMode: Text.WordWrap; text: dlg.current() ? (dlg.current().unavailableReason || "") : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                 }
             Flickable {
@@ -335,7 +335,7 @@ Rectangle {
                                         width: Math.max(104, tabText.implicitWidth + 32); height: 28; radius: 14
                                         color: on ? Kiki.Theme.accent : (tabHover.containsMouse ? Kiki.Theme.surface : Kiki.Theme.bgDark)
                                         border.width: 1; border.color: on ? Kiki.Theme.accent : Kiki.Theme.gutter
-                                        Text { id: tabText; anchors.centerIn: parent; text: modelData; color: parent.on ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: parent.on }
+                                        Text { id: tabText; anchors.centerIn: parent; text: Kiki.T.has("location.group." + modelData.toLowerCase()) ? Kiki.T.tr("location.group." + modelData.toLowerCase()) : modelData; color: parent.on ? Kiki.Theme.bg : Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: parent.on }
                                         MouseArea { id: tabHover; anchors.fill: parent; hoverEnabled: true; onClicked: dlg.chooseGroup(modelData) }
                                     }
                                 }
@@ -371,7 +371,7 @@ Rectangle {
                                     id: imageWell
                                     visible: rowItem.hasImage
                                     width: 44; spacing: 6
-                                    Text { text: "IMAGE"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.6 }
+                                    Text { text: Kiki.T.tr("location.image"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.letterSpacing: 0.6 }
                                     Rectangle {
                                         objectName: "location-image"
                                         readonly property bool has: wellPicture.shown
@@ -419,9 +419,9 @@ Rectangle {
                     id: connectBtn
                     objectName: "location-buttons"
                     anchors.horizontalCenter: parent.horizontalCenter; spacing: 10
-                    readonly property string verb: dlg.editingName ? "Save" : "Add"
-                    Button { objectName: "location-add"; text: dlg.busy && !dlg.openAfter ? "Saving…" : parent.verb; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, false) }
-                    Button { objectName: "location-add-connect"; text: dlg.busy && dlg.openAfter ? "Connecting…" : parent.verb + " and Connect"; primary: true; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, true) }
+                    readonly property string verb: dlg.editingName ? Kiki.T.tr("location.save") : Kiki.T.tr("location.add")
+                    Button { objectName: "location-add"; text: dlg.busy && !dlg.openAfter ? Kiki.T.tr("location.saving") : parent.verb; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, false) }
+                    Button { objectName: "location-add-connect"; text: dlg.busy && dlg.openAfter ? Kiki.T.tr("location.connecting") : Kiki.T.tr("location.andConnect", { verb: parent.verb }); primary: true; enabled: !dlg.busy && dlg.usable; onClicked: dlg.connect(undefined, true) }
                 }
                 // What is happening, or went wrong, under it — the full width to say it in.
                 Text {
@@ -457,11 +457,11 @@ Rectangle {
             Row {
                 spacing: 10
                 Icon { name: "warn"; size: 18; color: Kiki.Theme.yellow; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "Verify this server"; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: Kiki.T.tr("location.verifyTitle"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             }
             Text {
                 width: parent.width; wrapMode: Text.WordWrap
-                text: (dlg.verifyHost ? dlg.verifyHost + " identified itself" : "The server identified itself") +
+                text: (dlg.verifyHost ? Kiki.T.tr("location.identified", { host: dlg.verifyHost }) : Kiki.T.tr("location.serverIdentified")) +
                       " with a key kiki has not seen before. Check it against the fingerprint the server's own administrator published — on the server, `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` prints it."
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
@@ -478,13 +478,13 @@ Rectangle {
             }
             Text {
                 width: parent.width; wrapMode: Text.WordWrap
-                text: "Accepting saves this key with the location. If it ever changes, kiki refuses to connect and says so."
+                text: Kiki.T.tr("location.verifyNote")
                 color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
             Row {
                 anchors.right: parent.right; spacing: 8
-                Button { objectName: "verify-cancel"; text: "Cancel"; onClicked: { if (dlg.verifyOnly) dlg._leaveVerify(""); else { dlg.verifyFingerprint = ""; dlg.status = "Not saved: the key was not accepted." } } }
-                Button { objectName: "verify-trust"; text: dlg.busy ? "Saving…" : "Trust and save"; primary: true; enabled: !dlg.busy; onClicked: dlg.connect(dlg.verifyFingerprint) }
+                Button { objectName: "verify-cancel"; text: Kiki.T.tr("common.cancel"); onClicked: { if (dlg.verifyOnly) dlg._leaveVerify(""); else { dlg.verifyFingerprint = ""; dlg.status = Kiki.T.tr("location.notAccepted") } } }
+                Button { objectName: "verify-trust"; text: dlg.busy ? Kiki.T.tr("location.saving") : Kiki.T.tr("location.trustSave"); primary: true; enabled: !dlg.busy; onClicked: dlg.connect(dlg.verifyFingerprint) }
             }
         }
         Keys.onEscapePressed: if (dlg.verifyOnly) dlg._leaveVerify(""); else dlg.verifyFingerprint = ""
@@ -496,7 +496,7 @@ Rectangle {
         anchors.centerIn: parent; z: 4
         width: waitText.implicitWidth + 48; height: 56; radius: 2
         color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.yellow
-        Text { id: waitText; anchors.centerIn: parent; text: "Asking " + (dlg.values.host || "the server") + " who it is…"; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+        Text { id: waitText; anchors.centerIn: parent; text: Kiki.T.tr("location.asking", { host: dlg.values.host || Kiki.T.tr("location.theServer") }); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
     }
 
     focus: visible

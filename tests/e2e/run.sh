@@ -82,6 +82,8 @@ qs_conf="${KIKI_SHELL_DIR:-${qs_default:-$root/qml}}"
 # The launcher flow runs the real `kiki` script, which finds the shell through this.
 export KIKI_SHELL_DIR="$qs_conf"
 export KIKI_E2E_OUT="$out"
+# The flows compare English words whatever the desktop speaks (docs/0.2.0/02-localization.md).
+export LANGUAGE="${KIKI_E2E_LANGUAGE:-en}"       # KIKI_E2E_LANGUAGE=es|ja for the photographs flow
 
 # kiki's SMB locations go through GVfs (plan 25): the plugin asks `gvfsd` on the session bus,
 # which runs `gvfsd-smb`, which is what actually speaks to the server. A test run must neither use

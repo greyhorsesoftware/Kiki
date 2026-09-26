@@ -77,7 +77,7 @@ pub fn copy_file(src: &Path, dst: &Path, p: &mut Progress) -> Result<u64> {
             if cancelled(p.cancel) {
                 drop(output);
                 let _ = fs::remove_file(dst);
-                return Err(VfsError::Io("cancelled".into()));
+                return Err(VfsError::said(1230, &[], "cancelled"));
             }
             // 64 MiB at a time: the kernel does each call in one go, so this is how often a cancel
             // is looked for and progress is reported. It was 1 GiB, which on a 4 GB file was four
@@ -122,7 +122,7 @@ fn buffered_copy(input: &mut fs::File, output: &mut fs::File, p: &mut Progress) 
     let mut done = 0u64;
     loop {
         if cancelled(p.cancel) {
-            return Err(VfsError::Io("cancelled".into()));
+            return Err(VfsError::said(1230, &[], "cancelled"));
         }
         let n = input.read(&mut buf)?;
         if n == 0 {
@@ -409,7 +409,7 @@ pub fn empty_trash(cancel: &AtomicBool, each: &mut dyn FnMut()) -> Result<u64> {
         let Ok(rd) = fs::read_dir(td.join(sub)) else { continue };
         for e in rd.flatten() {
             if cancelled(cancel) {
-                return Err(VfsError::Io("cancelled".into()));
+                return Err(VfsError::said(1230, &[], "cancelled"));
             }
             let p = e.path();
             if p.is_dir() && !p.is_symlink() {

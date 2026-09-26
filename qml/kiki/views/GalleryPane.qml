@@ -437,7 +437,7 @@ Item {
                 objectName: "gallery-settings"
                 flat: true; iconSize: 24; restColor: "white"
                 icon: "gear"
-                tip: "Slideshow"
+                tip: Kiki.T.tr("gallery.slideshow")
                 onClicked: slideOptions.visible = !slideOptions.visible
             }
             // How the slideshow is running, in the pill with the button that runs it.
@@ -445,7 +445,7 @@ Item {
                 visible: root.playing
                 anchors.verticalCenter: parent.verticalCenter
                 rightPadding: 6
-                text: root.slideDelay + "s" + (root.slideLoop ? " · loop" : "")
+                text: Kiki.T.tr("gallery.seconds", { n: root.slideDelay }) + (root.slideLoop ? Kiki.T.tr("gallery.loopSuffix") : "")
                 color: "white"; font.family: Kiki.Theme.mono; font.pixelSize: 11
             }
         }
@@ -470,14 +470,14 @@ Item {
             y: 12; width: parent.width; spacing: 10
 
             Text {
-                x: 14; text: "SLIDESHOW"; color: Kiki.Theme.muted
+                x: 14; text: Kiki.T.tr("gallery.slideshowCaps"); color: Kiki.Theme.muted
                 font.family: Kiki.Theme.mono; font.pixelSize: 10; font.bold: true; font.letterSpacing: 1
             }
             Row {
                 x: 14; spacing: 8
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Every"; color: Kiki.Theme.fgDim
+                    text: Kiki.T.tr("gallery.every"); color: Kiki.Theme.fgDim
                     font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize
                 }
                 Repeater {
@@ -490,7 +490,7 @@ Item {
                         border.width: 1
                         border.color: root.slideDelay === modelData ? Kiki.Theme.accent : Kiki.Theme.gutter
                         Text {
-                            anchors.centerIn: parent; text: modelData + "s"
+                            anchors.centerIn: parent; text: Kiki.T.tr("gallery.seconds", { n: modelData })
                             color: root.slideDelay === modelData ? Kiki.Theme.bg : Kiki.Theme.fgDim
                             font.family: Kiki.Theme.mono; font.pixelSize: 11
                         }
@@ -510,7 +510,7 @@ Item {
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Loop"; color: Kiki.Theme.fgDim
+                    text: Kiki.T.tr("gallery.loop"); color: Kiki.Theme.fgDim
                     font.family: Kiki.Theme.mono; font.pixelSize: 12
                 }
             }

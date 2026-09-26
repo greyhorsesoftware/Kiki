@@ -46,9 +46,11 @@ Item {
         })
     }
     /// Replace the items of a submenu that is already open (or of the row, for the next hover).
-    function refill(label, items) {
+    /// `which` is the item's `id`, or its label for one without.
+    function refill(which, items) {
         const all = menu.items.slice()
-        for (const it of all) if (it.label === label) it.items = items
+        let label = which
+        for (const it of all) if (it.id === which || it.label === which) { it.items = items; label = it.label }
         menu.items = all
         if (menu.subLabel === label) menu.subItems = items
     }

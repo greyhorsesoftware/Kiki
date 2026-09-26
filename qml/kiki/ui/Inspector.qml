@@ -43,30 +43,31 @@ Rectangle {
         const counts = {}
         for (const r of rows) { const k = Kiki.Format.kindLabel(r && r.kind ? r.kind : "file"); counts[k] = (counts[k] || 0) + 1 }
         const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
-        const named = names.slice(0, 2).map(k => counts[k] + " " + k + (counts[k] > 1 ? "s" : ""))
-        return named.join(", ") + (names.length > 2 ? ", and " + (names.length - 2) + " more" : "")
+        const named = names.slice(0, 2).map(k => Kiki.T.tr("inspector.kindCount", { n: counts[k], kind: k }))
+        return names.length > 2 ? Kiki.T.tr("inspector.andMore", { list: named.join(", "), n: names.length - 2 }) : named.join(", ")
     }
     function sizeSummary() {
         let total = 0, measured = 0, unmeasured = 0
         for (const r of rows) { if (r && r.meta && !r.isDir) { total += r.meta.size; measured++ } else unmeasured++ }
         if (!measured) return unmeasured ? "—" : "0 B"
-        return Kiki.Format.bytes(total) + " (" + total.toLocaleString(Qt.locale(), "f", 0) + " bytes)" + (unmeasured ? ", " + unmeasured + " unmeasured" : "")
+        const sizes = Kiki.T.tr("inspector.bytes", { size: Kiki.Format.bytes(total), n: total })
+        return unmeasured ? Kiki.T.tr("inspector.unmeasured", { sizes: sizes, n: unmeasured }) : sizes
     }
     function newestModified() {
         let t = 0
         for (const r of rows) if (r && r.meta && r.meta.mtime > t) t = r.meta.mtime
-        return t ? Kiki.Format.date(t) + " (newest)" : "…"
+        return t ? Kiki.T.tr("inspector.newest", { date: Kiki.Format.date(t) }) : "…"
     }
     /// A meta field every item shares, or "mixed".
     function common(field) {
         let v = null
-        for (const r of rows) { const x = r && r.meta ? r.meta[field] : undefined; if (x === undefined || x === null || x === "") return "—"; if (v === null) v = x; else if (v !== x) return "mixed" }
+        for (const r of rows) { const x = r && r.meta ? r.meta[field] : undefined; if (x === undefined || x === null || x === "") return "—"; if (v === null) v = x; else if (v !== x) return Kiki.T.tr("inspector.mixedWord") }
         return v === null ? "—" : String(v)
     }
     function gitSummary() {
         const counts = {}
         for (const r of rows) { const st = r && r.git ? r.git.state : "clean"; counts[st] = (counts[st] || 0) + 1 }
-        return Object.keys(counts).map(k => counts[k] + " " + k).join(", ")
+        return Object.keys(counts).map(k => Kiki.T.tr("inspector.gitCount", { n: counts[k], state: Kiki.T.tr("git." + k) })).join(", ")
     }
     readonly property bool anyGit: rows.some(r => r && r.git)
     /// The grid over a selection: a bit is on for all, off for all, or mixed; clicking a mixed
@@ -91,7 +92,7 @@ Rectangle {
         const modes = []
         for (const r of rows) { if (r && r.meta && r.meta.mode !== undefined && r.meta.mode !== null) { const o = (r.meta.mode & 0o777).toString(8).padStart(3, "0"); if (modes.indexOf(o) < 0) modes.push(o) } }
         if (!modes.length) return "—"
-        return modes.length === 1 ? modes[0] : "mixed (" + modes.slice(0, 3).join(", ") + (modes.length > 3 ? ", …" : "") + ")"
+        return modes.length === 1 ? modes[0] : Kiki.T.tr("inspector.mixed", { modes: modes.slice(0, 3).join(", ") + (modes.length > 3 ? ", …" : "") })
     }
     /// What the compact card is tall enough for: header, tabs, the tab's content, the margins.
     readonly property int naturalHeight: body.anchors.topMargin + headerRow.height + body.spacing + tabStrip.height + body.spacing + Math.max(tabLoader.height, otherTab.height) + body.anchors.bottomMargin
@@ -132,11 +133,12 @@ Rectangle {
     function gitLine() {
         const g = row && row.git ? row.git : null
         if (!g) return ""
-        return g.state + (g.staged ? " · staged" : "")
+        const state = Kiki.T.tr("git." + g.state)
+        return g.staged ? Kiki.T.tr("git.staged", { state: state }) : state
     }
     function lastCommitLine() {
         const l = gitInfo ? gitInfo.last : null
-        return l ? l.short + " · " + l.author + " · " + Kiki.Format.relative(l.time * 1000) : ""
+        return l ? Kiki.T.tr("git.commitLine", { short: l.short, author: l.author, when: Kiki.Format.relative(l.time * 1000) }) : ""
     }
     /// The URI the preview and git state were last asked for. Three inspectors follow the
     /// selection (the docked panel, the card, the columns' info column) and only one is ever
@@ -173,7 +175,7 @@ Rectangle {
         anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6
         objectName: "inspector-close"
         visible: insp.closable
-        z: 2; icon: "x"; tip: "Close (Ctrl+I)"
+        z: 2; icon: "x"; tip: Kiki.T.tr("inspector.close")
         onClicked: insp.closed()
     }
     Column {
@@ -200,7 +202,7 @@ Rectangle {
                 width: parent.width - (insp.compact ? (insp.many ? 68 : 36) : 52); spacing: 4
                 // The name alone: the folder it is in is a field under General, and repeating the
                 // whole path here only crowded the header.
-                Text { width: parent.width; elide: Text.ElideRight; text: insp.many ? insp.rows.length + " items" : insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: insp.compact ? 13 : 15; font.bold: true }
+                Text { width: parent.width; elide: Text.ElideRight; text: insp.many ? Kiki.T.tr("inspector.items", { n: insp.rows.length }) : insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: insp.compact ? 13 : 15; font.bold: true }
             }
         }
         // The preview is of the file, not of a tab: it stays while the tabs change under it.
@@ -306,7 +308,7 @@ Rectangle {
                         width: 48; height: 48; radius: 24
                         color: Qt.rgba(0, 0, 0, openArea.containsMouse ? 0.75 : 0.55); border.width: 1; border.color: Qt.rgba(1, 1, 1, 0.25)
                         Icon { anchors.centerIn: parent; name: "open"; size: 20; color: "white" }
-                        Tip { visible: openArea.containsMouse; text: "Open" }
+                        Tip { visible: openArea.containsMouse; text: Kiki.T.tr("inspector.open") }
                         MouseArea {
                             id: openArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             // Two players talking over each other helps nobody: ours stops.
@@ -379,7 +381,7 @@ Rectangle {
             Row {
                 spacing: 20; height: parent.height
                 Repeater {
-                    model: [{ id: "general", label: "General" }, { id: "permissions", label: "Permissions" }]
+                    model: [{ id: "general", label: Kiki.T.tr("inspector.general") }, { id: "permissions", label: Kiki.T.tr("inspector.permissions") }]
                     delegate: Item {
                         required property var modelData
                         objectName: "tab-" + modelData.id
@@ -417,13 +419,22 @@ Rectangle {
     /// The card's one line for both (owner, 2026-09-24: "shrink it height-wise").
     function ownerGroup() { return ownerOf() + " · " + groupOf() }
 
+    /// The label column: as wide as the longest label in the language, never narrower than the
+    /// 88 px English fits in ("Propietario/Grupo" ran into its value, 2026-09-25).
+    property FontMetrics labelFont: FontMetrics { font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+    readonly property int labelCol: {
+        const keys = ["inspector.ownerGroup", "inspector.lastCommit", "inspector.location", "inspector.modified", "inspector.symbolic", "inspector.branch"]
+        let w = 88
+        for (const k of keys) w = Math.max(w, Math.ceil(labelFont.advanceWidth(Kiki.T.tr(k))) + 6)
+        return Kiki.T.language ? w : w         // re-read when the language changes
+    }
     component Field: Row {
         property string label: ""
         property string value: ""
         property color valueColor: Kiki.Theme.fg
         spacing: 12; width: parent.width
-        Text { width: 88; text: label; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-        Text { width: parent.width - 100; wrapMode: Text.WrapAnywhere; text: value; color: valueColor; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Text { width: insp.labelCol; text: label; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Text { width: parent.width - insp.labelCol - 12; wrapMode: Text.WrapAnywhere; text: value; color: valueColor; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
     }
 
     Component {
@@ -432,20 +443,20 @@ Rectangle {
             spacing: 18
             Column {
                 spacing: 8; width: parent.width
-                Field { objectName: "insp-type"; label: insp.many ? "Kinds" : "Type"; value: insp.many ? insp.kindsSummary() : Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
-                Field { label: "Host"; value: insp.uri.startsWith("file://") ? "local" : Kiki.Format.authority(insp.uri) }
-                Field { label: "Location"; value: Kiki.Format.display(insp.uri.slice(0, insp.uri.lastIndexOf("/")) || insp.uri, insp.home) }
+                Field { objectName: "insp-type"; label: insp.many ? Kiki.T.tr("inspector.kinds") : Kiki.T.tr("inspector.type"); value: insp.many ? insp.kindsSummary() : Kiki.Format.kindLabel(insp.kind()) + (insp.preview && insp.preview.n !== undefined ? " · " + insp.preview.n + (insp.preview.members ? " members" : " items") : "") }
+                Field { label: Kiki.T.tr("inspector.host"); value: insp.uri.startsWith("file://") ? Kiki.T.tr("inspector.local") : Kiki.Format.authority(insp.uri) }
+                Field { label: Kiki.T.tr("inspector.location"); value: Kiki.Format.display(insp.uri.slice(0, insp.uri.lastIndexOf("/")) || insp.uri, insp.home) }
             }
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             Column {
                 spacing: 8; width: parent.width
-                Field { objectName: "insp-size"; label: "Size"; value: insp.many ? insp.sizeSummary() : (insp.meta ? (insp.row && insp.row.isDir ? "—" : Kiki.Format.bytes(insp.meta.size) + " (" + insp.meta.size.toLocaleString(Qt.locale(), "f", 0) + " bytes)") : "…") }
-                Field { objectName: "insp-modified"; label: "Modified"; value: insp.many ? insp.newestModified() : (insp.meta ? Kiki.Format.date(insp.meta.mtime) : "…") }
-                Field { objectName: "insp-owner"; label: insp.compact ? "Owner/Group" : "Owner"; value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
-                Field { objectName: "insp-group"; label: "Group"; visible: !insp.compact; value: insp.groupOf() }
-                Field { objectName: "insp-git"; label: "Git"; value: insp.many ? insp.gitSummary() : (insp.gitLine() || "—"); valueColor: !insp.many && insp.row && insp.row.git ? Kiki.Format.gitColor(insp.row.git) : Kiki.Theme.fg; visible: insp.many ? insp.anyGit : !!(insp.row && insp.row.git) }
-                Field { objectName: "insp-git-branch"; label: "Branch"; value: insp.gitInfo && insp.gitInfo.branch ? insp.gitInfo.branch : ""; visible: value !== "" }
-                Field { objectName: "insp-git-last"; label: "Last commit"; value: insp.lastCommitLine(); visible: value !== "" }
+                Field { objectName: "insp-size"; label: Kiki.T.tr("inspector.size"); value: insp.many ? insp.sizeSummary() : (insp.meta ? (insp.row && insp.row.isDir ? "—" : Kiki.Format.bytes(insp.meta.size) + " (" + insp.meta.size.toLocaleString(Qt.locale(), "f", 0) + " bytes)") : "…") }
+                Field { objectName: "insp-modified"; label: Kiki.T.tr("inspector.modified"); value: insp.many ? insp.newestModified() : (insp.meta ? Kiki.Format.date(insp.meta.mtime) : "…") }
+                Field { objectName: "insp-owner"; label: insp.compact ? Kiki.T.tr("inspector.ownerGroup") : Kiki.T.tr("inspector.owner"); value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
+                Field { objectName: "insp-group"; label: Kiki.T.tr("inspector.group"); visible: !insp.compact; value: insp.groupOf() }
+                Field { objectName: "insp-git"; label: Kiki.T.tr("inspector.git"); value: insp.many ? insp.gitSummary() : (insp.gitLine() || "—"); valueColor: !insp.many && insp.row && insp.row.git ? Kiki.Format.gitColor(insp.row.git) : Kiki.Theme.fg; visible: insp.many ? insp.anyGit : !!(insp.row && insp.row.git) }
+                Field { objectName: "insp-git-branch"; label: Kiki.T.tr("inspector.branch"); value: insp.gitInfo && insp.gitInfo.branch ? insp.gitInfo.branch : ""; visible: value !== "" }
+                Field { objectName: "insp-git-last"; label: Kiki.T.tr("inspector.lastCommit"); value: insp.lastCommitLine(); visible: value !== "" }
                 Field { objectName: "insp-git-subject"; label: ""; value: insp.gitInfo && insp.gitInfo.last ? insp.gitInfo.last.subject : ""; valueColor: Kiki.Theme.fgDim; visible: value !== "" }
             }
         }
@@ -503,7 +514,7 @@ Rectangle {
                 enabled: lit
                 width: 24; height: 24; anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                 Icon { anchors.centerIn: parent; name: "undo"; size: 16; color: parent.lit ? Kiki.Theme.accent : Kiki.Theme.gutter }
-                Tip { visible: parent.lit && revertHover.containsMouse; text: "Revert" }
+                Tip { visible: parent.lit && revertHover.containsMouse; text: Kiki.T.tr("inspector.revert") }
                 MouseArea { id: revertHover; anchors.fill: parent; hoverEnabled: true; cursorShape: parent.lit ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: if (insp.many) { insp.touchedMask = 0; insp.touchedBits = 0 } else insp.editMode = insp.meta.mode & 0o777 }
             }
@@ -511,10 +522,10 @@ Rectangle {
             Rectangle { width: parent.width; height: 1; color: Kiki.Theme.line }
             Column {
                 spacing: 8; width: parent.width
-                Field { objectName: "perm-octal"; label: "Octal"; value: insp.many ? insp.octalSummary() : (canEdit ? insp.editMode.toString(8).padStart(3, "0") : "—") }
-                Field { label: "Symbolic"; visible: !insp.many; value: canEdit ? insp.symbolic(insp.editMode) : "—" }
-                Field { objectName: "perm-owner"; label: insp.compact ? "Owner/Group" : "Owner"; value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
-                Field { objectName: "perm-group"; label: "Group"; visible: !insp.compact; value: insp.groupOf() }
+                Field { objectName: "perm-octal"; label: Kiki.T.tr("inspector.octal"); value: insp.many ? insp.octalSummary() : (canEdit ? insp.editMode.toString(8).padStart(3, "0") : "—") }
+                Field { label: Kiki.T.tr("inspector.symbolic"); visible: !insp.many; value: canEdit ? insp.symbolic(insp.editMode) : "—" }
+                Field { objectName: "perm-owner"; label: insp.compact ? Kiki.T.tr("inspector.ownerGroup") : Kiki.T.tr("inspector.owner"); value: insp.compact ? insp.ownerGroup() : insp.ownerOf() }
+                Field { objectName: "perm-group"; label: Kiki.T.tr("inspector.group"); visible: !insp.compact; value: insp.groupOf() }
             }
             // Centred, with Apply under it, in the card and the panel alike (owner, 2026-09-24).
             Row {
@@ -527,12 +538,12 @@ Rectangle {
                     color: recursiveRow.recursive ? Kiki.Theme.accent : Kiki.Theme.bgDark; border.width: 1; border.color: recursiveRow.recursive ? Kiki.Theme.accent : Kiki.Theme.gutter
                     MouseArea { anchors.fill: parent; onClicked: recursiveRow.recursive = !recursiveRow.recursive }
                 }
-                Text { anchors.verticalCenter: parent.verticalCenter; text: "Apply to contained items"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+                Text { anchors.verticalCenter: parent.verticalCenter; text: Kiki.T.tr("inspector.recursive"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             }
             Item { width: 1; height: insp.compact ? 0 : 8 }
             Row {
                 spacing: 8; anchors.horizontalCenter: parent.horizontalCenter
-                Button { objectName: "perm-apply"; text: "Apply"; primary: true; small: insp.compact; enabled: insp.many ? insp.touchedMask !== 0 : insp.dirty
+                Button { objectName: "perm-apply"; text: Kiki.T.tr("inspector.apply"); primary: true; small: insp.compact; enabled: insp.many ? insp.touchedMask !== 0 : insp.dirty
                          onClicked: if (insp.many) insp.chmodMany(insp.touchedMask, insp.touchedBits, recursiveRow.recursive); else insp.chmod(insp.editMode, recursiveRow.recursive) }
             }
         }

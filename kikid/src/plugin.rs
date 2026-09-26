@@ -177,7 +177,7 @@ impl Plugin {
         if !ships(scheme) {
             return Err(VfsError::Io(no_such_kind(scheme)));
         }
-        let bin = find_binary(scheme).ok_or_else(|| VfsError::Io(format!("no plugin for scheme {scheme}")))?;
+        let bin = find_binary(scheme).ok_or_else(|| VfsError::said(1272, &[("scheme", &scheme)], format!("no plugin for scheme {scheme}")))?;
         let p = Self::spawn_path(&bin, scheme)?;
         let d = p.request(Value::obj().s("type", "Describe").done())?;
         let _ = p.describe.set(d);
@@ -362,12 +362,12 @@ impl Plugin {
             }
             if cancelled_at.is_some_and(|at| at.elapsed() > grace) {
                 self.pending.lock().unwrap().remove(&id);
-                return Err(VfsError::Io("cancelled".into()));
+                return Err(VfsError::said(1230, &[], "cancelled"));
             }
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(Msg::Json(v)) if v.get("ok").is_some() || v.get("err").is_some() => {
                     let r = self.finish(id, v);
-                    return if cancelled_at.is_some() { Err(VfsError::Io("cancelled".into())) } else { r };
+                    return if cancelled_at.is_some() { Err(VfsError::said(1230, &[], "cancelled")) } else { r };
                 }
                 Ok(m) => {
                     last_frame = std::time::Instant::now();
@@ -380,12 +380,12 @@ impl Plugin {
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if last_frame.elapsed() > patience && started.elapsed() > patience {
                         self.pending.lock().unwrap().remove(&id);
-                        return Err(VfsError::Io("plugin request timed out or plugin exited".into()));
+                        return Err(VfsError::said(1270, &[], "plugin request timed out or plugin exited"));
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     self.pending.lock().unwrap().remove(&id);
-                    return Err(VfsError::Io("plugin exited".into()));
+                    return Err(VfsError::said(1271, &[], "plugin exited"));
                 }
             }
         }

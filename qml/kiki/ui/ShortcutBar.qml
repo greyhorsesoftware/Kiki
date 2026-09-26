@@ -73,7 +73,7 @@ Rectangle {
                 visible: bar.shownUndoable
                 height: 18; width: undoRow.width + 12; radius: 2; color: Kiki.Theme.surface; anchors.verticalCenter: parent.verticalCenter
                 Row { id: undoRow; anchors.centerIn: parent; spacing: 6
-                    Text { text: "Undo"; color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
+                    Text { text: Kiki.T.tr("bar.undo"); color: Kiki.Theme.accent; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
                     Text { text: "Ctrl+Z"; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                 }
                 MouseArea { anchors.fill: parent; onClicked: bar.undo() }

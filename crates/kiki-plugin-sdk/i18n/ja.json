@@ -1,0 +1,9 @@
+{
+  "Name": "名前",
+  "Host": "ホスト",
+  "Port": "ポート",
+  "Username": "ユーザー名",
+  "Password": "パスワード",
+  "Remote path": "リモートパス",
+  "Local path": "ローカルパス"
+}
