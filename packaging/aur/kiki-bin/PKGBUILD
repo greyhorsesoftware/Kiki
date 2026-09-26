@@ -4,7 +4,7 @@
 # root is how kiki is installed. Kept for the day the AUR is an option again.
 pkgname=kiki-bin
 _pkgname=kiki
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
 arch=('x86_64' 'aarch64')

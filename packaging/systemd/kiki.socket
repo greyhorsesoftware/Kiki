@@ -4,6 +4,9 @@ Description=kiki file manager daemon socket
 [Socket]
 ListenStream=%t/kiki-@VERSION@.sock
 SocketMode=0600
+# The unit is kiki.socket and the service kikid.service: without this systemd looks for a
+# kiki.service, finds none and refuses to listen ("Socket service kiki.service not loaded").
+Service=kikid.service
 
 [Install]
 WantedBy=sockets.target

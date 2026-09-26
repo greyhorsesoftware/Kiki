@@ -27,7 +27,10 @@ fi
 # from their NEXT login; straight after installing it is not there yet, so ask for it here — as
 # the user, which the package's own hooks (run as root) cannot do. Harmless when already up, and
 # skipped for a checkout, which runs a daemon of its own.
+# `daemon-reload` first: after an upgrade the session still holds the unit as it was installed
+# before (pacman cannot reload a user's manager), and the socket is named for the version.
 if [ -z "${KIKI_SHELL_DIR:-}" ]; then
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
   systemctl --user start kiki.socket >/dev/null 2>&1 || true
 fi
 KIKI_START="$uri" exec qs -n -p "$CONF"

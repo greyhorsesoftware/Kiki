@@ -1,4 +1,4 @@
-"""A demo video: what is new in 0.2.0, recorded.
+"""A demo video: what is new in this release, recorded (the version from `version.js`).
 
 Not a test and not in the default run — `KIKI_E2E_DESKTOP=1 tests/e2e/run.sh --flow whatsnew`
 records it on the compositor you are sitting at (see `demo.py` for the two ways to record and
@@ -10,7 +10,7 @@ a PDF page by page, a video playing, code in colour, a spreadsheet's Open with�
 a server fetched and shown; side by side with the server, both panes listing at once.
 """
 
-import getpass, os, shutil, time
+import getpass, os, re, shutil, time
 from harness import make_tree, wait_for
 from media import png, pdf, mp4, MARKDOWN
 from servers import Servers, add_location
@@ -18,7 +18,7 @@ from flows import demo
 from flows.demo import DESKTOP, Desktop, Recorder, home_spec
 
 NEEDS = {"shell", "keyboard"}
-TITLE = "a demo video: what is new in 0.2.0"
+TITLE = "a demo video: what is new in this release"
 probe = demo.probe
 
 CODE = """//! Where the week's notes go.
@@ -47,6 +47,8 @@ def run(ctx):
     home = make_tree(fixture if DESKTOP else os.path.join(fixture, "gideon"), home_spec())
     aside = os.path.join(os.path.dirname(fixture.rstrip("/")), "whatsnew")
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))   # flows → e2e → tests → the checkout
+    # The release the video is for: the window's own version, never a number typed here.
+    version = re.search(r'var version = "([^"]+)"', open(os.path.join(root, "qml", "kiki", "version.js"), encoding="utf-8").read()).group(1)
 
     # The looks: two of the owner's pictures when they are there, else made ones; a document,
     # a paper, a clip, a program, a spreadsheet — named so j walks them in this order.
@@ -101,7 +103,7 @@ def run(ctx):
     desk = Desktop()
     rec = Recorder(out)
     rec.out = os.path.join(out, "kiki-whatsnew.mp4")
-    rec.title = (os.path.join(root, "app-images", "kikifull.png"), "kiki 0.2.0 — what\u2019s new", 3.5)
+    rec.title = (os.path.join(root, "app-images", "kikifull.png"), f"kiki {version} — what\u2019s new", 3.5)
     sh.call("dismiss")
     sh.call("split", "off")
     sh.call("setView", "list")
@@ -113,7 +115,7 @@ def run(ctx):
     rec.start(desk.monitor)
 
     # ------------------------------------------------------------ the keys are the Vim keys
-    rec.say("0.2.0 — the keys are the Vim keys: h j k l move, no preference to turn on")
+    rec.say(f"{version} — the keys are the Vim keys: h j k l move, no preference to turn on")
     sh.select("Budget 2026.csv")
     beat(1.2)
     for k in ("j", "j", "k"):
@@ -190,7 +192,7 @@ def run(ctx):
     beat(2.5)
 
     # ------------------------------------------------------------ out
-    rec.say("In English, Spanish and Japanese, by the desktop's language. kiki 0.2.0, for Omarchy")
+    rec.say(f"In English, Spanish and Japanese, by the desktop's language. kiki {version}, for Omarchy")
     sh.call("split", "off")
     expect("one pane again", lambda s: s.get("split") is False)
     sh.open("file://" + home)

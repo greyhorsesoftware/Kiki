@@ -58,15 +58,19 @@ scroll-perf: build
 scroll-history:
 	@tests/e2e/scroll_history.py
 
+# The checkout's daemon and window on a socket of their own: the installed kiki of the same
+# version would otherwise be found first (the socket is named for the version).
+DEV_SOCKET ?= $(or $(XDG_RUNTIME_DIR),/tmp)/kiki-dev.sock
+
 run: build
-	KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \
-	sleep 0.5; $(QS) -p qml/shell.qml
+	rm -f $(DEV_SOCKET); KIKI_SOCKET=$(DEV_SOCKET) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid & \
+	sleep 0.5; KIKI_SOCKET=$(DEV_SOCKET) $(QS) -p qml/shell.qml
 
 daemon: build
-	KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
+	rm -f $(DEV_SOCKET); KIKI_SOCKET=$(DEV_SOCKET) KIKI_PLUGIN_DIR=$(ROOT)/target/release ./target/release/kikid
 
 shell:
-	$(QS) -p qml/shell.qml
+	KIKI_SOCKET=$(DEV_SOCKET) $(QS) -p qml/shell.qml
 
 fmt:
 	$(CARGO) fmt --all

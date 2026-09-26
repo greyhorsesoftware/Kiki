@@ -59,3 +59,12 @@ Newest last.
   got "unknown request type" from the installed daemon). `make lint` checks Cargo.toml, the
   window and both PKGBUILDs say one version (`tests/version_check.py`); the e2e harness pins
   `KIKI_SOCKET` for its run. `tst_DaemonPairing`, `config::socket_tests`.
+- **The socket unit never listened (2026-09-25).** `kiki.socket` named no `Service=`, so systemd
+  looked for a `kiki.service`, found only `kikid.service`, and refused: "Socket service
+  kiki.service not loaded". The daemon had only ever come up by other means (the `kiki` command's
+  start, a manual restart), and an installed kiki whose daemon had gone showed a blank window
+  with no sidebar. `Service=kikid.service` in `packaging/systemd/kiki.socket`. (On this machine
+  until the package is rebuilt: a drop-in `~/.config/systemd/user/kiki.socket.d/service.conf`
+  with the same line.) The `kiki` command now runs `systemctl --user daemon-reload` before
+  starting the socket, so an upgrade — new unit file, new socket name — takes without the user
+  reloading by hand.
