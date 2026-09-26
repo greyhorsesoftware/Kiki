@@ -65,6 +65,9 @@ Newest last.
   start, a manual restart), and an installed kiki whose daemon had gone showed a blank window
   with no sidebar. `Service=kikid.service` in `packaging/systemd/kiki.socket`. (On this machine
   until the package is rebuilt: a drop-in `~/.config/systemd/user/kiki.socket.d/service.conf`
-  with the same line.) The `kiki` command now runs `systemctl --user daemon-reload` before
-  starting the socket, so an upgrade — new unit file, new socket name — takes without the user
-  reloading by hand.
+  with the same line.) The `kiki` command now runs `systemctl --user daemon-reload` and, when
+  the socket this version listens on is not there, restarts `kiki.socket` and `kikid.service`
+  (a start is a no-op on a unit still active from the old definition, and the old daemon holds
+  the old listening descriptor — the reload alone did not take on the 0.2.0 → 0.2.1 upgrade), so
+  an upgrade takes on the first launch without anything typed. The install hooks cannot do it:
+  they run as root, whose `systemctl --user` is not the user's.

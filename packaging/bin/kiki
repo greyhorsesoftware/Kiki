@@ -27,10 +27,20 @@ fi
 # from their NEXT login; straight after installing it is not there yet, so ask for it here — as
 # the user, which the package's own hooks (run as root) cannot do. Harmless when already up, and
 # skipped for a checkout, which runs a daemon of its own.
-# `daemon-reload` first: after an upgrade the session still holds the unit as it was installed
-# before (pacman cannot reload a user's manager), and the socket is named for the version.
+# After an upgrade the session still holds the units as they were installed before (pacman runs
+# as root and cannot reach a user's manager), and the socket is named for the version: reload,
+# and when the socket THIS version listens on is not there, restart the socket and the daemon —
+# a start is a no-op on a unit still active from the old definition ("Unit configuration
+# changed while unit was running … not functional until restarted"), and the old daemon holds
+# the old listening descriptor. The user's own kiki.install note said to do this by hand.
 if [ -z "${KIKI_SHELL_DIR:-}" ]; then
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  systemctl --user start kiki.socket >/dev/null 2>&1 || true
+  ver="$(kikid --version 2>/dev/null | awk '{print $2}')"
+  sock="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kiki-${ver}.sock"
+  if [ -n "$ver" ] && [ ! -S "$sock" ]; then
+    systemctl --user restart kiki.socket kikid.service >/dev/null 2>&1 || true
+  else
+    systemctl --user start kiki.socket >/dev/null 2>&1 || true
+  fi
 fi
 KIKI_START="$uri" exec qs -n -p "$CONF"
