@@ -8,7 +8,7 @@
 #                              preferred a nearby checkout is what a clean-chroot build exists
 #                              to catch. (A rustup toolchain needs `-d`: pacman does not know it.)
 pkgname=kiki
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')

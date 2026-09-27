@@ -6,7 +6,7 @@
 # and for building a checkout; `install.sh` at the repository root installs the same asset
 # without either. Kept in step with packaging/PKGBUILD by hand; the checksums by the release.
 pkgname=kiki
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
 arch=('x86_64' 'aarch64')
