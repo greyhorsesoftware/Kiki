@@ -119,6 +119,10 @@ jobs:
           cp packaging/PKGBUILD packaging/kiki.install /home/builder/build/
           if [ "${GITHUB_REF_TYPE}" != tag ]; then
             ver="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
+            # The checkout was written by the runner's user and this step runs as root inside the
+            # container: git refuses a repository owned by somebody else ("dubious ownership")
+            # until told the directory is safe.
+            git config --global --add safe.directory "${GITHUB_WORKSPACE}"
             git archive --format=tar.gz --prefix="Kiki-${ver}/" -o "/home/builder/build/kiki-${ver}.tar.gz" HEAD
             (cd /home/builder/build && updpkgsums)
           fi
