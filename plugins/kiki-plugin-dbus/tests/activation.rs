@@ -12,6 +12,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+/// The state letter of a process — R, S, Z … — or None when there is no such process.
+fn process_state(pid: &str) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // "pid (comm) S …": the comm may hold spaces and parentheses, so the state follows the LAST ')'.
+    stat.rsplit(')').next()?.trim_start().chars().next()
+}
+
 fn tools() -> bool {
     ["dbus-run-session", "busctl"].iter().all(|t| Command::new("which").arg(t).output().map(|o| o.status.success()).unwrap_or(false))
 }
@@ -85,7 +92,11 @@ impl Fixture {
         cmd.output().expect("busctl")
     }
 
-    /// Whether the listener THIS fixture started has gone, by the pid its wrapper wrote.
+    /// Whether the listener THIS fixture started has gone, by the pid its wrapper wrote. Gone
+    /// means exited: a zombie counts, because it is one. The listener is dbus-daemon's child
+    /// and outlives the bus by its idle grace, so it is reparented to pid 1 — and in a container
+    /// pid 1 is often not an init that reaps, so the corpse stays in the table and `kill -0`
+    /// keeps saying yes (CI, 2026-09-26). The state letter in /proc/<pid>/stat is the truth.
     fn listener_gone(&self, timeout: Duration) -> bool {
         let pid = match std::fs::read_to_string(self.dir.join("listener.pid")) {
             Ok(s) => s.trim().to_string(),
@@ -93,12 +104,12 @@ impl Fixture {
         };
         let start = Instant::now();
         while start.elapsed() < timeout {
-            let alive = Command::new("kill").arg("-0").arg(&pid).output().map(|o| o.status.success()).unwrap_or(false);
-            if !alive {
-                return true;
+            match process_state(&pid) {
+                None | Some('Z') | Some('X') => return true,
+                _ => std::thread::sleep(Duration::from_millis(100)),
             }
-            std::thread::sleep(Duration::from_millis(100));
         }
+        eprintln!("listener {pid} is in state {:?}; its log:\n{}", process_state(&pid), std::fs::read_to_string(self.dir.join("listener.log")).unwrap_or_default());
         false
     }
 
