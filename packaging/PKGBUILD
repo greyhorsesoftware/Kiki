@@ -36,8 +36,8 @@ license=('MIT')
 #                  plain folder (git.rs: a status that cannot run is "not a repository", never an
 #                  error). Cargo needs no git either: Cargo.lock has no git sources.
 #   gvfs           `gvfsd`, which the SMB plugin asks for a share; without it an SMB location
-#                  answers "not supported" and every other kind of location is untouched. It goes
-#                  with gvfs-smb, which was always optional.
+#                  answers Unsupported, naming the packages to install, and every other kind of
+#                  location is untouched. It goes with gvfs-smb, which was always optional.
 depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'libsecret' 'libarchive' 'udisks2'
          'qt6-declarative' 'qt6-multimedia' 'poppler' 'glib2')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf' 'glib2')

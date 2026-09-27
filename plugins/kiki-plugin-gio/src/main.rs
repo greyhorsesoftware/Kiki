@@ -272,6 +272,13 @@ impl Gio {
             return PluginError::auth(refused(cfg(config, "auth")));
         }
         if self.scheme == "smb" {
+            // No backend at all: gio without gvfs (or without gvfs-smb) cannot mount anything and
+            // says so as NotSupported — "volume doesn't implement mount" — which is nothing to do
+            // with the host. Said as what it is, with what to install; the dependency audit in CI
+            // takes gvfs away and expects exactly this (kikid/tests/dep_audit.rs).
+            if e.kind::<gio::IOErrorEnum>() == Some(gio::IOErrorEnum::NotSupported) {
+                return PluginError::new("Unsupported", "SMB locations need gvfs and gvfs-smb (sudo pacman -S gvfs gvfs-smb)");
+            }
             // An SMB1-only server first: it fails as a connection error would.
             if smb1_only(e.message()) {
                 return PluginError::network(SMB1_REFUSED);
