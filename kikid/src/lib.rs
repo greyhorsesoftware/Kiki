@@ -12,6 +12,7 @@ pub mod jobs;
 pub use kiki_json as json;
 pub mod fetched;
 pub mod git;
+pub mod handlers;
 pub mod helpers;
 pub mod icons;
 pub mod index;

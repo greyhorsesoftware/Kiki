@@ -8,7 +8,7 @@ cargo = re.search(r'^version = "([^"]+)"', open("Cargo.toml", encoding="utf-8").
 found = {
     "qml/kiki/version.js": re.search(r'var version = "([^"]+)"', open("qml/kiki/version.js", encoding="utf-8").read()).group(1),
     "packaging/PKGBUILD": re.search(r"^pkgver=(\S+)", open("packaging/PKGBUILD", encoding="utf-8").read(), re.M).group(1),
-    "packaging/aur/kiki-bin/PKGBUILD": re.search(r"^pkgver=(\S+)", open("packaging/aur/kiki-bin/PKGBUILD", encoding="utf-8").read(), re.M).group(1),
+    "packaging/omarchy/PKGBUILD": re.search(r"^pkgver=(\S+)", open("packaging/omarchy/PKGBUILD", encoding="utf-8").read(), re.M).group(1),
 }
 wrong = {k: v for k, v in found.items() if v != cargo}
 for k, v in wrong.items():

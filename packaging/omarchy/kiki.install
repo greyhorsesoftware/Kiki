@@ -1,0 +1,40 @@
+# What the package does system-wide, and nothing per user: these hooks run as root, where
+# `xdg-mime default` sets ROOT's folder handler and `systemctl --user` reaches nobody's session.
+# Making kiki the folder handler, the file chooser or the "Show in file manager" target is each
+# user's choice, offered by kiki's own first-run dialog (plan 09) and undone from Settings ->
+# Omarchy.
+
+# 0.1.0-0.2.x enabled a socket unit for every user; 0.3.0 has no units at all (the window starts
+# its own daemon). `--global enable` made a symlink under /etc/systemd/user that pacman does not
+# own and will not remove, so an upgrade that simply dropped the unit file would leave a dangling
+# link and a failed kiki.socket at every login, for ever. This takes it back. `--global` writes
+# under /etc/systemd/user, which a root hook CAN reach; `--user` is the one it cannot. Two more
+# releases and nobody will be upgrading across the change, and this can go.
+sweep_old_units() {
+  systemctl --global disable kiki.socket 2>/dev/null || true
+  rm -f /etc/systemd/user/sockets.target.wants/kiki.socket 2>/dev/null || true
+}
+
+post_install() {
+  update-desktop-database -q 2>/dev/null || true
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+  echo ":: kiki is installed. Start it from the launcher or with 'kiki'; on first start it offers to"
+  echo "   become the folder handler and the file chooser for your user."
+}
+
+post_upgrade() {
+  update-desktop-database -q 2>/dev/null || true
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+  sweep_old_units
+}
+
+pre_remove() {
+  sweep_old_units
+}
+
+post_remove() {
+  update-desktop-database -q 2>/dev/null || true
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+  echo ":: kiki removed. If it was your folder handler, choose another:"
+  echo "   xdg-mime default <app>.desktop inode/directory"
+}

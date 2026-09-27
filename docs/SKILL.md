@@ -18,7 +18,12 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
 
 - **`kikid/`**: a Rust daemon (std, `rustix`, `libc`, own JSON in `crates/kiki-json`,
   no async runtime) serving a Unix socket at `$XDG_RUNTIME_DIR/kiki-<version>.sock` with
-  newline-delimited JSON for the shell and length-prefixed frames for plugins. Threads:
+  newline-delimited JSON for the shell and length-prefixed frames for plugins. It is the
+  window's engine, not a service: the window starts it when the socket does not answer and it
+  leaves ten seconds after the last window has gone (`lifetime.rs`); requests are routed to
+  per-area `handlers/*.rs`, slow ones answering through `cx.later` (0.3.0). D-Bus — "Show in
+  folder" and the file-chooser portal — is `kiki-dbus`, started by the bus, which reaches a
+  window through its IPC and never touches the daemon. Threads:
   reader and writer per client, scanner per listing, stat and thumbnail pools, an
   inotify watcher, job threads, index and device threads. Listings live in a string
   pool with lazy viewport windows.
@@ -41,9 +46,12 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
   files, Hyprland bindings and portal config; `dbus.rs` bridges FileManager1 and the
   portal FileChooser; `desktop.rs` launches desktop entries; `config.rs` runs
   `udisksctl`/`lsblk`; `locations.rs` stores secrets through `secret-tool`.
-- **Delivery**: `packaging/PKGBUILD` (x86_64 and aarch64), AUR `kiki-bin`, systemd
-  user socket and service, `.github/workflows/ci.yml` and `release.yml` (by hand;
-  publishes a CI run's artifacts),
+- **Delivery**: `packaging/PKGBUILD` (the source package, x86_64 and aarch64) and
+  `packaging/omarchy/PKGBUILD` (the store's: the release's binaries repackaged), no systemd
+  units since 0.3.0 (`kiki.install` keeps one line that only sweeps up what 0.2.x enabled),
+  `kiki-dbus` under `/usr/libexec/kiki` with the portal's service file and the user-level
+  `FileManager1` one the Settings row links to, `.github/workflows/ci.yml` and `release.yml`
+  (by hand; publishes a CI run's artifacts),
   `bench/` baselines from `kikid bench`.
 
 ## Desired Outcomes
@@ -51,7 +59,7 @@ Read `docs/0.1.0/CORE.md` first; it fixes the architecture. In one paragraph:
 1. Every finding cites a file, and quotes the literal line or value where one exists
 2. Absent controls (frame size limits, path guards, timeouts, cancellation, fail-fast
    config) are reported as findings, not omitted
-3. Packaging, units, workflows and the integration writers are read as primary sources
+3. Packaging, service files, workflows and the integration writers are read as primary sources
    alongside `kikid/src`
 4. Inferences are marked as inferences; undetermined items appear under "Not Verified"
 5. Each dimension carries a rating from the scale below, set by its worst finding
@@ -117,7 +125,7 @@ Rate the dimension by its **worst unmitigated finding**, not by an average.
 **Date:** <today>
 **Components:** kikid <version> (Rust <toolchain>), plugin SDK, <n> plugins, QML shell (Qt <version> / Quickshell)
 **Targets:** x86_64 and aarch64 Linux (Arch/Omarchy); macOS for tests only
-**Delivery:** pacman package from PKGBUILD, AUR kiki-bin, systemd user socket + service
+**Delivery:** pacman package from PKGBUILD, the Omarchy store package from the release's binaries
 
 ---
 

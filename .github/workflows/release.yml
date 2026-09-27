@@ -150,3 +150,58 @@ jobs:
                 curl -fsSL https://raw.githubusercontent.com/greyhorsesoftware/Kiki/main/install.sh | bash
 
             Or download the package for your architecture below and `sudo pacman -U` it.
+
+  # The digests, written where the PKGBUILDs read them (docs/0.3.0/02-omarchy-store.md, decision
+  # 3): the tag's tarball into packaging/PKGBUILD, each architecture's package into the store
+  # package's (packaging/omarchy), and its .SRCINFO regenerated — as one commit on main, made here and not by hand, so a
+  # checksum is never copied from anywhere but the build that produced the asset. Only when the
+  # PKGBUILDs on main still say this version: once pkgver has moved on, the digests belong to a
+  # release the tree no longer describes, and the step says so and stops.
+  checksums:
+    name: Write the checksums back
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    needs: [pick, publish]
+    permissions:
+      contents: write
+    steps:
+      - name: Install git and makepkg
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git sudo
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Digests from the published assets and the tag's tarball
+        env:
+          VERSION: ${{ needs.pick.outputs.version }}
+        run: |
+          set -e
+          [ "$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)" = "$VERSION" ] || { echo "main's PKGBUILD is not $VERSION any more; leaving the checksums to that version's release"; exit 0; }
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}"
+          for a in x86_64 aarch64; do
+            curl -fsSL -o "pkg-$a.sha256" "$base/kiki-${VERSION}-1-$a.pkg.tar.zst.sha256"
+            d="$(cut -d' ' -f1 "pkg-$a.sha256")"
+            sed -i "s/^sha256sums_$a=.*/sha256sums_$a=('$d')/" packaging/omarchy/PKGBUILD
+          done
+          # GitHub's archive for a tag is stable once it exists; this is the digest the PKGBUILD
+          # checks for anyone building the source package.
+          curl -fsSL -o tag.tar.gz "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
+          d="$(sha256sum tag.tar.gz | cut -d' ' -f1)"
+          sed -i "s/^  sha256sums=('[0-9a-f]*')/  sha256sums=('$d')/" packaging/PKGBUILD
+          (cd packaging/omarchy && makepkg --printsrcinfo > .SRCINFO)
+      - name: The source package builds from the tag, with the digest just written
+        # What a stranger with the PKGBUILD alone gets: GitHub's tarball for the tag, checked
+        # against the line above, built with `makepkg -s`. If this fails, the digest is not
+        # committed and the release says so.
+        run: |
+          mkdir -p /home/builder/build && cp packaging/PKGBUILD packaging/kiki.install /home/builder/build/ && chown -R builder /home/builder
+          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm --nocheck && ls -l kiki-*.pkg.tar.zst'
+      - name: Commit the checksums to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packaging/PKGBUILD packaging/omarchy/PKGBUILD packaging/omarchy/.SRCINFO
+          git diff --cached --stat
+          git commit -m "Release v${VERSION}: checksums" -m "The tag's tarball digest and each architecture's package digest, written by the release workflow."
+          git push origin HEAD:main

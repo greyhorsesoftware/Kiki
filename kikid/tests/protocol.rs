@@ -5,7 +5,7 @@
 //! compared with what went in. A request is then put through `proto::parse_request`, which is the
 //! first thing the daemon does with anything that arrives.
 //!
-//! The list of request types is **read out of `server.rs`** rather than written here: the whole
+//! The list of request types is **read out of `handlers/*.rs`** rather than written here: the whole
 //! value of a test like this is that it cannot fall behind, and a hand-kept list of ninety-odd
 //! names falls behind the first time somebody adds a request. The events are the ones the daemon
 //! actually sends, found the same way.
@@ -38,31 +38,49 @@ fn wire(v: &Value) -> Value {
     out
 }
 
-/// The request types `Client::handle` answers, taken from its own match arms. Alternatives
-/// (`"AddLocation" | "UpdateLocation" =>`) count as both; the lower-case arms further down the
-/// file belong to a nested match over mirror reasons, and a request type is capitalised.
+/// The request types the daemon answers, taken from the match arms of `handlers/*.rs` and of
+/// `Hello` in `server.rs` (0.3.0: the verbs live by area, not in one match). Alternatives
+/// (`"AddLocation" | "UpdateLocation" =>`) count as both; a nested match over something else
+/// (mirror reasons, search modes) uses lower-case strings, and a request type is capitalised.
+/// Every area's verbs, for the scrape: a module added to `handlers/` is added here too, or its
+/// verbs are never checked.
+const HANDLER_SOURCES: [&str; 15] = [
+    include_str!("../src/handlers/ai.rs"),
+    include_str!("../src/handlers/devices.rs"),
+    include_str!("../src/handlers/git.rs"),
+    include_str!("../src/handlers/index.rs"),
+    include_str!("../src/handlers/integrate.rs"),
+    include_str!("../src/handlers/jobs.rs"),
+    include_str!("../src/handlers/listing.rs"),
+    include_str!("../src/handlers/locations.rs"),
+    include_str!("../src/handlers/mirror.rs"),
+    include_str!("../src/handlers/open.rs"),
+    include_str!("../src/handlers/quicklook.rs"),
+    include_str!("../src/handlers/session.rs"),
+    include_str!("../src/handlers/settings.rs"),
+    include_str!("../src/handlers/share.rs"),
+    include_str!("../src/handlers/tree.rs"),
+];
+
 fn request_types() -> Vec<String> {
-    let src = include_str!("../src/server.rs");
-    let body = src.split("fn handle(&mut self, req: Request)").nth(1).expect("handle()");
     let mut out = Vec::new();
-    for line in body.lines() {
-        let Some(patterns) = line.split_once("=>").map(|(p, _)| p.trim()) else { continue };
-        if !patterns.starts_with('"') {
-            continue;
-        }
-        let mut names = Vec::new();
-        let mut ok = true;
-        for part in patterns.split('|') {
-            match part.trim().strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
-                Some(name) if name.starts_with(|c: char| c.is_ascii_uppercase()) => names.push(name.to_string()),
-                _ => ok = false,
+    for src in HANDLER_SOURCES.iter().chain([include_str!("../src/server.rs")].iter()) {
+        for line in src.lines() {
+            let Some(patterns) = line.split_once("=>").map(|(p, _)| p.trim()) else { continue };
+            if !patterns.starts_with('"') {
+                continue;
             }
-        }
-        if ok {
-            out.extend(names);
-        }
-        if line.starts_with("        }") {
-            break; // the end of the match, before the helpers below it
+            let mut names = Vec::new();
+            let mut ok = true;
+            for part in patterns.split('|') {
+                match part.trim().strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+                    Some(name) if name.starts_with(|c: char| c.is_ascii_uppercase()) => names.push(name.to_string()),
+                    _ => ok = false,
+                }
+            }
+            if ok {
+                out.extend(names);
+            }
         }
     }
     out.sort();
@@ -94,7 +112,9 @@ fn body(kind: &str) -> Value {
         "Arrange" => o.s("layout", "project").s("root", "file:///home/david/Projects/kiki").u("leftWidth", 320).v("windows", Value::Arr(vec![Value::obj().s("role", "editor").s("class", "nvim").u("pid", 4242).done()])),
         // `tool`, not `id`: the request's own id is a number, and a tool named in an `id` field
         // beside it would take its place.
-        "OpenIn" | "OpenInTest" => o.s("tool", "nvim").s("role", "editor").v("uris", uris()).u("line", 42),
+        "OpenInTest" => o.s("tool", "nvim").s("role", "editor").v("uris", uris()).u("line", 42),
+        // Opening elsewhere (0.3.0): one verb, `with` saying where. (`Open` above is a listing's.)
+        "Launch" => o.v("uris", uris()).s("with", "tool:editor").u("line", 42).s("dir", "file:///home/david/Projects"),
         "OpenInClose" => o.s("tool", "nvim"),
         "SetOpenIn" => o.v("tools", Value::Arr(vec![Value::obj().s("id", "nvim").s("name", "Neovim").s("command", "nvim %F").b("enabled", true).done()])),
         "Submit" => o.v("op", Value::obj().s("op", "chmod").v("items", uris()).u("mode", 0o755).b("recursive", true).done()),
@@ -114,7 +134,6 @@ fn body(kind: &str) -> Value {
         "Eject" => o.s("uri", "mtp://phone/"),
         "RenameDevice" => o.s("uri", "mtp://phone/").s("name", "David's phone"),
         "AccessLog" => o.v("uris", uris()),
-        "Launch" => o.s("app", "org.gnome.Loupe.desktop").v("uris", uris()),
         "Plugins" | "PluginStatus" => o,
         "PluginPing" => o.s("name", "sftp"),
         "PluginBrowse" => o.s("plugin", "smb").s("field", "share").v("config", Value::obj().s("host", "nas").done()).v("secrets", Value::obj().s("password", "hunter2").done()),
@@ -139,8 +158,6 @@ fn body(kind: &str) -> Value {
         "Share" => o.s("plugin", "mail").v("uris", uris()).s("target", "david@example.com").v("compose", Value::obj().s("subject", "Photos").done()),
         "ShareConfigure" => o.s("plugin", "mail").v("config", Value::obj().s("host", "smtp.example.com").done()).v("secrets", Value::obj().s("password", "hunter2").done()),
         "AiConfigure" => o.s("provider", "omarchy").s("cliCommand", "claude"),
-        "AiOpen" => o.s("dir", "file:///home/david/Projects").v("uris", uris()),
-        "OpenTerminal" => o.s("dir", "file:///home/david/Projects"),
         "Icon" => o.s("name", "folder-documents").s("theme", "Adwaita").u("size", 32),
         // Everything else takes no fields at all (`Ping`, `Jobs`, `Undo`, `Volumes`, …).
         _ => o,
@@ -151,7 +168,7 @@ fn body(kind: &str) -> Value {
 #[test]
 fn every_request_the_daemon_answers_survives_both_framings() {
     let types = request_types();
-    assert!(types.len() > 90, "only {} request types were found — the scrape of server.rs has broken: {types:?}", types.len());
+    assert!(types.len() > 90, "only {} request types were found — the scrape of handlers/*.rs has broken: {types:?}", types.len());
     for (must, present) in [("Hello", true), ("Undo", true), ("AddLocation", true), ("UpdateLocation", true), ("Window", true), ("new", false)] {
         assert_eq!(types.iter().any(|t| t == must), present, "{must}");
     }
@@ -238,6 +255,14 @@ fn every_reply_and_event_survives_both_framings() {
     // `event("…")` call sites across its own source.
     let sources = [
         include_str!("../src/server.rs"),
+        include_str!("../src/handlers/listing.rs"),
+        include_str!("../src/handlers/tree.rs"),
+        include_str!("../src/handlers/index.rs"),
+        include_str!("../src/handlers/mirror.rs"),
+        include_str!("../src/handlers/open.rs"),
+        include_str!("../src/handlers/settings.rs"),
+        include_str!("../src/handlers/locations.rs"),
+        include_str!("../src/handlers/devices.rs"),
         include_str!("../src/listing/scan.rs"),
         include_str!("../src/listing/cache.rs"),
         include_str!("../src/listing/rows.rs"),

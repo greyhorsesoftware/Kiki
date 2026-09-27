@@ -46,8 +46,10 @@ TestCase {
         Wire.replyTo("OpenWith", { mime: "image/png", mimes: ["image/png"], apps: [{ id: "imv.desktop", name: "imv", icon: "imv", default: true }, { id: "gimp.desktop", name: "GIMP", icon: "gimp", default: false }] })
         compare(offered(), ["imv  ·  default", "GIMP"])
         shell.openWithSub[1].action()
+        // The chosen application goes out as `Launch` with `app:<id>` (0.3.0): one verb for every
+        // way of opening elsewhere, and the menu builds the `with`.
         const l = Wire.last("Launch")
-        compare(l.app, "gimp.desktop")
+        compare(l["with"], "app:gimp.desktop")
         compare(l.uris, ["file:///home/t/a.png", "file:///home/t/b.png"])
     }
     function test_kinds_nothing_opens_together_say_so() {

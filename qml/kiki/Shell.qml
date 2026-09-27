@@ -338,7 +338,7 @@ FloatingWindow {
         if (!tool) return
         // `tool`, not `id`: the request's own id is a number the daemon replies with, and a
         // second `id` beside it took its place — every Alt+Enter was answered "missing id".
-        Kiki.Daemon.request("OpenIn", { tool: tool.id, uris: target }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+        Kiki.Daemon.open(target, "tool:" + tool.id, {}, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
     function editSelected() {
         const uris = selectedUris(); if (!uris.length) return
@@ -346,7 +346,7 @@ FloatingWindow {
         if (r && r.isDir) { enterProject(uris[0]); return }
         editAt(uris[0], 1)
     }
-    function editAt(uri, line) { Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri], line: line }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
+    function editAt(uri, line) { Kiki.Daemon.open([uri], "tool:editor", { line: line }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
     // Project mode (plan 16): kiki becomes the tree; editor and agent are arranged beside it.
     property bool projectMode: false
     property string projectRoot: ""
@@ -362,9 +362,9 @@ FloatingWindow {
             if (ok) spawned.push({ role: role, class: ok["class"] || "", pid: ok.pid })
             else Kiki.Jobs.showToast({ text: Kiki.T.tr("toast.projectRoleFailed", { role: Kiki.T.tr("role." + role), error: (err && err.message) || Kiki.T.tr("error.unknown") }), undoable: false })
         }
-        Kiki.Daemon.request("OpenIn", { role: "editor", uris: [uri] }, (ok, err) => {
+        Kiki.Daemon.open([uri], "tool:editor", {}, (ok, err) => {
             started("editor", ok, err)
-            if (Kiki.Settings.project.agent) Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] }, (ok2, err2) => { started("agent", ok2, err2); arrangeProject(spawned) })
+            if (Kiki.Settings.project.agent) Kiki.Daemon.open([uri], "tool:agent", {}, (ok2, err2) => { started("agent", ok2, err2); arrangeProject(spawned) })
             else arrangeProject(spawned)
         })
     }
@@ -443,14 +443,14 @@ FloatingWindow {
     /// A failure says why (the tool is not installed, the files are remote) and, when no tool
     /// is set at all, goes to where one is chosen.
     function openAiHere(dir, files) {
-        Kiki.Daemon.request("AiOpen", { dir: dir, uris: files || [] }, (ok, err) => {
+        Kiki.Daemon.open(files || [], "ai", { dir: dir }, (ok, err) => {
             if (!err) return
             Kiki.Jobs.showToast({ text: err.message, undoable: false })
             if (err.message.indexOf("Settings") >= 0) settingsWin.open("ai")
         })
     }
     function openTerminalHere(dir) {
-        Kiki.Daemon.request("OpenTerminal", { dir: dir }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
+        Kiki.Daemon.open([], "terminal", { dir: dir }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) })
     }
     // Git (plan 15): the branch chip for the focused pane
     property var repo: null
@@ -665,7 +665,7 @@ FloatingWindow {
         Kiki.Daemon.request("OpenWith", { uris: uris }, (ok, err) => {
             if (!ok) { apply([{ label: err ? err.message : "Nothing offered", enabled: false, action: () => {} }]); return }
             const apps = ok.apps.map(a => ({ label: a.name + (a.default ? "  ·  default" : ""), icon: "open",
-                                             action: () => Kiki.Daemon.request("Launch", { app: a.id, uris: uris },
+                                             action: () => Kiki.Daemon.open(uris, "app:" + a.id, {},
                                                  (r, e) => { if (e) Kiki.Jobs.showToast({ text: e.message, undoable: false }) }) }))
             apply(apps.length ? apps : [{ label: uris.length > 1 && !ok.mime ? "No application opens all of these" : "No application for this kind", enabled: false, action: () => {} }])
         })
@@ -844,7 +844,7 @@ FloatingWindow {
     /// A double-click on a local file: the daemon opens it with the default application for its
     /// type (0.2.0). It used to be `xdg-open` on the URI here. A file on a server goes to Quick
     /// Look instead (owner, 2026-09-25); asked anyway, the daemon says 1330.
-    function openExternal(uri) { Kiki.Daemon.request("OpenDefault", { uri: uri }, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
+    function openExternal(uri) { Kiki.Daemon.open([uri], "default", {}, (ok, err) => { if (err) Kiki.Jobs.showToast({ text: err.message, undoable: false }) }) }
     /// Right: step into the selected folder. A file has nothing to step into.
     function enterSelected() {
         const r = pane.listing.row(pane.selection.current)
@@ -1393,7 +1393,7 @@ FloatingWindow {
         onVisibleChanged: if (visible) forceActiveFocus()
         home: win.home; repo: win.repo
         onOpenFile: uri => win.editAt(uri, 1)
-        onSendToAgent: uri => Kiki.Daemon.request("OpenIn", { role: "agent", uris: [uri] })
+        onSendToAgent: uri => Kiki.Daemon.open([uri], "tool:agent")
         onLeave: win.leaveProject()
     }
     // The toolbar spans the window above everything, so the path has the full width to use, and

@@ -33,8 +33,12 @@ test-rust:
 	$(CARGO) test
 
 ## Leaf and interaction tests: no compositor, about five seconds. Offscreen, so the developer's
-## own pointer and windows cannot make a test flaky; QT_QPA_PLATFORM in the environment wins.
-test-qml: export QT_QPA_PLATFORM ?= offscreen
+## own pointer and windows cannot make a test flaky. Unconditionally: this used to be `?=`, so
+## that a platform in the environment would win — and on Omarchy one always is (the session
+## sets QT_QPA_PLATFORM=wayland;xcb for everything), so the suites opened real windows on the
+## desktop and the pointer tests failed whenever the developer touched the mouse (2026-09-26).
+## To watch the suites on a real display, ask for it by name: KIKI_QML_PLATFORM=wayland.
+test-qml: export QT_QPA_PLATFORM = $(or $(KIKI_QML_PLATFORM),offscreen)
 # The words the tests compare are English whatever the desktop speaks (docs/0.2.0/02-localization.md).
 test-qml: export LANGUAGE = en
 test-qml:

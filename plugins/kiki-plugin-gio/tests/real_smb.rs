@@ -23,6 +23,7 @@ use kiki_plugin_sdk::json::{self, Value};
 use kiki_plugin_sdk::{read_frame, write_binary, write_json};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -179,7 +180,12 @@ impl Fixture {
             return Err("pdbedit could not make the account".into());
         }
         let log = std::fs::File::create(format!("{d}/smbd.out")).map_err(|e| e.to_string())?;
-        self.procs.push(Command::new(smbd).args(["-F", "-s", &conf_path, "--debug-stdout"]).stdout(log).stderr(Stdio::null()).spawn().map_err(|e| format!("smbd: {e}"))?);
+        // In a process group of its own. When smbd is told to stop it stops its helpers by
+        // signalling ITS OWN GROUP — `kill(0, SIGTERM)` — and without this line that group was
+        // the test binary's, which is cargo's, which in a shell without job control is the
+        // shell's: every teardown of this fixture terminated the whole command line running
+        // `cargo test`, intermittently, for a day, until strace named the sender (2026-09-26).
+        self.procs.push(Command::new(smbd).args(["-F", "-s", &conf_path, "--debug-stdout"]).stdout(log).stderr(Stdio::null()).process_group(0).spawn().map_err(|e| format!("smbd: {e}"))?);
         if !up(port, Duration::from_secs(15)) {
             return Err(format!("smbd never listened: {}", std::fs::read_to_string(format!("{d}/smbd.out")).unwrap_or_default()));
         }

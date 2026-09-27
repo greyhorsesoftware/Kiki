@@ -96,6 +96,21 @@ Singleton {
         return id
     }
 
+    /// Opening something elsewhere: the one verb for it, `Launch` (0.3.0, `handlers/open.rs`;
+    /// `Open` is a listing's). `how` says
+    /// where — "default", "app:<desktop id>", "tool:<id or role>", "terminal" or "ai" — and the
+    /// menus build that string rather than each having a verb of their own. `opts.line` is for
+    /// an editor, `opts.dir` where a terminal or the AI starts (else the first uri). The daemon
+    /// refuses a server's file with 1330, already a sentence in the window's language. (`how`,
+    /// because `with` is a word JavaScript keeps for itself.)
+    function open(uris, how, opts, cb) {
+        const o = opts || {}
+        const fields = { uris: uris || [], "with": how }
+        if (o.line !== undefined) fields.line = o.line
+        if (o.dir !== undefined) fields.dir = o.dir
+        return request("Launch", fields, cb)
+    }
+
     /// Answer everything still waiting with an error. A request whose daemon went away is never
     /// coming back, and a callback that never fires is a window that quietly stops working.
     function _failPending(code, message) {
@@ -132,8 +147,8 @@ Singleton {
     /// True once a session has been established, so a later Hello is known to be a reconnect.
     property bool _hadSession: false
 
-    /// kikid is socket-activated and restarts on failure; the window should follow it back up
-    /// rather than sit there looking fine and doing nothing. A dropped `Socket` will not take a
+    /// kikid is this window's to start (above) and, should it die, to start again; the window
+    /// should follow it back up rather than sit there looking fine and doing nothing. A dropped `Socket` will not take a
     /// second connection — setting `connected` again does nothing — so the retry builds a new one.
     /// How many times the socket has been tried since the last answer. The first second is
     /// tried hard — a daemon binds in about 10 ms — and after that the cadence is the patient

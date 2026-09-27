@@ -1,5 +1,12 @@
 # Maintainer: David Clark <david.j.clark@icloud.com>
-# Source package: builds kiki from the repository checkout one level up.
+# Source package: builds kiki from the tagged release tarball, so it builds anywhere a PKGBUILD
+# can — a clean chroot, omarchy-pkgs, a stranger's machine (docs/0.3.0/02-omarchy-store.md).
+#
+#   KIKI_LOCAL_SRC=1 makepkg   builds the checkout one level up instead: the release checklist
+#                              and CI, which package the commit under test before it has a tag.
+#                              Named here and nowhere else, on purpose: a PKGBUILD that quietly
+#                              preferred a nearby checkout is what a clean-chroot build exists
+#                              to catch. (A rustup toolchain needs `-d`: pacman does not know it.)
 pkgname=kiki
 pkgver=0.3.0
 pkgrel=1
@@ -7,23 +14,58 @@ pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')
 url="https://github.com/greyhorsesoftware/Kiki"
 license=('MIT')
-# libsecret is where `secret-tool` lives (gnome-keyring is the Secret Service behind it);
-# libarchive is bsdtar, udisks2 is udisksctl, git is the repository overlay in every listing.
-# glib2 and gvfs are what the SMB plugin links and talks to; the backend itself is optional.
-# poppler is pdftoppm, which draws PDF pages for thumbnails and for Quick Look; qt6-multimedia
-# is the player Quick Look shows a video with (docs/0.2.0/05-quicklook.md).
-depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'gnome-keyring' 'libsecret' 'libarchive'
-         'udisks2' 'git' 'qt6-declarative' 'qt6-multimedia' 'poppler' 'glib2' 'gvfs')
+# What each dependency is for (docs/0.3.0/02-omarchy-store.md, decision 6 — each was checked by
+# taking it away and running the tests that use it, which CI repeats: `.github/workflows/ci.yml`,
+# "Dependency audit"):
+#   quickshell, qt6-declarative  the window itself
+#   qt6-multimedia               the player Quick Look shows a video with (docs/0.2.0/05-quicklook.md)
+#   xdg-desktop-portal           the file-chooser portal kiki's listener serves (kiki.portal)
+#   ffmpeg                       ffmpegthumbnailer-style frames for video thumbnails
+#   libsecret                    `secret-tool`, which is how kiki stores a location's password;
+#                                which Secret Service answers it is the desktop's — see optdepends
+#   libarchive                   `bsdtar`, for archives
+#   udisks2                      `udisksctl`, for mounting devices
+#   poppler                      `pdftoppm`, which draws PDF pages for thumbnails and Quick Look
+#   glib2                        what the SMB plugin links (gio); the backend it talks to is optional
+# Not depends, and why:
+#   gnome-keyring  kiki runs without any Secret Service — saving a password then fails with one
+#                  numbered sentence (1261, "is a Secret Service running?") and nothing else is
+#                  affected; on Omarchy gnome-keyring is there anyway, and KWallet or KeePassXC
+#                  serve the same API.
+#   git            the repository overlay in listings; without git a repository is listed as a
+#                  plain folder (git.rs: a status that cannot run is "not a repository", never an
+#                  error). Cargo needs no git either: Cargo.lock has no git sources.
+#   gvfs           `gvfsd`, which the SMB plugin asks for a share; without it an SMB location
+#                  answers "not supported" and every other kind of location is untouched. It goes
+#                  with gvfs-smb, which was always optional.
+depends=('quickshell' 'xdg-desktop-portal' 'ffmpeg' 'libsecret' 'libarchive' 'udisks2'
+         'qt6-declarative' 'qt6-multimedia' 'poppler' 'glib2')
 makedepends=('rust' 'cargo' 'clang' 'pkgconf' 'glib2')
-optdepends=('noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
-            'openssh: SFTP host key tools'
-            'gvfs-smb: SMB (Windows share) locations'
+optdepends=('gnome-keyring: remember passwords for SFTP, FTPS and SMB locations (any Secret Service will do)'
+            'git: repository status and branches in listings'
+            'gvfs: SMB (Windows share) locations, with gvfs-smb'
+            'gvfs-smb: SMB (Windows share) locations, with gvfs'
             'gvfs-wsdd: find Windows computers on the network'
+            'openssh: SFTP host key tools'
+            'noto-fonts-cjk: Japanese on screen (the interface is in English, Spanish and Japanese)'
             'tailscale: share files over Taildrop')
 install=kiki.install
 options=('!lto' '!debug')
 
-_srcdir="${startdir}/.."
+# The source is the tag's tarball, whose digest the release workflow writes below when it tags
+# (`.github/workflows/release.yml`, "Write the checksums back"): between a version bump and its
+# release the line holds a digest that can match nothing, so a package built from it fails its
+# checksum on purpose rather than building an untagged tree as if it were the release. With
+# KIKI_LOCAL_SRC there is no source at all: the checkout is the source.
+if [ -z "${KIKI_LOCAL_SRC:-}" ]; then
+  source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+  sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+  _srcdir="${srcdir}/Kiki-${pkgver}"
+else
+  source=()
+  sha256sums=()
+  _srcdir="${startdir}/.."
+fi
 
 # Cargo builds under makepkg's own tree unless the caller has a target directory already —
 # CI does, cached between runs, and a release build from cold is the slowest thing it does.

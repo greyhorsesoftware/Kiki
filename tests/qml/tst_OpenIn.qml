@@ -50,7 +50,9 @@ TestCase {
     }
     function cleanup() { shell.pane.selection.clear(); Kiki.Jobs.dismissToast(); fake.destroy() }
 
-    function opened() { const r = Wire.last("OpenIn"); return r }
+    // Since 0.3.0 every way of opening elsewhere is one verb, `Launch`, told where by `with`.
+    function opens(prefix) { return Wire.requests("Launch").filter(r => String(r["with"]).indexOf(prefix) === 0) }
+    function opened() { const t = opens("tool:"); return t.length ? t[t.length - 1] : null }
     function select(name) {
         for (let i = 0; i < shell.pane.listing.count; i++) if (shell.pane.listing.row(i).name === name) { shell.pane.selection.set(i); return }
         fail(name + " is not in the folder")
@@ -63,14 +65,15 @@ TestCase {
     function test_a_double_click_on_a_file_asks_the_daemon_to_open_it_with_the_default_application() {
         select("a.txt")
         shell.openSelected()
-        const r = Wire.last("OpenDefault")
+        const r = Wire.last("Launch")
         verify(r, "the daemon is asked")
-        compare(r.uri, "file:///home/t/a.txt")
-        compare(Wire.count("OpenIn"), 0, "not a tool")
+        compare(r["with"], "default")
+        compare(r.uris, ["file:///home/t/a.txt"])
+        compare(opens("tool:").length, 0, "not a tool")
         Wire.reset()
         select("Projects")
         shell.openSelected()
-        compare(Wire.count("OpenDefault"), 0, "a folder is entered, not opened")
+        compare(Wire.count("Launch"), 0, "a folder is entered, not opened")
         compare(shell.pane.uri, "file:///home/t/Projects")
     }
     function test_an_entry_whose_binary_is_absent_is_not_offered() {
@@ -78,7 +81,7 @@ TestCase {
         // And it cannot be reached by name either: asking for it opens nothing rather than
         // running a command whose program is not there.
         shell.openIn("helix")
-        compare(Wire.count("OpenIn"), 0)
+        compare(opens("tool:").length, 0)
     }
 
     function test_the_list_is_read_again_when_the_files_change() {
@@ -97,7 +100,7 @@ TestCase {
         compare(shell.openInDefaultTool().id, "claude")
         select("a.txt")
         shell.openIn("")
-        compare(opened().tool, "claude")
+        compare(opened()["with"], "tool:claude")
     }
 
     function test_with_only_an_editor_configured_that_is_the_default() {
@@ -112,7 +115,7 @@ TestCase {
         compare(shell.openInDefaultTool(), null)
         Wire.reset()
         shell.runAction("openDefault")
-        compare(Wire.count("OpenIn"), 0, "and no toast about a tool that was never chosen")
+        compare(opens("tool:").length, 0, "and no toast about a tool that was never chosen")
         compare(Kiki.Jobs.toast, null)
     }
 
@@ -126,7 +129,7 @@ TestCase {
         compare(keymap.chordFor("openDefault"), "Alt+Enter")
         select("a.txt")
         verify(shell.runAction("openDefault"))
-        compare(opened().tool, "claude")
+        compare(opened()["with"], "tool:claude")
         compare(opened().uris, ["file:///home/t/a.txt"])
     }
 
@@ -152,7 +155,7 @@ TestCase {
         select("a.txt")
         shell.runAction("openDefault")
         const r = opened()
-        compare(r.tool, "claude")
+        compare(r["with"], "tool:claude")
         compare(typeof r.id, "number", "the request keeps its own id, so the answer comes back")
         verify(r.id > 0)
     }

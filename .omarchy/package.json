@@ -1,0 +1,8 @@
+{
+  "source": "local",
+  "upstream": {
+    "provider": "github-release",
+    "repository": "greyhorsesoftware/Kiki",
+    "tag": "v{version}"
+  }
+}

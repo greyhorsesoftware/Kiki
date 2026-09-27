@@ -10,6 +10,6 @@ Comment[ja]=ローカルと SFTP・FTPS・SMB の場所のファイルを閲覧
 Exec=kiki %U
 Icon=org.kiki.App
 Terminal=false
-Categories=System;FileTools;FileManager;Utility;
+Categories=System;FileTools;FileManager;
 MimeType=inode/directory;x-scheme-handler/sftp;x-scheme-handler/ftps;
 StartupNotify=false

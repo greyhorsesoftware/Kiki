@@ -36,7 +36,7 @@ jobs:
       - name: Install toolchain
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo \
-            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb
+            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb libsecret desktop-file-utils
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
       - uses: actions/cache@v6
@@ -58,15 +58,73 @@ jobs:
         # and it has just run above on this commit. Building by hand still runs it.
         # `PKGEXT`: Arch Linux ARM's makepkg.conf says `.pkg.tar.xz`; the installer and the
         # release name the file with `.zst` on both architectures, so this does too.
+        # `KIKI_LOCAL_SRC`: the commit under test has no tag, so it is built from the checkout;
+        # the from-the-tarball path is proved by the `source-package` job below.
         run: |
-          sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" PKGEXT=.pkg.tar.zst bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
+          sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" PKGEXT=.pkg.tar.zst KIKI_LOCAL_SRC=1 bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
           cd packaging && ls -l && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
+      - name: namcap and the desktop entry
+        # namcap warns about things that are sometimes right (docs/0.3.0/02-omarchy-store.md,
+        # decision 7): its output is a thing a person reads in this log, not a failed build.
+        # desktop-file-validate is held to silence: a hint there is kiki twice in the launcher.
+        if: matrix.arch == 'x86_64'
+        run: |
+          pacman -S --noconfirm --needed namcap
+          echo "== namcap: PKGBUILD"; KIKI_LOCAL_SRC=1 namcap packaging/PKGBUILD || true
+          echo "== namcap: package"; namcap packaging/kiki-*.pkg.tar.zst || true
+          echo "== desktop-file-validate"
+          out="$(desktop-file-validate packaging/org.kiki.App.desktop 2>&1)"; echo "$out"; [ -z "$out" ]
+      - name: Dependency audit
+        # Each package kiki does NOT depend on, taken away in turn, and the consequence written
+        # in the PKGBUILD's comment block held to by a test (kikid/tests/dep_audit.rs).
+        if: matrix.arch == 'x86_64'
+        run: |
+          t() { sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" "$@"; }
+          echo "== without a Secret Service (libsecret present, gnome-keyring not, no session bus)"
+          t env KIKI_AUDIT_NO_SECRET_SERVICE=1 cargo test --test dep_audit -- --ignored secret_service
+          echo "== without git"
+          pacman -Rdd --noconfirm git
+          t env KIKI_AUDIT_NO_GIT=1 cargo test --test dep_audit -- --ignored without_git
+          pacman -S --noconfirm --needed git
+          echo "== without gvfs"
+          pacman -Rdd --noconfirm gvfs-smb gvfs
+          t env KIKI_AUDIT_NO_GVFS=1 cargo test --test dep_audit -- --ignored without_gvfs
+          pacman -S --noconfirm --needed gvfs gvfs-smb
       - uses: actions/upload-artifact@v7
         with:
           name: kiki-package-${{ matrix.arch }}
           path: |
             packaging/kiki-*.pkg.tar.zst
             packaging/kiki-*.pkg.tar.zst.sha256
+
+  # The source package, built the way a stranger builds it: a clean container, the PKGBUILD and
+  # its install hook and nothing else, `makepkg -s` fetching and checking the source
+  # (docs/0.3.0/02-omarchy-store.md, L1). On a tag that source is GitHub's tarball for the tag
+  # and the digest in the PKGBUILD; on a branch there is no tag yet, so the commit's own archive
+  # stands in for it, laid where makepkg looks for a downloaded file, and `updpkgsums` sets the
+  # digest to match — which proves the build, not the release's digest (the tag build does that).
+  source-package:
+    name: Source package from nothing but the PKGBUILD (x86_64)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install what makepkg -s cannot
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git sudo pacman-contrib
+          useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v7
+      - name: A build directory with the PKGBUILD alone
+        run: |
+          mkdir -p /home/builder/build
+          cp packaging/PKGBUILD packaging/kiki.install /home/builder/build/
+          if [ "${GITHUB_REF_TYPE}" != tag ]; then
+            ver="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
+            git archive --format=tar.gz --prefix="Kiki-${ver}/" -o "/home/builder/build/kiki-${ver}.tar.gz" HEAD
+            (cd /home/builder/build && updpkgsums)
+          fi
+          chown -R builder /home/builder
+      - name: makepkg -s
+        run: sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm --nocheck && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*.pkg.tar.zst | head -20'
 
   qml:
     name: QML leaf and interaction tests
