@@ -79,7 +79,7 @@ Failing, in the order a reviewer would hit them:
 
 | | | |
 |---|---|---|
-| L1 | **A PKGBUILD that builds anywhere**: `source=`/`sha256sums=`, the tagged tarball, `KIKI_LOCAL_SRC=1` for the working tree, `check()` on the unpacked source; build it in a clean `archlinux:latest` container from nothing but the PKGBUILD and confirm the package matches the release's byte for byte where it can. **Done 2026-09-26** (the from-nothing build is CI's `source-package` job — no container runtime on the owner's machine — on branches against the commit's own archive with `updpkgsums`, and in the release workflow against GitHub's tag tarball with the digest it has just written; "byte for byte" is not claimed: a package built twice differs in `.BUILDINFO`, so the check is that it builds, installs and carries the version). | ½ day |
+| L1 | **A PKGBUILD that builds anywhere**: `source=`/`sha256sums=`, the tagged tarball, `KIKI_LOCAL_SRC=1` for the working tree, `check()` on the unpacked source; build it in a clean `archlinux:latest` container from nothing but the PKGBUILD and confirm the package matches the release's byte for byte where it can. **Done 2026-09-26**, then narrowed the same evening: with the store taking the binary package (decision 4), the from-nothing build CI proves is the store's — the `store-package` job, on branches with the package the x86_64 job just built standing in for the asset — and the release proves it against the asset it published. The source PKGBUILD keeps its tarball `source=` and digest for anyone building from source, but is no longer built from nothing in CI; "byte for byte" is not claimed: a package built twice differs in `.BUILDINFO`. | ½ day |
 | L2 | **namcap and the desktop entry**: `namcap` in CI over PKGBUILD and package, its warnings answered; the `Categories` line reduced to one main category; `desktop-file-validate` clean. **Done 2026-09-26**: `Utility` dropped — `System;FileTools;FileManager;` is one main category (System) and two additional ones the spec ties to it, and `desktop-file-validate` is silent locally and held to silence in CI; namcap runs in CI's x86_64 job and its first output is a thing to read when that run lands (namcap is not packaged on the owner's machine). | ½ day |
 | L3 | **The dependency audit**: `gnome-keyring`, `git`, `gvfs` each removed in a container and the suite run; `depends`/`optdepends` corrected, the comment block rewritten. **Done 2026-09-26**, by reading the code and writing the consequence as a test (`kikid/tests/dep_audit.rs`, run by CI with each package removed): `gnome-keyring` → optdepends (saving a password says 1261 and nothing else changes; `libsecret` stays, it is the API); `git` → optdepends (a status that cannot run is "not a repository", `git.rs`; Cargo.lock has no git sources); `gvfs` → optdepends beside `gvfs-smb` (an SMB location answers "not supported"; `glib2` stays, the plugin links gio). No behaviour changed. | ½ day |
 | L4 | **Checksums**: the release workflow writes each architecture's digest into `packaging/omarchy/PKGBUILD` as it tags; `SKIP` gone. **Done 2026-09-26**: a `checksums` job after `publish` fetches the published `.sha256` files and the tag's tarball, writes the three digests into both PKGBUILDs, regenerates `.SRCINFO`, builds the source package from the tag to prove the digest, and commits to main — only while main's `pkgver` is still that version. In the tree between a bump and its release the lines hold a digest that matches nothing (64 zeros), so a build from them fails on purpose; `SKIP` would have installed anything. | ½ day |
@@ -91,9 +91,13 @@ store decides: they are what make the package reproducible by anyone.
 
 ## Acceptance
 
-- In a clean `archlinux:latest` container, with nothing but `packaging/PKGBUILD` copied in:
-  `makepkg -s` fetches the tagged tarball, verifies its checksum and builds a package that
-  installs and runs.
+- In a clean `archlinux:latest` container, with nothing but `packaging/omarchy/PKGBUILD` and
+  `kiki.install` copied in: `makepkg -s` fetches the release's package, verifies its checksum and
+  repackages it — what the store's builders do. CI does this on every push with the package the
+  x86_64 job just built standing in for the asset; the release does it against the asset it
+  published, with the digest it just wrote, before committing that digest (2026-09-26: the
+  source package is no longer built from nothing in CI — the store never builds it; its tarball
+  digest is still written at release for anyone who builds from source).
 - `KIKI_LOCAL_SRC=1 makepkg` still builds the working tree, and CI still packages the commit
   under test.
 - `namcap` output is in the CI log and every warning has an answer in the PKGBUILD's comments

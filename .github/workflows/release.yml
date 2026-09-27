@@ -190,13 +190,15 @@ jobs:
           d="$(sha256sum tag.tar.gz | cut -d' ' -f1)"
           sed -i "s/^  sha256sums=('[0-9a-f]*')/  sha256sums=('$d')/" packaging/PKGBUILD
           (cd packaging/omarchy && makepkg --printsrcinfo > .SRCINFO)
-      - name: The source package builds from the tag, with the digest just written
-        # What a stranger with the PKGBUILD alone gets: GitHub's tarball for the tag, checked
-        # against the line above, built with `makepkg -s`. If this fails, the digest is not
-        # committed and the release says so.
+      - name: The store's package builds from the published asset, with the digest just written
+        # What the Omarchy store's builders will do with this exact PKGBUILD: fetch the asset this
+        # release published, check it against the line above, repackage it. If this fails, the
+        # digest is wrong or the asset is not where the PKGBUILD says, and the release must not
+        # commit it. (The source package's tarball digest is written above too, for anyone who
+        # builds from source; the store does not, so it is not built here.)
         run: |
-          mkdir -p /home/builder/build && cp packaging/PKGBUILD packaging/kiki.install /home/builder/build/ && chown -R builder /home/builder
-          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm --nocheck && ls -l kiki-*.pkg.tar.zst'
+          mkdir -p /home/builder/build && cp packaging/omarchy/PKGBUILD packaging/omarchy/kiki.install /home/builder/build/ && chown -R builder /home/builder
+          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
       - name: Commit the checksums to main
         run: |
           git config user.name "github-actions[bot]"

@@ -59,7 +59,8 @@ jobs:
         # `PKGEXT`: Arch Linux ARM's makepkg.conf says `.pkg.tar.xz`; the installer and the
         # release name the file with `.zst` on both architectures, so this does too.
         # `KIKI_LOCAL_SRC`: the commit under test has no tag, so it is built from the checkout;
-        # the from-the-tarball path is proved by the `source-package` job below.
+        # the store's from-nothing path is proved by the `store-package` job below; the tarball
+        # path only at release, where the digest is written (release.yml, "checksums").
         run: |
           sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" PKGEXT=.pkg.tar.zst KIKI_LOCAL_SRC=1 bash -c 'cd packaging && makepkg -f --nodeps --noconfirm --nocheck'
           cd packaging && ls -l && sha256sum kiki-*.pkg.tar.zst > "$(ls kiki-*.pkg.tar.zst).sha256" && ls -l kiki-*
@@ -97,38 +98,41 @@ jobs:
             packaging/kiki-*.pkg.tar.zst
             packaging/kiki-*.pkg.tar.zst.sha256
 
-  # The source package, built the way a stranger builds it: a clean container, the PKGBUILD and
-  # its install hook and nothing else, `makepkg -s` fetching and checking the source
-  # (docs/0.3.0/02-omarchy-store.md, L1). On a tag that source is GitHub's tarball for the tag
-  # and the digest in the PKGBUILD; on a branch there is no tag yet, so the commit's own archive
-  # stands in for it, laid where makepkg looks for a downloaded file, and `updpkgsums` sets the
-  # digest to match — which proves the build, not the release's digest (the tag build does that).
-  source-package:
-    name: Source package from nothing but the PKGBUILD (x86_64)
+  # The store's package, built the way the store's builders build it: a clean container, nothing
+  # in it but packaging/omarchy/PKGBUILD and kiki.install, and `makepkg -s` fetching what it
+  # repackages (docs/0.3.0/02-omarchy-store.md, L1). A branch has no release asset yet, so the
+  # package the x86_64 job just built stands in for it — the same bytes a release would publish —
+  # and its digest is written the way the release writes the real one. The tag-time proof, against
+  # the asset actually published, is the release workflow's `checksums` job.
+  store-package:
+    name: Store package from nothing but its PKGBUILD (x86_64)
     runs-on: ubuntu-latest
     container: archlinux:latest
+    needs: rust
     steps:
       - name: Install what makepkg -s cannot
         run: |
-          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git sudo pacman-contrib
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel sudo pacman-contrib
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: kiki-package-x86_64
+          path: /home/builder/build
       - name: A build directory with the PKGBUILD alone
         run: |
-          mkdir -p /home/builder/build
-          cp packaging/PKGBUILD packaging/kiki.install /home/builder/build/
-          if [ "${GITHUB_REF_TYPE}" != tag ]; then
-            ver="$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)"
-            # The checkout was written by the runner's user and this step runs as root inside the
-            # container: git refuses a repository owned by somebody else ("dubious ownership")
-            # until told the directory is safe.
-            git config --global --add safe.directory "${GITHUB_WORKSPACE}"
-            git archive --format=tar.gz --prefix="Kiki-${ver}/" -o "/home/builder/build/kiki-${ver}.tar.gz" HEAD
-            (cd /home/builder/build && updpkgsums)
-          fi
+          cp packaging/omarchy/PKGBUILD packaging/omarchy/kiki.install /home/builder/build/
+          rm -f /home/builder/build/*.sha256
           chown -R builder /home/builder
+      # As builder throughout: makepkg refuses root, and updpkgsums runs makepkg.
       - name: makepkg -s
-        run: sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm --nocheck && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*.pkg.tar.zst | head -20'
+        run: |
+          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c '
+            cd ~/build && ls -l
+            updpkgsums
+            makepkg -s --noconfirm
+            ls -l kiki-*.pkg.tar.zst
+            pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
 
   qml:
     name: QML leaf and interaction tests
