@@ -189,7 +189,8 @@ jobs:
           curl -fsSL -o tag.tar.gz "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
           d="$(sha256sum tag.tar.gz | cut -d' ' -f1)"
           sed -i "s/^  sha256sums=('[0-9a-f]*')/  sha256sums=('$d')/" packaging/PKGBUILD
-          (cd packaging/omarchy && makepkg --printsrcinfo > .SRCINFO)
+          # As builder: makepkg refuses root, and .SRCINFO has no generator but makepkg.
+          (cd packaging/omarchy && sudo -u builder makepkg --printsrcinfo > .SRCINFO)
       - name: The store's package builds from the published asset, with the digest just written
         # What the Omarchy store's builders will do with this exact PKGBUILD: fetch the asset this
         # release published, check it against the line above, repackage it. If this fails, the
@@ -201,6 +202,9 @@ jobs:
           sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
       - name: Commit the checksums to main
         run: |
+          # The checkout was written by the runner's user and this runs as root in the container:
+          # git refuses a repository owned by somebody else until told the directory is safe.
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add packaging/PKGBUILD packaging/omarchy/PKGBUILD packaging/omarchy/.SRCINFO

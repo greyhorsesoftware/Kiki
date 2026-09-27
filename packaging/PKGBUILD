@@ -59,7 +59,7 @@ options=('!lto' '!debug')
 # KIKI_LOCAL_SRC there is no source at all: the checkout is the source.
 if [ -z "${KIKI_LOCAL_SRC:-}" ]; then
   source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-  sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+  sha256sums=('98d84f22dd62c81520b108a87e293f95e953d65349b52aba58877a2e5aa0ef05')
   _srcdir="${srcdir}/Kiki-${pkgver}"
 else
   source=()
