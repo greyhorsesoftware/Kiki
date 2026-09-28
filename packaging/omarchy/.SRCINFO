@@ -28,8 +28,8 @@ pkgbase = kiki
 	options = !strip
 	options = !debug
 	source_x86_64 = kiki-0.4.1-x86_64-release.pkg.tar.zst::https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.1/kiki-0.4.1-1-x86_64.pkg.tar.zst
-	sha256sums_x86_64 = 9828195338f55f75ef68f781aad287972a7c99e96bbf9c2bafabc7113d055c29
+	sha256sums_x86_64 = 1791b2cf09439c7567d9b9dfcbdb6256cf39ee455c74632504d9637a362b2a2f
 	source_aarch64 = kiki-0.4.1-aarch64-release.pkg.tar.zst::https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.1/kiki-0.4.1-1-aarch64.pkg.tar.zst
-	sha256sums_aarch64 = f97fec23b3bcb5b6c915da8fd58c88c8a81a1bf0a197a333a11e3d55d266129b
+	sha256sums_aarch64 = 129a4958dc2251cbcada773ddafa7f786f3be07fd216352ac38053795fb30132
 
 pkgname = kiki
