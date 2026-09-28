@@ -202,7 +202,9 @@ Rectangle {
                 width: parent.width - (insp.compact ? (insp.many ? 68 : 36) : 52); spacing: 4
                 // The name alone: the folder it is in is a field under General, and repeating the
                 // whole path here only crowded the header.
-                Text { width: parent.width; elide: Text.ElideRight; text: insp.many ? Kiki.T.tr("inspector.items", { n: insp.rows.length }) : insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: insp.compact ? 13 : 15; font.bold: true }
+                // A long name wraps rather than being cut short (owner, 2026-09-28): the panel is
+                // where the whole of it should be readable.
+                Text { objectName: "inspector-name"; width: parent.width; wrapMode: Text.WrapAnywhere; text: insp.many ? Kiki.T.tr("inspector.items", { n: insp.rows.length }) : insp.name(); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: insp.compact ? 13 : 15; font.bold: true }
             }
         }
         // The preview is of the file, not of a tab: it stays while the tabs change under it.

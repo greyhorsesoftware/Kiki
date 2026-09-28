@@ -225,13 +225,15 @@ TestCase {
         compare(list.nameWidth, name - 40, "and Name absorbed the difference")
     }
 
-    // A column is never squeezed past its own header: the label and the sort arrow have to fit.
-    function test_a_column_never_goes_below_its_header() {
+    // A column dragged down goes past its header's need to a sliver, and no further (the rule used
+    // to stop at the label; the owner wanted Name to be able to take the room, 2026-09-28). The
+    // PANE's own squeeze, when the window narrows, still stops at the label — see below.
+    function test_a_column_dragged_down_stops_at_the_sliver() {
         const min = list.columnMin(list.allColumns.size)
         verify(min > 40 && min < 80, min)
         dragGrip("size", 400)
-        compare(headerWidth("size"), min)
-        compare(list.nameWidth, 700 - 24 - (160 + 12) - (min + 12) - (120 + 12))
+        compare(headerWidth("size"), list.collapsedMin)
+        compare(list.nameWidth, 700 - 24 - (160 + 12) - (list.collapsedMin + 12) - (120 + 12))
     }
 
     // Drag one column as wide as it will go and the others keep their widths: what is left when
@@ -245,6 +247,21 @@ TestCase {
         compare(headerWidth("mtime"), 280)
         settle()
         compare(headerRight(), list.width - 12, "the last column ends at the pane's margin")
+    }
+
+    // Dragged the other way, a column collapses to a sliver — its label hidden — so that Name can
+    // have the room; dragged back, it is a column again.
+    function test_a_column_can_be_collapsed_so_name_takes_the_room() {
+        const nameBefore = list.nameWidth
+        dragGrip("mtime", 1000)
+        compare(headerWidth("mtime"), list.collapsedMin, "down to the sliver, past its label's need")
+        verify(list.nameWidth > nameBefore, "and Name has what it gave up")
+        const label = findChild(list, "header-mtime").children[0].children[0]
+        verify(!label.visible, "no label in a sliver")
+        settle()
+        compare(headerRight(), list.width - 12, "the last column still ends at the pane's margin")
+        dragGrip("mtime", -1000)
+        verify(headerWidth("mtime") > list.collapsedMin, "back to a column")
     }
 
     // Side by side, or the inspector opening, narrows the pane under the columns. They squeeze

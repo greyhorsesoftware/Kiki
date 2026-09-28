@@ -26,18 +26,24 @@ Item {
     /// and a little air. Reckoned from the label rather than measured — the header is one font at
     /// one size, and a text measurement per column per frame does not earn its keep.
     function columnMin(c) { return Math.round(c.label.length * 7.5) + 30 }
+    /// The narrowest a column may be DRAGGED to: a sliver, its label hidden, so that Modified,
+    /// Size and Kind can be pushed almost off the pane and Name have the whole width (owner,
+    /// 2026-09-28). `columnMin` is what a column's label needs; this is what a drag may choose.
+    readonly property int collapsedMin: 16
     /// The width a column asks for: the drag in progress, else what was remembered (settings.toml
     /// `[view.listColumnWidths]`, one set of widths for every list view), else its default.
     function columnWanted(c) {
         const live = root.liveWidths[c.role], kept = (Kiki.Settings.view.listColumnWidths || ({}))[c.role]
-        return Math.max(columnMin(c), Math.round(live || kept || c.w))
+        // A width chosen below the label's need is honoured: the column is collapsed on purpose.
+        return Math.max(collapsedMin, Math.round(live || kept || c.w))
     }
     /// How many optional columns are shown: from the right, drop the ones whose minimum has no
     /// room left beside a readable name. An int, so `columns` is left alone while widths change.
     readonly property int keep: {
         let n = wantedColumns.length
         const room = root.width - 24 - minNameWidth
-        while (n > 0 && wantedColumns.slice(0, n).reduce((a, c) => a + root.columnMin(c) + 12, 0) > room) n--
+        // A collapsed column asks for less than its label would: it stays, as the sliver it is.
+        while (n > 0 && wantedColumns.slice(0, n).reduce((a, c) => a + Math.min(root.columnMin(c), root.columnWanted(c)) + 12, 0) > room) n--
         return n
     }
     readonly property var columns: [{ role: "name", label: Kiki.T.tr("column.name") }].concat(wantedColumns.slice(0, keep))
@@ -49,7 +55,7 @@ Item {
         let over = 24 + minNameWidth - root.width
         for (let i = 0; i < keep; i++) { const c = wantedColumns[i]; m[c.role] = root.columnWanted(c); over += m[c.role] + 12 }
         for (let i = keep - 1; i >= 0 && over > 0; i--) {
-            const c = wantedColumns[i], give = Math.min(over, m[c.role] - root.columnMin(c))
+            const c = wantedColumns[i], give = Math.min(over, Math.max(0, m[c.role] - root.columnMin(c)))
             m[c.role] -= give; over -= give
         }
         return m
@@ -69,11 +75,11 @@ Item {
         const i = wantedColumns.findIndex(c => c.role === role)
         if (i < 0) return
         const c = wantedColumns[i]
-        let w = Math.max(root.columnMin(c), Math.round(px))
+        let w = Math.max(root.collapsedMin, Math.round(px))
         if (i < keep) {
             let others = 0
             for (let j = 0; j < keep; j++) if (j !== i) others += root.colWidth[wantedColumns[j].role] + 12
-            w = Math.min(w, Math.max(root.columnMin(c), root.width - 24 - minNameWidth - others - 12))
+            w = Math.min(w, Math.max(root.collapsedMin, root.width - 24 - minNameWidth - others - 12))
         }
         const live = Object.assign({}, root.liveWidths); live[role] = w; root.liveWidths = live
     }
@@ -119,7 +125,8 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter; spacing: 6
                         layoutDirection: modelData.role === "size" ? Qt.RightToLeft : Qt.LeftToRight
                         anchors.right: modelData.role === "size" ? parent.right : undefined
-                        Text { text: modelData.label.toUpperCase(); color: root.pane.sortRole === modelData.role ? Kiki.Theme.fgDim : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 0.6 }
+                        // A collapsed column has no room for its label: the grip alone shows it is there.
+                        Text { visible: index === 0 || (root.colWidth[modelData.role] || modelData.w) >= root.columnMin(modelData); text: modelData.label.toUpperCase(); color: root.pane.sortRole === modelData.role ? Kiki.Theme.fgDim : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true; font.letterSpacing: 0.6 }
                         UI.Icon { visible: root.pane.sortRole === modelData.role; name: root.pane.sortOrder === "asc" ? "sort-up" : "chev-d"; size: 12; color: Kiki.Theme.fgDim; anchors.verticalCenter: parent.verticalCenter }
                     }
                     MouseArea { anchors.fill: parent; onClicked: root.pane.setSort(modelData.role, root.pane.sortRole === modelData.role && root.pane.sortOrder === "asc" ? "desc" : "asc") }

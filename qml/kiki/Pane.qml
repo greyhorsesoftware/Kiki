@@ -248,14 +248,18 @@ QtObject {
         if (!action) { drop.accept(Qt.IgnoreAction); return }
         received()
         drop.accept(action.op === "copy" ? Qt.CopyAction : Qt.MoveAction)
-        Kiki.Jobs.submit({ op: action.op, items: action.items, dest: dest })
+        const op = { op: action.op, items: action.items, dest: dest }
+        if (action.policy) op.policy = action.policy
+        Kiki.Jobs.submit(op)
     }
     /// Where a URI lives: its scheme and authority. `sftp://nas` and `sftp://backup` are two
     /// machines, however alike they look; every `file://` is this one.
     function placeOf(u) { const m = /^([a-z][a-z0-9+.-]*):\/\/([^\/]*)/i.exec(u); return m ? (m[1] + "://" + m[2]).toLowerCase() : "" }
-    /// What dropping `urls` on the folder `dest` does: `{ op, items }`, or null for nothing.
+    /// What dropping `urls` on the folder `dest` does: `{ op, items, policy? }`, or null for nothing.
     ///  - What is already there is not dropped again: an item whose folder IS `dest`, `dest`
-    ///    itself, and a folder onto itself or into something inside it.
+    ///    itself, and a folder onto itself or into something inside it — except that a COPY asked
+    ///    for (Ctrl) of a file into its own folder is a duplicate: it goes through with the
+    ///    daemon's keep-both naming, "name (2).ext", and no collision prompt (owner, 2026-09-28).
     ///  - `copy` (Ctrl was held) copies. Otherwise: a MOVE within one place, a COPY between
     ///    places — between machines a move is a copy and then a delete, and nobody asked for the
     ///    delete. Shift cannot force a move across machines: Qt reports it as it reports no key
@@ -266,13 +270,18 @@ QtObject {
         // drop on it goes to `trashSelection` instead of here.)
         if (dest.startsWith("trash:")) return null
         const d = dest.replace(/\/+$/, "")
+        let duplicates = false
         const items = urls.filter(u => {
             const s = (u || "").replace(/\/+$/, "")
-            return s !== "" && parentOf(s) !== d && s !== d && d.indexOf(s + "/") !== 0
+            if (s === "" || s === d || d.indexOf(s + "/") === 0) return false
+            if (parentOf(s) === d) { if (!copy) return false; duplicates = true }
+            return true
         })
         if (!items.length) return null
         const samePlace = items.every(u => placeOf(u) === placeOf(dest))
         const op = copy || !samePlace ? "copy" : "move"
-        return { op: op, items: items }
+        const r = { op: op, items: items }
+        if (duplicates) r.policy = "keepBoth"
+        return r
     }
 }

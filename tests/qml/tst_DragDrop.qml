@@ -189,4 +189,20 @@ TestCase {
         verify(!Kiki.DragTrack.inside)
     }
 
+
+    // A copy asked for (Ctrl) of a file into its own folder is a duplicate — "name (2).ext",
+    // with no collision prompt — where a move into its own folder is still nothing.
+    function test_a_copy_into_its_own_folder_is_a_duplicate() {
+        const here = "file:///home/t", file = "file:///home/t/a.txt"
+        compare(pane.dropAction([file], here, false), null, "a move into its own folder is nothing")
+        const r = pane.dropAction([file], here, true)
+        verify(r !== null, "a copy asked for goes through")
+        compare(r.op, "copy")
+        compare(r.items, [file])
+        compare(r.policy, "keepBoth", "named by the daemon, without asking")
+        // Elsewhere, no policy is needed: the folder is not the file's own.
+        const away = pane.dropAction([file], "file:///home/t/Projects", true)
+        compare(away.policy, undefined)
+    }
+
 }
