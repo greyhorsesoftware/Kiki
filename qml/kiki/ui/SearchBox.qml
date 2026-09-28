@@ -17,7 +17,8 @@ Rectangle {
     signal moveResult(int delta)
     width: 260; height: 30; radius: 2; clip: true
     color: Kiki.Theme.bgDark; border.width: 1; border.color: active ? Kiki.Theme.accent : Kiki.Theme.line
-    function focus() { input.forceActiveFocus() }
+    /// Not `focus`: that is Item's own property, and a function of that name is shadowed by it.
+    function focusInput() { input.forceActiveFocus() }
     function clear() { input.text = ""; scope = "folder"; box.changed("") }
     function cycleScope() { const all = ["folder", "everywhere"].concat(scopes.map(s => s.id)); scope = all[(all.indexOf(scope) + 1) % all.length]; box.changed(input.text) }
     // Typed prefixes: "everywhere:" / "all:" / "<location>:" at the start of the field become the scope chip.

@@ -51,6 +51,24 @@ TestCase {
     }
     function cleanup() { list.pane = null; pane.destroy(); fake.destroy() }
 
+    // A file a transfer is writing is shown as not yet whole: dimmed while the job is on it, and
+    // itself again when the job has finished. The job names the file the way a pane names a row.
+    function test_a_file_being_written_is_dimmed() {
+        tryVerify(() => pane.listing.count >= 3, 3000)
+        let i = -1
+        for (let k = 0; k < pane.listing.count; k++) if (pane.listing.row(k).name === "a.txt") i = k
+        verify(i >= 0, "a.txt is listed")
+        const row = findChild(list, "row-" + i)
+        verify(row !== null)
+        compare(row.opacity, 1)
+        Kiki.Jobs.list = [{ id: 9, state: "running", op: "copy", dest: "file:///home/t", current: { name: "a.txt", bytes: 1, size: 9 } }]
+        verify(row.inFlight, "the file the job is on")
+        verify(row.opacity < 1, "dimmed")
+        Kiki.Jobs.list = [{ id: 9, state: "done", op: "copy", dest: "file:///home/t", current: { name: "a.txt", bytes: 9, size: 9 } }]
+        verify(!row.inFlight, "whole again")
+        compare(row.opacity, 1)
+    }
+
     // The window cache asked for the folder and got its rows, hidden files left out.
     function test_listing_renders_rows() {
         compare(pane.listing.count, 3)

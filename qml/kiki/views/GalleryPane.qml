@@ -155,11 +155,15 @@ Item {
     /// pressed is in it, that row alone when it is not. `proxy` is the item whose `Drag` hands
     /// it to the compositor.
     function dragFrom(active, index, proxy) {
-        if (!active) { proxy.Drag.active = false; return }
+        if (!active) { proxy.Drag.active = false; if (pane.ghost) pane.ghost.end(); return }
         if (!pane.selection.has(index)) pane.selection.set(index)
         proxy.Drag.mimeData = pane.dragMime(index)
-        proxy.Drag.active = true
+        if (pane.ghost) pane.ghost.startDrag(proxy, () => true); else proxy.Drag.active = true
     }
+    /// The drag's image, drawn at the press so it is ready when the drag starts.
+    /// The drag's picture is made on hover, before any press (DragGhost.startDrag).
+    function hoverFor(index) { if (pane.ghost && index >= 0) pane.ghost.hover(pane, index, false) }
+    function pressFor(index, mouse, at) { if (mouse.button === Qt.LeftButton && pane.ghost && index >= 0) pane.ghost.prepare(pane, index, mouse.modifiers & Qt.ControlModifier, at) }
 
     // The stage is darker than the rest of the window, so the picture is the brightest thing on
     // screen whatever the theme.
@@ -392,6 +396,9 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             drag.target: root.current >= 0 && !root.canPan ? stageDrag : null
             drag.threshold: 8
+            hoverEnabled: true
+            onEntered: root.hoverFor(root.current)
+            onPressed: mouse => root.pressFor(root.current, mouse, mapToItem(null, mouse.x, mouse.y))
             drag.onActiveChanged: root.dragFrom(drag.active, root.current, stageDrag)
             onDoubleClicked: root.activate(root.current)
             onClicked: mouse => { if (mouse.button === Qt.RightButton) root.contextMenu(root.current, root.mapToItem(null, mouse.x, mouse.y)) }
@@ -562,6 +569,9 @@ Item {
             delegate: Rectangle {
                 id: shot
                 required property int index
+                // A file a transfer is still writing is not whole yet: dimmed, so nobody opens or drags a
+                // half of it (owner, 2026-09-28). `Kiki.Jobs.inFlight` names them by URI.
+                readonly property bool inFlight: { const rr = pane.listing.row(index); return !!rr && Kiki.Jobs.isInFlight(pane.childUri(rr.name)) }
                 // What a tile shows is the file at its place in the listing NOW, read again every
                 // time either can have changed: the tile is handed another place (the strip
                 // recycles its tiles as it scrolls), rows arrive or change, files come and go
@@ -591,7 +601,7 @@ Item {
                 readonly property bool current: index === root.current
                 scale: current ? 1.12 : 1
                 z: current ? 2 : 0
-                opacity: current || root.current < 0 ? 1 : 0.72
+                opacity: (current || root.current < 0 ? 1 : 0.72) * (inFlight ? 0.45 : 1)
                 Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                 Behavior on opacity { NumberAnimation { duration: 160 } }
                 Connections {
@@ -635,6 +645,9 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     drag.target: shotDrag; drag.threshold: 8
+                    hoverEnabled: true
+                    onEntered: root.hoverFor(shot.index)
+                    onPressed: mouse => root.pressFor(shot.index, mouse, mapToItem(null, mouse.x, mouse.y))
                     drag.onActiveChanged: root.dragFrom(drag.active, shot.index, shotDrag)
                     onClicked: { root.pane.selection.set(shot.index); root.zoom = 0 }
                     onDoubleClicked: root.activate(shot.index)

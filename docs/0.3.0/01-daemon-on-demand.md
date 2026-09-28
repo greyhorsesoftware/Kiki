@@ -54,6 +54,11 @@ boundary but the *lifetime*: a system service where a worker process belongs.
    One rule, no exceptions: nothing but a window is ever a client, because after decision 4
    nothing but a window ever connects. (An earlier draft had the portal helper count as a client
    so a chooser would not lose its daemon under it; the split below removes the case.)
+   **Its words go to `kikid.log` in the state directory** when stderr is a pipe — which it is,
+   started by a window: once the window has gone the pipe has no reader, and the daemon's own
+   "leaving" line made `eprintln!` panic — an abort and a core dump on every close of the last
+   window (three dumps on the owner's machine, found 2026-09-28). Nothing the daemon says can
+   kill it now, and a real panic leaves its message there instead of in a core.
 3. **No systemd units.** `packaging/systemd/` goes, with the `install -Dm644` lines, the
    `systemctl --global enable/disable` in `kiki.install` and every "restart kikid.service" note.
    Upgrades need nothing of the user: the new window looks for `kiki-<new>.sock`, finds none,

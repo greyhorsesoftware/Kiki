@@ -9,6 +9,10 @@ Rectangle {
     objectName: "row-" + rowIndex
     property var row: pane ? pane.listing.row(rowIndex) : null
     property bool selected: pane ? pane.selection.has(rowIndex) : false
+    // A file a transfer is still writing is not whole yet: dimmed, so nobody opens or drags a
+    // half of it (owner, 2026-09-28). `Kiki.Jobs.inFlight` names them by URI.
+    readonly property bool inFlight: !!(pane && row) && Kiki.Jobs.isInFlight(pane.childUri(row.name))
+    opacity: inFlight ? 0.45 : 1
     signal activate()
     signal contextMenu(point pos)
     property var columns: [{ role: "name" }, { role: "mtime", w: 160 }, { role: "size", w: 80 }, { role: "kind", w: 120 }]
@@ -110,8 +114,13 @@ Rectangle {
     }
     MouseArea {
         id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.LeftButton | Qt.RightButton
+        // The drag's picture is made while the pointer is here, before any press: a Wayland
+        // drag starts inside the press and cannot wait for a render (DragGhost.startDrag).
+        onEntered: if (r.pane && r.pane.ghost) r.pane.ghost.hover(r.pane, r.rowIndex, false)
         drag.target: dragProxy; drag.threshold: 8
-        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); dragProxy.Drag.active = true } else dragProxy.Drag.active = false }
+        // The drag's image is drawn at the press, so it is ready when the threshold is crossed.
+        onPressed: mouse => { if (mouse.button === Qt.LeftButton && r.pane && r.pane.ghost) r.pane.ghost.prepare(r.pane, r.rowIndex, mouse.modifiers & Qt.ControlModifier, hover.mapToItem(null, mouse.x, mouse.y)) }
+        drag.onActiveChanged: { if (drag.active) { if (!r.selected) r.pane.selection.set(r.rowIndex); dragProxy.Drag.mimeData = r.pane.dragMime(r.rowIndex); if (r.pane.ghost) r.pane.ghost.startDrag(dragProxy, () => hover.drag.active); else dragProxy.Drag.active = true } else { dragProxy.Drag.active = false; if (r.pane.ghost) r.pane.ghost.end() } }
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) { if (!r.selected) r.pane.selection.set(r.rowIndex); r.contextMenu(r.mapToItem(null, mouse.x, mouse.y)); return }
             if (mouse.modifiers & Qt.ShiftModifier) r.pane.selection.range(r.rowIndex)

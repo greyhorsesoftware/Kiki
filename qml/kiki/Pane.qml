@@ -14,6 +14,10 @@ QtObject {
     function setHidden(show) { showHidden = show; listing.showHidden(show); _remember() }
     property var history: []
     property int historyIndex: -1
+    /// The window's DragGhost — the drag's image — reached from any view through the pane it
+    /// draws, which is the one thing every view holds. Set by the Shell; null in a test that
+    /// has no window to grab in.
+    property var ghost: null
     property bool focused: false
     // Icon view zoom: pinch on a trackpad, or Ctrl and the wheel.
     property real iconZoom: 1

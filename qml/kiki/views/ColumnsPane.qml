@@ -532,6 +532,10 @@ Item {
                             // delegate now outlasts a selection), and a pooled row another index.
                             readonly property var cache: modelData.cache
                             onCacheChanged: r = cache ? cache.row(index) : null
+                            // A file a transfer is still writing is not whole yet: dimmed, so nobody opens or drags a
+                            // half of it (owner, 2026-09-28). `Kiki.Jobs.inFlight` names them by URI.
+                            readonly property bool inFlight: !!r && Kiki.Jobs.isInFlight((modelData.uri.endsWith("/") ? modelData.uri : modelData.uri + "/") + encodeURIComponent(r.name).replace(/%2F/g, "/"))
+                            opacity: inFlight ? 0.45 : 1
                             onIndexChanged: r = cache ? cache.row(index) : null
                             property bool sel: index === modelData.selected
                             // The focused column shows its selection in the accent; the others in grey.
@@ -591,6 +595,12 @@ Item {
                                 anchors.fill: parent
                                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 drag.target: colDrag; drag.threshold: 8
+                                // The drag's picture is made on hover, before any press (DragGhost.startDrag).
+                                hoverEnabled: true
+                                onEntered: if (cr.r && root.pane.ghost) root.pane.ghost.prepareRows([{ kind: cr.r.kind, thumb: cr.r.thumb || "" }], 1, !root.pane.isLocal)
+                                // The columns' rows belong to folders the pane is not standing in, so the
+                                // drag's image is filled from the row in hand rather than the pane's selection.
+                                onPressed: mouse => { if (mouse.button === Qt.LeftButton && cr.r && root.pane.ghost) root.pane.ghost.prepareRows([{ kind: cr.r.kind, thumb: cr.r.thumb || "" }], 1, (mouse.modifiers & Qt.ControlModifier, mapToItem(null, mouse.x, mouse.y)) || !root.pane.isLocal) }
                                 // A dragged row becomes the highlighted one, as it does in the
                                 // other views: what is moving and what the column shows as chosen
                                 // are the same row. Marked, not pushed — a drag opens nothing.
@@ -598,8 +608,8 @@ Item {
                                     if (drag.active && cr.r) {
                                         cr.owner.markSelected(list.colIndex, cr.index)
                                         colDrag.Drag.mimeData = root.pane.uriListMime([modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name)])
-                                        colDrag.Drag.active = true
-                                    } else colDrag.Drag.active = false
+                                        if (root.pane.ghost) root.pane.ghost.startDrag(colDrag, () => drag.active); else colDrag.Drag.active = true
+                                    } else { colDrag.Drag.active = false; if (root.pane.ghost) root.pane.ghost.end() }
                                 }
                                 onClicked: mouse => {
                                     if (!cr.r) return

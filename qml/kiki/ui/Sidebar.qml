@@ -31,7 +31,14 @@ Rectangle {
     /// Rail style (Settings → General): a 44px column of icons that widens on hover.
     property bool compact: false
     readonly property bool hovered: railHover.hovered
-    readonly property var entries: [{ kind: "search", uri: "", item: { name: "Search" } }].concat(favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })), [{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }], locations.map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
+    /// Whether the rail's first entry, search everywhere, is offered. The file chooser turns it
+    /// off: a chooser answers with a file, and has nowhere for a search to go (owner, 2026-09-28).
+    property bool showSearch: true
+    /// Whether the Locations section — Trash, the servers, "add a location" — is offered. The
+    /// file chooser turns it off for now (owner, 2026-09-28): a chooser answers with a path on
+    /// this machine, and a server can only answer with a URI the asking application cannot read.
+    property bool showLocations: true
+    readonly property var entries: (showSearch ? [{ kind: "search", uri: "", item: { name: "Search" } }] : []).concat(favorites.map(f => ({ kind: "favorite", uri: f.uri, item: f })), showLocations ? [{ kind: "trash", uri: "trash:///", item: { name: "Trash", uri: "trash:///" } }] : [], (showLocations ? locations : []).map(l => ({ kind: "location", uri: l.remoteUri, item: l })), devices.map(d => ({ kind: "device", uri: d.uri, item: d })))
     function moveKey(delta) { if (!entries.length) return; keyIndex = keyIndex < 0 ? (delta > 0 ? 0 : entries.length - 1) : Math.max(0, Math.min(entries.length - 1, keyIndex + delta)) }
     function activateKey() {
         const e = entries[keyIndex]; if (!e) return
@@ -40,7 +47,7 @@ Rectangle {
         else if (!(e.kind === "device" && e.item.busy)) sidebar.open(e.uri)
     }
     // Search is entry 0; everything after it is one further along than it was.
-    function keyOffset(kind, i) { if (kind === "search") return 0; let o = 1; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += 1; if (kind === "device") o += locations.length; return o + i }
+    function keyOffset(kind, i) { if (kind === "search") return 0; let o = showSearch ? 1 : 0; if (kind !== "favorite") o += favorites.length; if (kind !== "favorite" && kind !== "trash") o += showLocations ? 1 : 0; if (kind === "device") o += showLocations ? locations.length : 0; return o + i }
     /// A glyph for the well-known folders; anything else keeps the plain folder icon and
     /// leans on its tooltip.
     function favIcon(name) {
@@ -80,6 +87,7 @@ Rectangle {
             // line of its own with the sections' gap under it. The toolbar's magnifier went with it.
             SidebarItem {
                 objectName: "sidebar-search"
+                visible: sidebar.showSearch
                 compact: sidebar.compact
                 icon: "search"; label: Kiki.T.tr("sidebar.search"); tipText: Kiki.T.tr("sidebar.searchTip")
                 keyed: sidebar.keyIndex === 0
@@ -99,8 +107,8 @@ Rectangle {
                     readonly property int pitch: 31          // SidebarItem's 30px plus the Column's 1px spacing
                     property int insertAt: 0
                     function indexAt(y) { return Math.max(0, Math.min(sidebar.favorites.length, Math.round((y - favSection.headerHeight) / pitch))) }
-                    onEntered: drag => insertAt = indexAt(drag.y)
-                    onPositionChanged: drag => insertAt = indexAt(drag.y)
+                    onEntered: drag => { insertAt = indexAt(drag.y); Kiki.DragTrack.moved(mapToItem(null, drag.x, drag.y), drag.proposedAction) }
+                    onPositionChanged: drag => { insertAt = indexAt(drag.y); Kiki.DragTrack.moved(mapToItem(null, drag.x, drag.y), drag.proposedAction) }
                     onDropped: drop => { const urls = drop.hasUrls ? drop.urls.map(u => u.toString()) : []; if (urls.length) { drop.accept(Qt.LinkAction); sidebar.addFavorites(urls, insertAt) } }
                 }
             SidebarSection {
@@ -144,6 +152,7 @@ Rectangle {
                 }
             }
             SidebarSection {
+                visible: sidebar.showLocations
                 compact: sidebar.compact
                 title: Kiki.T.tr("sidebar.locations"); plus: true
                 onPlusClicked: sidebar.addLocation()

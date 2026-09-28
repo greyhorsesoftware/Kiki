@@ -18,6 +18,23 @@ QtObject {
     function reply(choice, all) { if (prompt) { Kiki.Daemon.request("PromptReply", { job: prompt.job, choice: choice, applyToAll: !!all }); prompt = null } }
     function live(j) { return j.state === "running" || j.state === "queued" }
     function running() { return list.filter(live) }
+
+    /// The files being written right now, by URI: each running transfer names the item it is on
+    /// (`current.name`) and the folder it is writing into (`dest`), and that file is the one a
+    /// view should show as not yet whole — dimmed, not a file to open or to drag somewhere else
+    /// (owner, 2026-09-28). Rebuilt on every job event, so a binding on `inFlight` follows it.
+    property var inFlight: ({})
+    function isInFlight(uri) { return inFlight[uri] === true }
+    function _rebuildInFlight() {
+        const m = {}
+        for (const j of list) {
+            if (!live(j) || !j.dest || !j.current || !j.current.name) continue
+            const base = j.dest.endsWith("/") ? j.dest : j.dest + "/"
+            m[base + encodeURIComponent(j.current.name).replace(/%2F/g, "/")] = true
+        }
+        inFlight = m
+    }
+    onListChanged: _rebuildInFlight()
     function showToast(t) { toast = t; toastTimer.restart() }
     function dismissToast() { toast = null; toastTimer.stop() }
     /// Forgetting is the daemon's to do — the list is fetched again on every reconnect — and it

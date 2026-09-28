@@ -73,11 +73,53 @@ TestCase {
         compare(Wire.count("ChooserResult"), 0, "and the daemon was not")
     }
 
-    // A location can only be answered with a URI the asking application cannot open.
-    function test_the_chooser_offers_no_remote_locations() {
-        const section = findChild(tc, "chooser-locations")
-        verify(section !== null)
-        verify(!section.visible)
+    // The side part is the main window's rail, with favorites and nothing else: no search (a
+    // chooser has nowhere for one to go) and no locations — one can only answer with a URI the
+    // asking application cannot open.
+    function test_the_side_part_is_the_rail_with_favorites_only() {
+        const rail = findChild(tc, "chooser-rail")
+        verify(rail !== null)
+        verify(rail.compact, "the rail, as the main window's default")
+        compare(rail.width, 44)
+        // It follows the person's setting, and does nothing of its own: traditional in the app
+        // is traditional here, with no hover to widen it.
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { sidebarStyle: "traditional" })
+        verify(!rail.compact, "traditional, as set")
+        verify(rail.width > 44)
+        Kiki.Settings.view = Object.assign({}, Kiki.Settings.view, { sidebarStyle: "rail" })
+        verify(rail.compact)
+        verify(rail.showSearch, "the rail's Search entry is offered")
+        verify(!rail.showLocations, "no Locations section at all — not Trash, not a server, not 'add'")
+        verify(rail.entries.every(e => e.kind === "favorite" || e.kind === "search"), JSON.stringify(rail.entries.map(e => e.kind)))
+        // The rail's Search entry is search everywhere — the main window's overlay, not a box.
+        portal.pick({ mode: "open", directory: false, currentFolder: "/home/t" }, () => {})
+        const all = findChild(tc, "chooser-search-all")
+        verify(all !== null)
+        verify(!all.visible, "down until asked for")
+        rail.searchRequested()
+        verify(all.visible, "the rail's entry brings the overlay up")
+        verify(rail.searchOpen, "and the entry shows it is up")
+        rail.searchRequested()
+        verify(!all.visible)
+        portal.finish(null)
+    }
+
+    // The main window's keys that mean something here: a dot for hidden files, a slash for the
+    // filter box. Without them a chooser had Escape and nothing else.
+    function test_dot_and_slash_work_in_the_chooser() {
+        portal.pick({ mode: "open", directory: false, currentFolder: "/home/t" }, () => {})
+        const box = findChild(tc, "chooser-filter")
+        const was = portal.pane.showHidden
+        keyClick(Qt.Key_Period)
+        compare(portal.pane.showHidden, !was, "a dot toggles hidden files")
+        keyClick(Qt.Key_Period)
+        compare(portal.pane.showHidden, was)
+        verify(!box.visible)
+        keyClick(Qt.Key_Slash)
+        verify(box.visible, "a slash brings the filter bar up — the main window's, across the list")
+        box.closed()
+        verify(!box.visible, "and its Escape takes it down")
+        portal.finish(null)
     }
 
     // The box fits the window it is in. It was 860 × 560 whatever the window, and in one shorter

@@ -14,10 +14,75 @@ Rectangle {
     property var favorites: []
     property var locations: []
     property int filterIndex: 0
-    property Kiki.Pane pane: Kiki.Pane { view: "list" }
+    /// The window's DragGhost, handed on to this dialog's pane so a drag out of the chooser
+    /// carries a picture like any other.
+    property var ghost: null
+    property Kiki.Pane pane: Kiki.Pane { view: "list"; ghost: dlg.ghost }
+    /// The sidebar style the main window follows (Shell.qml): the rail unless set to traditional.
+    readonly property bool railStyle: Kiki.Settings.view.sidebarStyle !== "traditional"
+    /// The filter — `/`, as in the main window, and looking as it does there (owner, 2026-09-28):
+    /// the same FilterBar across the top of the list, with its "n of m" count, its Escape, and
+    /// its promotion to search everywhere. What is typed narrows the folder shown.
+    property bool filterShown: false
+    property int filterTotal: 0
+    function openFilter() { filterTotal = pane.listing.count; filterShown = true; chooserFilter.focusInput() }
+    function closeFilter() { filterShown = false; chooserFilter.clear(); pane.setFilter(""); dlg.forceActiveFocus() }
+
+    // ---------------------------------------------------------------- search everywhere
+    // The rail's Search entry is the main window's search-everywhere UI, not a box (owner,
+    // 2026-09-28): the same overlay, over the index, with results of its own. A result that is
+    // a file is the answer when the chooser is opening one; otherwise its folder is shown with
+    // it selected, and a Save gets the name.
+    property Kiki.WindowCache results: Kiki.WindowCache { padAhead: 100; padBehind: 50 }
+    property string indexInfo: ""
+    function runSearch(text, scope) {
+        if (!text) return
+        if (!results.lid) { results.lid = Kiki.Daemon.allocLid(); Kiki.Daemon.bind(results.lid, results) }
+        Kiki.Daemon.request("Search", { lid: results.lid, scope: "everywhere", query: text, mode: "substring" }, (ok, err) => {
+            if (err) { indexInfo = err.message; return }
+            indexInfo = ok.indexAge === undefined ? Kiki.T.tr("search.noIndex") : Kiki.T.tr("search.indexAge", { n: Math.round(ok.indexAge / 60) })
+        })
+    }
+    function toggleSearchEverywhere() { if (searchAll.visible) searchAll.close(); else searchAll.open("") }
+    function fromSearch(uri, pick) {
+        const folder = uri.endsWith("/") ? uri : (uri.replace(/\/[^/]*$/, "") || uri)
+        const name = uri.endsWith("/") ? "" : decodeURIComponent(uri.split("/").pop())
+        searchAll.close()
+        if (pick && name && req && req.mode === "open" && !req.directory) { finish([uri]); return }
+        pane.open(folder)
+        if (name) { pane.selectAfterLoad = name; if (req && req.mode !== "open") nameInput.text = name }
+    }
+
+    // ---------------------------------------------------------------- keys
+    // The main window's keys, the ones that mean something in a chooser (owner, 2026-09-28): a
+    // dot for hidden files, a slash for the filter, j/k and the arrows to move, Enter to choose,
+    // Backspace for the folder above. The window's own key handler stands down while a chooser
+    // is up (Shell.qml), so without these it had Escape and nothing else. A name being typed
+    // keeps its keys: the field takes them first.
+    function moveSelection(delta, extend) {
+        const n = pane.listing.count; if (!n) return
+        const cur = pane.selection.current < 0 ? (delta > 0 ? -1 : n) : pane.selection.current
+        const next = Math.max(0, Math.min(n - 1, cur + delta))
+        if (extend) pane.selection.range(next); else pane.selection.set(next)
+        if (chooserList.ensureVisible) chooserList.ensureVisible(next)
+    }
+    Keys.onPressed: event => {
+        if (searchAll.visible) return
+        const shift = event.modifiers & Qt.ShiftModifier
+        switch (event.key) {
+        case Qt.Key_Period: pane.setHidden(!pane.showHidden); break
+        case Qt.Key_Slash: openFilter(); break
+        case Qt.Key_J: case Qt.Key_Down: moveSelection(1, shift); break
+        case Qt.Key_K: case Qt.Key_Up: moveSelection(-1, shift); break
+        case Qt.Key_Backspace: pane.up(); break
+        case Qt.Key_Return: case Qt.Key_Enter: accept(); break
+        default: return
+        }
+        event.accepted = true
+    }
 
     function open(r) {
-        req = r; filterIndex = 0; visible = true
+        req = r; filterIndex = 0; visible = true; filterShown = false
         pane.open(r.currentFolder ? "file://" + encodeURI(r.currentFolder) : "file://" + home)
         nameInput.text = r.currentName || ""
         // Focus comes here with the dialog, in every mode. The window's own keys stand down
@@ -65,33 +130,48 @@ Rectangle {
         anchors.centerIn: parent; width: Math.min(860, dlg.width - 24); height: Math.min(560, dlg.height - 24); color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             anchors.fill: parent
+            // One header row (owner, 2026-09-28): the title — Open File, Save As, whatever the asking
+            // application called it — at 17 px, the path to its right, and the search box on the
+            // same row while the rail's Search entry is lit. A title on a row of its own was tried
+            // and looked wrong.
             Rectangle {
                 width: parent.width; height: 48; color: Kiki.Theme.bg
                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Kiki.Theme.line }
                 Row {
-                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
-                    Text { anchors.verticalCenter: parent.verticalCenter; text: dlg.req ? (dlg.req.title || (dlg.req.mode === "open" ? "Open File" : "Save File")) : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; font.bold: true }
-                    Breadcrumb { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 300; uri: dlg.pane.uri; home: dlg.home; onNavigate: uri => dlg.pane.open(uri) }
-                    SearchBox { anchors.verticalCenter: parent.verticalCenter; width: 200; placeholder: Kiki.T.tr("search.box"); onChanged: text => dlg.pane.setFilter(text) }
+                    anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 12
+                    Text { id: chooserTitle; anchors.verticalCenter: parent.verticalCenter; text: dlg.req ? (dlg.req.title || (dlg.req.mode === "open" ? "Open File" : "Save File")) : ""; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 17; font.bold: true }
+                    Breadcrumb { anchors.verticalCenter: parent.verticalCenter; width: parent.width - chooserTitle.width - 12; uri: dlg.pane.uri; home: dlg.home; onNavigate: uri => dlg.pane.open(uri) }
                 }
             }
-            Row {
-                width: parent.width; height: parent.height - 48 - 52
-                Rectangle {
-                    width: 180; height: parent.height; color: Kiki.Theme.bgDark
-                    Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Kiki.Theme.line }
-                    Column {
-                        anchors.fill: parent; anchors.topMargin: 8; spacing: 12
-                        SidebarSection { title: Kiki.T.tr("portal.favorites"); Repeater { model: dlg.favorites; delegate: SidebarItem { required property var modelData; icon: modelData.name === "Home" ? "home" : "folder"; label: modelData.name; active: dlg.pane.uri === modelData.uri; onClicked: dlg.pane.open(modelData.uri) } } }
-                        // Not shown (plan 31, D13). Whoever asked for a file — another application
-                        // through the portal, or kiki's own "local folder" and "extract to" — is
-                        // going to open a path on this machine, and a location can only answer
-                        // with an sftp:// URI it cannot read. Back when a pick is fetched to a
-                        // local file first.
-                        SidebarSection { objectName: "chooser-locations"; visible: false; title: Kiki.T.tr("portal.locations"); Repeater { model: dlg.locations; delegate: SidebarItem { required property var modelData; icon: "server"; iconColor: Kiki.Theme.green; label: modelData.name + " · " + modelData.plugin; onClicked: dlg.pane.open(modelData.remoteUri) } } }
-                    }
+            FilterBar {
+                id: chooserFilter; objectName: "chooser-filter"
+                visible: dlg.filterShown
+                width: parent.width; pane: dlg.pane; total: dlg.filterTotal
+                onApply: text => dlg.pane.setFilter(text)
+                onPromote: text => { dlg.closeFilter(); searchAll.open(text) }
+                onClosed: dlg.closeFilter()
+            }
+            Item {
+                width: parent.width; height: parent.height - 48 - (chooserFilter.visible ? chooserFilter.height : 0) - 52
+                Views.ListPane { id: chooserList; x: rail.width; width: parent.width - rail.width; height: parent.height; pane: dlg.pane; onActivate: i => { const r = dlg.pane.listing.row(i); if (r && r.isDir) dlg.pane.open(dlg.pane.childUri(r.name)); else dlg.accept() } }
+                // The side part is the main window's sidebar as the person has it set — the rail
+                // or the traditional one (Settings → View), and it does not widen or hide of its
+                // own accord: a chooser looks like the app it belongs to (owner, 2026-09-28).
+                // Favorites only — no search (nowhere for one to go) and no locations: whoever
+                // asked for a file is going to open a path on this machine, and a location can
+                // only answer with an sftp:// URI it cannot read (plan 31, D13).
+                Sidebar {
+                    id: rail; objectName: "chooser-rail"
+                    x: 0; height: parent.height
+                    compact: dlg.railStyle
+                    width: dlg.railStyle ? 44 : Math.min(Kiki.Theme.sidebarWidth, Math.floor(dlg.width * 0.32))
+                    showSearch: true; showLocations: false
+                    searchOpen: searchAll.visible
+                    onSearchRequested: dlg.toggleSearchEverywhere()
+                    favorites: dlg.favorites; locations: []
+                    currentUri: dlg.pane.uri
+                    onOpen: uri => dlg.pane.open(uri)
                 }
-                Views.ListPane { width: parent.width - 180; height: parent.height; pane: dlg.pane; onActivate: i => { const r = dlg.pane.listing.row(i); if (r && r.isDir) dlg.pane.open(dlg.pane.childUri(r.name)); else dlg.accept() } }
             }
             Rectangle {
                 width: parent.width; height: 52; color: Kiki.Theme.bg
@@ -111,7 +191,7 @@ Rectangle {
                         TextInput { id: nameInput; anchors.fill: parent; anchors.margins: 8; clip: true; verticalAlignment: TextInput.AlignVCenter; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; onAccepted: dlg.accept() }
                     }
                     Rectangle {
-                        visible: dlg.req && dlg.req.filters && dlg.req.filters.length > 0; anchors.verticalCenter: parent.verticalCenter; height: 30; width: filterRow.width + 20; radius: 2; border.width: 1; border.color: Kiki.Theme.gutter; color: "transparent"
+                        visible: !!(dlg.req && dlg.req.filters && dlg.req.filters.length > 0); anchors.verticalCenter: parent.verticalCenter; height: 30; width: filterRow.width + 20; radius: 2; border.width: 1; border.color: Kiki.Theme.gutter; color: "transparent"
                         Row { id: filterRow; anchors.centerIn: parent; spacing: 6
                             Text { text: dlg.req && dlg.req.filters && dlg.req.filters[dlg.filterIndex] ? dlg.req.filters[dlg.filterIndex].name : ""; color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                             Icon { name: "chev-d"; size: 12; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter } }
@@ -122,4 +202,13 @@ Rectangle {
         }
     }
     Keys.onEscapePressed: dlg.finish(null)
+    Views.SearchOverlay {
+        id: searchAll; objectName: "chooser-search-all"
+        anchors.fill: parent; z: 20
+        results: dlg.results; locations: []; home: dlg.home; indexInfo: dlg.indexInfo
+        onSearch: (text, scope) => dlg.runSearch(text, scope)
+        onOpenUri: uri => dlg.fromSearch(uri, true)
+        onRevealUri: uri => dlg.fromSearch(uri, false)
+        onClosed: dlg.forceActiveFocus()
+    }
 }

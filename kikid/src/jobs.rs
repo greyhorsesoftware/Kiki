@@ -164,7 +164,7 @@ fn queue() -> &'static Mutex<Queue> {
     })
 }
 
-pub(crate) fn state_dir() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     if let Ok(d) = std::env::var("KIKI_STATE_DIR") {
         return PathBuf::from(d);
     }

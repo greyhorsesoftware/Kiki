@@ -69,8 +69,8 @@ FloatingWindow {
     property bool sideBySide: false
     readonly property bool split: sideBySide
     // A drop hands the focus to the pane it landed in: that is where the files now are.
-    property Kiki.Pane left: Kiki.Pane { view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.left) }
-    property Kiki.Pane right: Kiki.Pane { view: "list"; focused: false; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.right) }
+    property Kiki.Pane left: Kiki.Pane { ghost: dragGhost; view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.left) }
+    property Kiki.Pane right: Kiki.Pane { ghost: dragGhost; view: "list"; focused: false; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.right) }
     /// The drop the IPC makes, shaped as Qt shapes a real one — which has no `modifiers` at all:
     /// the keys held arrive folded into `proposedAction`, by the table measured in
     /// `Pane.wantsCopy` (no key and Shift → Move, the source's proposal; Ctrl and Alt → Copy).
@@ -265,7 +265,38 @@ FloatingWindow {
     }
     function startMirror(upload) { if (!split) enterMirror(); mirrorWs.upload = upload; mirrorOpen = true }
     function otherPane() { return pane === left ? right : left }
-    function transfer(move) { if (split) ops.transferTo(otherPane().uri, move) }
+    function transfer(move) {
+        if (!split) return
+        // Flown before it is submitted, so the picture leaves the row that is still selected.
+        flyFiles(pane, otherPane(), carriedRows(pane), pane.selection.positions().length, move ? "" : "+")
+        ops.transferTo(otherPane().uri, move)
+    }
+    /// The rows a pane's selection would carry, for a FileFan: `{ kind, thumb }`, three at most.
+    function carriedRows(p) {
+        return p.selection.positions().slice(0, 3).map(i => { const r = p.listing.row(i); return r ? { kind: r.kind, thumb: r.thumb || "" } : { kind: "file", thumb: "" } })
+    }
+    /// The fan a keyboard transfer flies from one pane to the other (owner, 2026-09-28: a copy
+    /// from a server to this machine should be seen to go). A mouse drag has the DragGhost; this
+    /// is for the keys, where nothing moved on screen. `from`/`to` are panes; the fan starts
+    /// at the source pane's centre and lands at the target's, then fades. One flight at a time:
+    /// a second while one is in the air restarts it.
+    property var lastFly: null
+    function flyFiles(from, to, rows, count, badge) {
+        const fromCol = from === right ? rightCol : leftCol, toCol = to === right ? rightCol : leftCol
+        const a = fromCol.mapToItem(win.contentItem, fromCol.width / 2, fromCol.height / 2)
+        const b = toCol.mapToItem(win.contentItem, toCol.width / 2, toCol.height / 2)
+        lastFly = { from: from === right ? "right" : "left", to: to === right ? "right" : "left", count: count, badge: badge }
+        flyPoints(a, b, rows, count, badge)
+    }
+    /// The fan from one point to another, in window coordinates: what a keyboard transfer does
+    /// between the panes, and what a drag dropped on nothing does back to where it began.
+    function flyPoints(a, b, rows, count, badge) {
+        flyer.rows = rows; flyer.count = count; flyer.badge = badge
+        flight.stop()
+        flyer.x = a.x - flyer.width / 2; flyer.y = a.y - flyer.height / 2; flyer.opacity = 1; flyer.visible = true
+        flight.toX = b.x - flyer.width / 2; flight.toY = b.y - flyer.height / 2
+        flight.start()
+    }
     onSplitChanged: if (!split) mirrorOpen = false
     property bool mirrorOpen: false
     // Leaving goes through the workspace's own `leave`, so Ctrl+M out of it puts it back at
@@ -583,7 +614,12 @@ FloatingWindow {
     }
     property alias clipboard: ops.clipboard
     function copySelection(cut) { ops.copySelection(cut, win.selectedUris()) }
-    function paste() { ops.paste() }
+    function paste() {
+        // Side by side, what is pasted came from the other pane as often as not: it is seen to
+        // arrive, with the copy's "+" unless it was cut.
+        if (split && win.clipboard.uris.length) flyFiles(otherPane(), pane, [], win.clipboard.uris.length, win.clipboard.cut ? "" : "+")
+        ops.paste()
+    }
     function trashSelection() { if (win.galleryPane()) win.galleryPane().keepPlace(); ops.trashSelection(win.selectedUris()) }
     /// Ctrl+Shift+N. The folder is made in the folder being worked in, which in columns is the key
     /// column's — not the one the pane is standing in, several columns back.
@@ -1669,6 +1705,56 @@ FloatingWindow {
     Component { id: galleryView; Views.GalleryPane { pane: win.left; home: win.home; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
     Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
 
+    // The drag's image, off screen (a grab needs an item that renders), reached through the panes.
+    UI.DragGhost {
+        id: dragGhost; parent: win.contentItem; objectName: "drag-ghost"
+        // A drop on nothing — refused, or cancelled with Escape — flies the picture back to where
+        // the drag was picked up, so it looks like what it is: nothing happened.
+        onSnapBack: (from, to, rows, count) => { win.lastFly = { snapBack: true, count: count }; win.flyPoints(from, to, rows, count, "") }
+    }
+    // Empty space tells DragTrack where the pointer is too; the panes' drop targets sit above.
+    DropArea {
+        // In the window's item tree, as the ghost is: declared here it would be a child of the
+        // window object and never drawn nor hit (found 2026-09-28: the badge below never showed).
+        parent: win.contentItem
+        anchors.fill: parent; z: -1
+        onEntered: drag => Kiki.DragTrack.moved(mapToItem(null, drag.x, drag.y), drag.proposedAction)
+        onPositionChanged: drag => Kiki.DragTrack.moved(mapToItem(null, drag.x, drag.y), drag.proposedAction)
+        onExited: Kiki.DragTrack.left()
+    }
+    // The badge of a drag of ours, drawn by the window beside the compositor's icon and following
+    // the modifiers live — the compositor draws its icon once and will not change it.
+    Rectangle {
+        objectName: "drag-badge"
+        parent: win.contentItem
+        // "+" when the drop would copy: Qt proposes a copy for Ctrl, and a drag out of a server
+        // is a download whatever the keys say.
+        readonly property bool copying: Kiki.DragTrack.action === Qt.CopyAction || dragGhost.copyByDefault
+        visible: dragGhost.dragging && Kiki.DragTrack.inside && copying
+        // Just off the cursor's tip, below and to the left (owner, 2026-09-28): the image hangs
+        // below-right of the cursor (DragGhost.hotSpot), so this corner is free of it.
+        x: Kiki.DragTrack.pointer.x - 30; y: Kiki.DragTrack.pointer.y + 10
+        z: 950; width: 22; height: 22; radius: 11
+        color: Kiki.Theme.accent; border.width: 2; border.color: Kiki.Theme.bg
+        Text { anchors.centerIn: parent; text: "+"; color: Kiki.Theme.bg; font.family: Kiki.Theme.mono; font.pixelSize: 15; font.bold: true }
+    }
+    // The fan a keyboard transfer flies between the panes (`flyFiles`).
+    UI.FileFan {
+        id: flyer; objectName: "flyer"
+        parent: win.contentItem; z: 900; visible: false
+        ParallelAnimation {
+            id: flight
+            property real toX: 0
+            property real toY: 0
+            NumberAnimation { target: flyer; property: "x"; to: flight.toX; duration: 350; easing.type: Easing.InOutQuad }
+            NumberAnimation { target: flyer; property: "y"; to: flight.toY; duration: 350; easing.type: Easing.InOutQuad }
+            SequentialAnimation {
+                PauseAnimation { duration: 250 }
+                NumberAnimation { target: flyer; property: "opacity"; to: 0; duration: 150 }
+            }
+            onFinished: flyer.visible = false
+        }
+    }
     Views.SearchOverlay {
         id: searchOverlay
         parent: win.contentItem
@@ -1713,7 +1799,7 @@ FloatingWindow {
         if (loc.image) items.push({ id: "removeImage", label: Kiki.T.tr("menu.removeImage"), action: () => set("") })
         return items
     }
-    UI.PortalDialog { id: portal; objectName: "portal"; chooser: ({ answered: (token, uris) => win.chooserFinished(token, uris) }); anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
+    UI.PortalDialog { id: portal; objectName: "portal"; ghost: dragGhost; chooser: ({ answered: (token, uris) => win.chooserFinished(token, uris) }); anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
     UI.SettingsWindow { id: settingsWin; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }
     UI.IntegrationDialog { id: integrationDialog; parent: win.contentItem }
     UI.ConfirmDialog { id: confirm; objectName: "confirm"; parent: win.contentItem; onVisibleChanged: if (!visible) keys.forceActiveFocus() }

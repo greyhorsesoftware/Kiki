@@ -293,8 +293,6 @@ var strings = {
     "search.resultsFor": "results for",
     "search.in": "in",
     "search.box": "Search",
-    "portal.favorites": "Favorites",
-    "portal.locations": "Locations",
     "pane.tryAgain": "Try again",
     "pane.connectingTo": "Connecting to {host}…",
     "pane.connecting": "Connecting…",

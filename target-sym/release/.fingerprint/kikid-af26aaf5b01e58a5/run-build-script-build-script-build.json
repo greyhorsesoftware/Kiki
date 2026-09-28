@@ -1,0 +1,1 @@
+{"rustc":1625334936438085654,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[13633167336478321855,"build_script_build",false,2542236311788097543]],"local":[{"RerunIfChanged":{"output":"release/build/kikid-af26aaf5b01e58a5/output","paths":["../.git/HEAD","src"]}}],"rustflags":[],"config":0,"compile_kind":0}

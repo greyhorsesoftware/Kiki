@@ -288,8 +288,6 @@ var strings = {
     "search.resultsFor": "resultados de",
     "search.in": "en",
     "search.box": "Buscar",
-    "portal.favorites": "Favoritos",
-    "portal.locations": "Ubicaciones",
     "pane.tryAgain": "Reintentar",
     "pane.connectingTo": "Conectando con {host}…",
     "pane.connecting": "Conectando…",

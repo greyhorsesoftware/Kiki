@@ -297,13 +297,7 @@ fn answer(out: &Path) -> Result<Value> {
 /// One page, `width` wide, the height by the page's own proportions; `None` when pdftoppm
 /// would not — whether the tool is missing is told apart by `pdf_info_of` before this runs.
 fn render(src: &Path, page: u64, width: u32) -> Option<Vec<u8>> {
-    let n = page.to_string();
-    let w = width.to_string();
-    let out = Command::new("nice").args(["-n", "15", "pdftoppm", "-f", &n, "-l", &n, "-png", "-scale-to-x", &w, "-scale-to-y", "-1"]).arg(src).stderr(Stdio::null()).output().ok()?;
-    if !out.status.success() || out.stdout.is_empty() {
-        return None;
-    }
-    Some(out.stdout)
+    crate::decode::pdf_page_png(src, page, crate::decode::PdfScale::Width(width)).ok()
 }
 
 // ---------------------------------------------------------------- remote

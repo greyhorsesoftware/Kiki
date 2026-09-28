@@ -1,0 +1,3 @@
+cargo:rustc-env=KIKI_BUILD=cfddea0+.20260928
+cargo:rerun-if-changed=../.git/HEAD
+cargo:rerun-if-changed=src

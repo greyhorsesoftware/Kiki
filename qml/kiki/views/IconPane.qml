@@ -164,6 +164,10 @@ Item {
             objectName: "tile-" + index
             property var row: root.pane.listing.row(index)
             property bool selected: root.pane.selection.has(index)
+            // A file a transfer is still writing is not whole yet: dimmed, so nobody opens or drags a
+            // half of it (owner, 2026-09-28). `Kiki.Jobs.inFlight` names them by URI.
+            readonly property bool inFlight: !!row && Kiki.Jobs.isInFlight(root.pane.childUri(row.name))
+            opacity: inFlight ? 0.45 : 1
             /// What the tile draws: the thumbnail at its painted size, or the kind icon.
             readonly property real artWidth: (row && row.thumb && thumb.paintedWidth > 0) ? thumb.paintedWidth : root.iconSize
             readonly property real artHeight: (row && row.thumb && thumb.paintedHeight > 0) ? thumb.paintedHeight : root.iconSize
@@ -237,7 +241,11 @@ Item {
                     x: Math.round((parent.width - width) / 2); y: col.y; height: col.height
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     drag.target: cellDrag; drag.threshold: 8
-                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index); cellDrag.Drag.active = true } else cellDrag.Drag.active = false }
+                    // The drag's picture is made on hover, before any press (DragGhost.startDrag).
+                    hoverEnabled: true
+                    onEntered: if (root.pane.ghost) root.pane.ghost.hover(root.pane, cell.index, false)
+                    onPressed: mouse => { if (mouse.button === Qt.LeftButton && root.pane.ghost) root.pane.ghost.prepare(root.pane, cell.index, mouse.modifiers & Qt.ControlModifier, mapToItem(null, mouse.x, mouse.y)) }
+                    drag.onActiveChanged: { if (drag.active) { if (!cell.selected) root.pane.selection.set(cell.index); cellDrag.Drag.mimeData = root.pane.dragMime(cell.index); if (root.pane.ghost) root.pane.ghost.startDrag(cellDrag, () => drag.active); else cellDrag.Drag.active = true } else { cellDrag.Drag.active = false; if (root.pane.ghost) root.pane.ghost.end() } }
                     onClicked: mouse => {
                         if (mouse.button === Qt.RightButton) { if (!cell.selected) root.pane.selection.set(cell.index); root.contextMenu(cell.index, cell.mapToItem(null, mouse.x, mouse.y)); return }
                         if (mouse.modifiers & Qt.ShiftModifier) root.pane.selection.range(cell.index)

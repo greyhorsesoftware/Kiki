@@ -17,6 +17,7 @@ fn main() {
 }
 
 fn serve() {
+    keep_words();
     let listener = match systemd_socket() {
         Some(l) => l,
         None => {
@@ -56,6 +57,31 @@ fn serve() {
     if let Err(e) = server::serve(listener) {
         eprintln!("serve: {e}");
         std::process::exit(1);
+    }
+}
+
+/// Where the daemon's words go when nobody is listening. The window starts the daemon, so its
+/// stderr is a pipe the window holds; once the window has gone the pipe has no reader, and a
+/// line written into it — the daemon's own "leaving", ten seconds after the last window — made
+/// `eprintln!` panic, which under `panic = "abort"` was a SIGABRT and a core dump on every close
+/// (2026-09-28). So when stderr is a pipe or a socket, stdout and stderr go to `kikid.log` in
+/// the state directory instead: nothing the daemon says can kill it, and the next real panic
+/// leaves its message where a person can read it. A terminal, a file, /dev/null stay as given.
+fn keep_words() {
+    use std::os::unix::io::AsRawFd;
+    let piped = unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        libc::fstat(2, &mut st) == 0 && matches!(st.st_mode & libc::S_IFMT, libc::S_IFIFO | libc::S_IFSOCK)
+    };
+    if !piped {
+        return;
+    }
+    let dir = kikid::jobs::state_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let Ok(f) = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(dir.join("kikid.log")) else { return };
+    unsafe {
+        libc::dup2(f.as_raw_fd(), 1);
+        libc::dup2(f.as_raw_fd(), 2);
     }
 }
 

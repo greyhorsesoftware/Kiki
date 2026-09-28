@@ -1,4 +1,5 @@
 import QtQuick
+import ".." as Kiki
 
 // A folder to drop on. While a drag is over it, it tells the drag what letting go would do — the
 // cursor is drawn from that, "not allowed" included — and when the drag lets go, it does it. Every
@@ -14,8 +15,8 @@ DropArea {
     property bool refusing: false
     readonly property bool welcoming: containsDrag && !refusing
     keys: ["text/uri-list"]
-    onEntered: drag => t.refusing = !t.pane.dragOver(t.dest, drag)
-    onPositionChanged: drag => t.refusing = !t.pane.dragOver(t.dest, drag)
-    onExited: t.refusing = false
+    onEntered: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
+    onPositionChanged: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
+    onExited: { t.refusing = false; Kiki.DragTrack.left() }
     onDropped: drop => { t.refusing = false; t.pane.dropInto(t.dest, drop) }
 }

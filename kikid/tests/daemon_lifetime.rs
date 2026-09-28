@@ -122,6 +122,44 @@ fn one_daemon_a_socket_and_it_leaves_when_the_last_window_has_gone() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The window starts the daemon, so the daemon's stderr is a pipe the window holds. When the
+/// window has gone, the pipe's reader has gone with it — and the daemon's last words on leaving
+/// ("no windows for 10000 ms; leaving") went into a closed pipe, `eprintln!` panicked, and with
+/// `panic = "abort"` every close of the last window ended in SIGABRT and a core dump instead of
+/// exit 0 (three dumps on the owner's machine, 2026-09-28). Nothing the daemon says may kill it.
+#[test]
+fn a_daemon_whose_stderr_pipe_is_gone_still_leaves_quietly() {
+    let dir = sandbox("pipe");
+    let socket = dir.join("kiki-test.sock");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kikid"))
+        .env("KIKI_SOCKET", &socket)
+        .env("KIKI_EXIT_GRACE_MS", "300")
+        .env("KIKI_STATE_DIR", dir.join("state"))
+        .env("KIKI_CONFIG_DIR", dir.join("config"))
+        .env("KIKI_DATA_DIR", dir.join("data"))
+        .env("KIKI_CACHE_DIR", dir.join("cache"))
+        .env("KIKI_TRASH_DIR", dir.join("trash"))
+        .env("KIKI_THUMB_DIR", dir.join("thumbs"))
+        .env("KIKI_PLUGIN_DIR", dir.join("plugins"))
+        .env("KIKI_SECRET_TOOL", dir.join("no-secret-tool"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn kikid");
+    // The window is gone: whoever was reading the daemon's output is not any more.
+    drop(child.stdout.take());
+    drop(child.stderr.take());
+    let mut daemon = Daemon(child);
+    let window = Window::open(&socket, Duration::from_secs(10)).expect("the daemon answered");
+    drop(window);
+    let code = daemon.gone_within(Duration::from_secs(10));
+    assert_eq!(code, Some(0), "leaves with 0 — not a signal from its own last words");
+    // And what it would have said is in its log, where a person can read it.
+    let log = std::fs::read_to_string(dir.join("state/kikid.log")).unwrap_or_default();
+    assert!(log.contains("leaving"), "the daemon's words went to its log: {log:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_grace_of_zero_is_a_daemon_that_stays() {
     // What the test harness sets: there the daemon's life is the harness's to manage, and a

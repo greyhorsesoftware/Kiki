@@ -288,8 +288,6 @@ var strings = {
     "search.resultsFor": "件の結果：",
     "search.in": "の中",
     "search.box": "検索",
-    "portal.favorites": "お気に入り",
-    "portal.locations": "場所",
     "pane.tryAgain": "再試行",
     "pane.connectingTo": "{host} に接続中…",
     "pane.connecting": "接続中…",

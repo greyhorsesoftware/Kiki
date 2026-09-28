@@ -189,7 +189,9 @@ jobs:
           curl -fsSL -o tag.tar.gz "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${VERSION}.tar.gz"
           d="$(sha256sum tag.tar.gz | cut -d' ' -f1)"
           sed -i "s/^  sha256sums=('[0-9a-f]*')/  sha256sums=('$d')/" packaging/PKGBUILD
-          # As builder: makepkg refuses root, and .SRCINFO has no generator but makepkg.
+          # As builder: makepkg refuses root, and .SRCINFO has no generator but makepkg. It also
+          # insists on a writable build directory even to print, and the checkout is the runner's.
+          chown -R builder packaging/omarchy
           (cd packaging/omarchy && sudo -u builder makepkg --printsrcinfo > .SRCINFO)
       - name: The store's package builds from the published asset, with the digest just written
         # What the Omarchy store's builders will do with this exact PKGBUILD: fetch the asset this
