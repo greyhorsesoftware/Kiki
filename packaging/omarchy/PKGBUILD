@@ -6,7 +6,7 @@
 # and for building a checkout; `install.sh` at the repository root installs the same asset
 # without either. Kept in step with packaging/PKGBUILD by hand; the checksums by the release.
 pkgname=kiki
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)"
 arch=('x86_64' 'aarch64')
@@ -27,18 +27,21 @@ install=kiki.install
 # The asset is a finished package: nothing to strip, no debug symbols to split off — without this
 # makepkg's defaults produced an empty kiki-debug package beside the real one.
 options=('!strip' '!debug')
-source_x86_64=("${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}-1-x86_64.pkg.tar.zst")
-source_aarch64=("${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}-1-aarch64.pkg.tar.zst")
+# The download is given a name of its own (`name::url`): the asset is called exactly what this
+# package will be called, and makepkg took the fetched asset for a package already built and
+# refused to build ("use -f to overwrite", the v0.4.0 release, 2026-09-28).
+source_x86_64=("${pkgname}-${pkgver}-x86_64-release.pkg.tar.zst::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}-1-x86_64.pkg.tar.zst")
+source_aarch64=("${pkgname}-${pkgver}-aarch64-release.pkg.tar.zst::${url}/releases/download/v${pkgver}/${pkgname}-${pkgver}-1-aarch64.pkg.tar.zst")
 # The release's own digests, written here by the release workflow as it publishes
 # (`.github/workflows/release.yml`, "Write the checksums back") — never copied from anywhere but
 # the build that produced the asset. Between a version bump and its release the lines hold a
 # digest that matches nothing, so a build from them fails its checksum rather than installing
 # something unverified. Not SKIP: SKIP would install anything.
-sha256sums_x86_64=('eeb510a0c40363ccd6adad1b6f6ef280874a0e3ec4a4255391e4d49316e9395a')
-sha256sums_aarch64=('5c2d802f734b5d21d4bb6a44dc0162f2d3ed1c700378485e7c4c912c0fecf828')
+sha256sums_x86_64=('9828195338f55f75ef68f781aad287972a7c99e96bbf9c2bafabc7113d055c29')
+sha256sums_aarch64=('f97fec23b3bcb5b6c915da8fd58c88c8a81a1bf0a197a333a11e3d55d266129b')
 
 package() {
   # The release asset is a complete pacman package; unpack its payload into $pkgdir.
-  bsdtar -xf "${srcdir}/${pkgname}-${pkgver}-1-${CARCH}.pkg.tar.zst" -C "${pkgdir}" \
+  bsdtar -xf "${srcdir}/${pkgname}-${pkgver}-${CARCH}-release.pkg.tar.zst" -C "${pkgdir}" \
     --exclude .PKGINFO --exclude .BUILDINFO --exclude .MTREE --exclude .INSTALL
 }

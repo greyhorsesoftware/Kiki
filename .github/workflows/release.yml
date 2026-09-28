@@ -201,7 +201,7 @@ jobs:
         # builds from source; the store does not, so it is not built here.)
         run: |
           mkdir -p /home/builder/build && cp packaging/omarchy/PKGBUILD packaging/omarchy/kiki.install /home/builder/build/ && chown -R builder /home/builder
-          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -s --noconfirm && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
+          sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c 'cd ~/build && makepkg -f -s --noconfirm && ls -l kiki-*.pkg.tar.zst && pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
       - name: Commit the checksums to main
         run: |
           # The checkout was written by the runner's user and this runs as root in the container:

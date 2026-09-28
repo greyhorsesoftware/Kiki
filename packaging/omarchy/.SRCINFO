@@ -1,6 +1,6 @@
 pkgbase = kiki
 	pkgdesc = A fast file manager for Omarchy: Rust daemon, Quickshell front end (binary release)
-	pkgver = 0.4.0
+	pkgver = 0.4.1
 	pkgrel = 1
 	url = https://github.com/greyhorsesoftware/Kiki
 	install = kiki.install
@@ -27,9 +27,9 @@ pkgbase = kiki
 	optdepends = tailscale: share files over Taildrop
 	options = !strip
 	options = !debug
-	source_x86_64 = https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.0/kiki-0.4.0-1-x86_64.pkg.tar.zst
-	sha256sums_x86_64 = eeb510a0c40363ccd6adad1b6f6ef280874a0e3ec4a4255391e4d49316e9395a
-	source_aarch64 = https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.0/kiki-0.4.0-1-aarch64.pkg.tar.zst
-	sha256sums_aarch64 = 5c2d802f734b5d21d4bb6a44dc0162f2d3ed1c700378485e7c4c912c0fecf828
+	source_x86_64 = kiki-0.4.1-x86_64-release.pkg.tar.zst::https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.1/kiki-0.4.1-1-x86_64.pkg.tar.zst
+	sha256sums_x86_64 = 9828195338f55f75ef68f781aad287972a7c99e96bbf9c2bafabc7113d055c29
+	source_aarch64 = kiki-0.4.1-aarch64-release.pkg.tar.zst::https://github.com/greyhorsesoftware/Kiki/releases/download/v0.4.1/kiki-0.4.1-1-aarch64.pkg.tar.zst
+	sha256sums_aarch64 = f97fec23b3bcb5b6c915da8fd58c88c8a81a1bf0a197a333a11e3d55d266129b
 
 pkgname = kiki

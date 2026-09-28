@@ -123,6 +123,9 @@ jobs:
         run: |
           cp packaging/omarchy/PKGBUILD packaging/omarchy/kiki.install /home/builder/build/
           rm -f /home/builder/build/*.sha256
+          # Under the name the PKGBUILD downloads it as, so makepkg finds it here instead of on
+          # GitHub, and updpkgsums hashes this very file.
+          for f in /home/builder/build/kiki-*-1-x86_64.pkg.tar.zst; do mv "$f" "${f%-1-x86_64.pkg.tar.zst}-x86_64-release.pkg.tar.zst"; done
           chown -R builder /home/builder
       # As builder throughout: makepkg refuses root, and updpkgsums runs makepkg.
       - name: makepkg -s
@@ -130,7 +133,7 @@ jobs:
           sudo -u builder env HOME=/home/builder PKGEXT=.pkg.tar.zst bash -c '
             cd ~/build && ls -l
             updpkgsums
-            makepkg -s --noconfirm
+            makepkg -f -s --noconfirm
             ls -l kiki-*.pkg.tar.zst
             pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
 

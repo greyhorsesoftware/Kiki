@@ -8,7 +8,7 @@
 #                              preferred a nearby checkout is what a clean-chroot build exists
 #                              to catch. (A rustup toolchain needs `-d`: pacman does not know it.)
 pkgname=kiki
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="A fast file manager for Omarchy: Rust daemon, Quickshell front end"
 arch=('x86_64' 'aarch64')
@@ -59,7 +59,7 @@ options=('!lto' '!debug')
 # KIKI_LOCAL_SRC there is no source at all: the checkout is the source.
 if [ -z "${KIKI_LOCAL_SRC:-}" ]; then
   source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-  sha256sums=('dbee598549ba5b6bbfe2f8370233d0127b5ca86fe693034bbbf9b3a848ea26ab')
+  sha256sums=('6fc26543a61c5fa0c305bd6193cc5bb71c320e98a1308809b56079d4dcd96143')
   _srcdir="${srcdir}/Kiki-${pkgver}"
 else
   source=()
