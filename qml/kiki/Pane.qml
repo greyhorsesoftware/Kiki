@@ -235,6 +235,29 @@ QtObject {
     }
 
     // Drop `drop` (a DragEvent) into `dest`: move within one place, copy across, Ctrl copies.
+    // ---------------------------------------------------------------- the tunnel
+    /// The folder shown when a drag first sprang a folder open here, "" when no tunnel is open.
+    /// A drop ends the tunnel where it is; a drag that ends in nothing, or leaves the window,
+    /// closes it all the way back to here (owner, 2026-09-28).
+    property string tunnelStart: ""
+    /// A folder a drop target has asked to spring open; the view's SpringPad takes it from here.
+    property string springDest: ""
+    function tunnelInto(folder) {
+        if (!tunnelStart) tunnelStart = uri
+        open(folder)
+    }
+    function tunnelBack() {
+        // A spring asked for but not yet taken is withdrawn too: a drag that went out and came
+        // back would otherwise be taken straight into the folder it had just been brought back
+        // from (owner, 2026-09-28).
+        springDest = ""
+        if (!tunnelStart) return
+        const back = tunnelStart
+        tunnelStart = ""
+        open(back)
+    }
+    function tunnelDone() { tunnelStart = ""; springDest = "" }
+
     function dropInto(dest, drop) {
         // One drop, one job. Drop targets lie over each other — a folder row over its view's
         // background, a column over the pane's — and Qt hands the same drop to each of them in
@@ -247,6 +270,7 @@ QtObject {
         // take it — does not quietly do what was just refused.
         if (!action) { drop.accept(Qt.IgnoreAction); return }
         received()
+        tunnelDone()
         drop.accept(action.op === "copy" ? Qt.CopyAction : Qt.MoveAction)
         const op = { op: action.op, items: action.items, dest: dest }
         if (action.policy) op.policy = action.policy

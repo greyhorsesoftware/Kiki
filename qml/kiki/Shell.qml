@@ -69,8 +69,8 @@ FloatingWindow {
     property bool sideBySide: false
     readonly property bool split: sideBySide
     // A drop hands the focus to the pane it landed in: that is where the files now are.
-    property Kiki.Pane left: Kiki.Pane { ghost: dragGhost; view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.left) }
-    property Kiki.Pane right: Kiki.Pane { ghost: dragGhost; view: "list"; focused: false; rememberViews: !win.sideBySide; onReceived: win.focusPane(win.right) }
+    property Kiki.Pane left: Kiki.Pane { ghost: dragGhost; view: win.defaultView(); focused: true; rememberViews: !win.sideBySide; onReceived: { win.focusPane(win.left); win.right.tunnelBack() } }
+    property Kiki.Pane right: Kiki.Pane { ghost: dragGhost; view: "list"; focused: false; rememberViews: !win.sideBySide; onReceived: { win.focusPane(win.right); win.left.tunnelBack() } }
     /// The drop the IPC makes, shaped as Qt shapes a real one — which has no `modifiers` at all:
     /// the keys held arrive folded into `proposedAction`, by the table measured in
     /// `Pane.wantsCopy` (no key and Shift → Move, the source's proposal; Ctrl and Alt → Copy).
@@ -1706,6 +1706,8 @@ FloatingWindow {
     Component { id: iconView; Views.IconPane { pane: win.left; onActivate: i => { win.focusPane(pane); pane.selection.set(i); win.openSelected() }; onContextMenu: (i, pos) => { win.focusPane(pane); menu.open(win.contextItems(i), pos) } } }
 
     // The drag's image, off screen (a grab needs an item that renders), reached through the panes.
+    // A drag gone out of the window, or ended in nothing, closes every tunnel it opened.
+    Connections { target: Kiki.DragTrack; function onWentOut() { win.left.tunnelBack(); win.right.tunnelBack() } }
     UI.DragGhost {
         id: dragGhost; parent: win.contentItem; objectName: "drag-ghost"
         // A drop on nothing — refused, or cancelled with Escape — flies the picture back to where

@@ -13,8 +13,28 @@ DropArea {
     property var pane
     property string dest: ""
     property bool refusing: false
-    readonly property bool welcoming: containsDrag && !refusing
+    /// Lit while a drag is over it and would be taken — and blinking while it is about to spring.
+    readonly property bool welcoming: containsDrag && !refusing && (!flashing || flashOn)
     keys: ["text/uri-list"]
+
+    // ---------------------------------------------------------------- springing (owner, 2026-09-28)
+    // A drag held over a folder for a moment opens it — "tunnelling" — so a drop can go deeper
+    // than the folder shown without letting go. The folder flashes first, so the opening is seen
+    // coming; the pane remembers where the tunnel began (`Pane.tunnelInto`) and goes back there
+    // if the drag ends in nothing or leaves the window. The folder already shown never springs:
+    // there is nowhere to go.
+    property bool springs: true
+    readonly property bool canSpring: springs && !!pane && dest !== "" && dest.replace(/\/+$/, "") !== (pane.uri || "").replace(/\/+$/, "")
+    property bool flashing: false
+    property bool flashOn: true
+    property int _flashes: 0
+    Timer { id: hold; interval: 700; running: t.containsDrag && !t.refusing && t.canSpring && !t.flashing; onTriggered: t.spring() }
+    Timer { id: flash; interval: 90; repeat: true; onTriggered: { t.flashOn = !t.flashOn; if (++t._flashes >= 4) { flash.stop(); t.flashing = false; t.flashOn = true; t.pane.springDest = t.dest } } }
+    /// Flash, then ask for the open. A drag that moves on during the flash stops it (below), so
+    /// the asking only ever follows a flash the drag stayed for. The opening itself is the view's
+    /// SpringPad's to do: this row must not replace the rows while it holds the drag.
+    function spring() { flashing = true; flashOn = false; _flashes = 0; flash.start() }
+    onContainsDragChanged: if (!containsDrag && flashing) { flash.stop(); flashing = false; flashOn = true }
     onEntered: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
     onPositionChanged: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
     onExited: { t.refusing = false; Kiki.DragTrack.left() }

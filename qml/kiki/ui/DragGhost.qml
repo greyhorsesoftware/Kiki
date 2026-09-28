@@ -40,14 +40,30 @@ Item {
     /// can only begin inside the pointer event that holds the grab, and a start deferred by even
     /// a frame to wait for the picture began nothing at all (2026-09-28). The picture is made
     /// ready BEFORE the press instead — `prepare` runs when the pointer enters a row.
+    // The drag's source: ONE item, here, that outlives every view's rows. A view's own proxy
+    // lives in a row delegate; a spring replaces the rows while the drag is on, and with them the
+    // proxy — whose `Drag` attached object owns the mime data the compositor asks for at the
+    // drop. Quickshell crashed in `QWaylandDataSource::data_source_send` twice that way
+    // (2026-09-28, from the core's backtrace). So a view's proxy only carries what to drag;
+    // the drag itself is started on this item, which is never destroyed.
+    Item {
+        id: source
+        Drag.dragType: Drag.Automatic
+        Drag.supportedActions: Qt.CopyAction | Qt.MoveAction
+        Drag.proposedAction: Qt.MoveAction
+    }
     function startDrag(proxy, stillHeld) {
+        source.Drag.active = false
+        source.Drag.mimeData = proxy.Drag.mimeData
+        source.Drag.supportedActions = proxy.Drag.supportedActions
+        source.Drag.proposedAction = proxy.Drag.proposedAction
         // `begin` before `active`, and no `end` here: on this Qt setting `active` returns at
         // once and the drag runs on its own, so an `end` after it cleared `dragging` before
         // the first move — and the window's badge never showed (2026-09-28, read from a log
         // of a real drag). The view ends it when the button comes up.
-        begin(proxy)
-        proxy.Drag.imageSource = imageFor(); proxy.Drag.hotSpot = hotSpot
-        proxy.Drag.active = true
+        begin(source)
+        source.Drag.imageSource = imageFor(); source.Drag.hotSpot = hotSpot
+        source.Drag.active = true
     }
     /// The pointer is over `index` of `pane`: have its picture ready for a press that may come.
     /// Nothing is re-made when it is the same rows already drawn.
@@ -75,8 +91,9 @@ Item {
     function finished(action) {
         if (action === Qt.IgnoreAction && origin.x >= 0) snapBack(Kiki.DragTrack.pointer, origin, fan.rows, fan.count)
         origin = Qt.point(-1, -1)
+        end()
     }
-    Connections { target: ghost.proxy ? ghost.proxy.Drag : null; function onDragFinished(action) { ghost.finished(action) } }
+    Connections { target: source.Drag; function onDragFinished(action) { ghost.finished(action) } }
     function prepare(pane, index, ctrl, pressAt) {
         if (pressAt !== undefined) origin = pressAt
         if (!pane || !pane.listing) return
@@ -123,7 +140,10 @@ Item {
     property Item proxy: null
     readonly property bool dragging: proxy !== null
     function begin(p) { proxy = p }
-    function end() { proxy = null }
+    /// The view's button came up, or the drag finished: the source is inactive again — set, not
+    /// assumed, or the next `active = true` on a source still marked active starts nothing and
+    /// every drag after looks stuck (owner, 2026-09-28).
+    function end() { proxy = null; source.Drag.active = false }
     // No rebadging by keys: the window never sees them during a drag. The badge the window
     // draws follows `DragTrack.action`, which Qt sets from the modifiers on every move.
     /// The image for a drag that starts now, or "" when the grab has not landed (the drag then

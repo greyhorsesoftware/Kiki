@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../qml/kiki" as Kiki
+import "../../qml/kiki/views" as Views
 import "../../qml/kiki/ui" as UI
 import KikiTest
 
@@ -203,6 +204,89 @@ TestCase {
         // Elsewhere, no policy is needed: the folder is not the file's own.
         const away = pane.dropAction([file], "file:///home/t/Projects", true)
         compare(away.policy, undefined)
+    }
+
+
+    // The tunnel: springing into a folder remembers where the drag began; a drop ends it where
+    // it is; going out closes it all the way back.
+    function test_the_tunnel_remembers_where_it_began_and_goes_back() {
+        pane.open("file:///home/t"); wait(50)
+        compare(pane.tunnelStart, "")
+        pane.tunnelInto("file:///home/t/Projects")
+        compare(pane.tunnelStart, "file:///home/t", "where the tunnel began")
+        compare(pane.uri, "file:///home/t/Projects")
+        pane.tunnelInto("file:///home/t/Projects/deeper")
+        compare(pane.tunnelStart, "file:///home/t", "deeper is still the same tunnel")
+        pane.springDest = "file:///home/t/Projects/deeper/still"     // asked for, not yet taken
+        pane.tunnelBack()
+        compare(pane.uri, "file:///home/t", "all the way back in one step")
+        compare(pane.tunnelStart, "")
+        compare(pane.springDest, "", "and a spring still standing is withdrawn with it")
+        pane.tunnelInto("file:///home/t/Projects")
+        pane.tunnelDone()
+        compare(pane.uri, "file:///home/t/Projects", "a drop ends the tunnel where it is")
+        compare(pane.tunnelStart, "")
+        pane.tunnelBack()
+        compare(pane.uri, "file:///home/t/Projects", "and there is nothing to go back to")
+    }
+
+    // A drag held over a folder flashes it and opens it; one that moves on before the flash is
+    // done opens nothing.
+    Component { id: targetC; Views.DropTarget {} }
+    Component { id: padC; Views.SpringPad {} }
+    function test_a_drag_held_over_a_folder_springs_it_open() {
+        pane.open("file:///home/t"); wait(50)
+        const t = targetC.createObject(tc, { pane: pane, dest: "file:///home/t/Projects", width: 100, height: 20 })
+        verify(t.canSpring, "another folder than the one shown")
+        t.spring()
+        verify(t.flashing, "the flash is the warning")
+        // The row only ASKS: the view's pad takes the drag over and does the opening, so the row
+        // is never destroyed while Qt still points at it as the drag's target.
+        tryCompare(pane, "springDest", "file:///home/t/Projects", 2000)
+        compare(pane.uri, "file:///home/t", "nothing opened by the row itself")
+        const pad = padC.createObject(tc, { pane: pane, width: 100, height: 100 })
+        verify(pad.visible, "the pad is up while a spring is asked for")
+        compare(pane.uri, "file:///home/t/Projects", "and opened it the moment it appeared — no move needed")
+        compare(pane.tunnelStart, "file:///home/t")
+        tryCompare(pane, "springDest", "", 2000)
+        verify(!pad.visible, "and stood down once the rows were there")
+        pad.destroy()
+        // The pane's own folder never springs.
+        const own = targetC.createObject(tc, { pane: pane, dest: "file:///home/t/Projects/", width: 100, height: 20 })
+        verify(!own.canSpring)
+        own.destroy(); t.destroy(); pane.tunnelBack()
+    }
+
+    // The tracker says when a drag has gone out: `inside` false for longer than a step between rows.
+    function test_the_tracker_says_when_a_drag_has_gone_out() {
+        const spy = Qt.createQmlObject("import QtTest; SignalSpy {}", tc, "spy")
+        spy.target = Kiki.DragTrack; spy.signalName = "wentOut"
+        Kiki.DragTrack.moved(Qt.point(10, 10), Qt.MoveAction)
+        Kiki.DragTrack.left(); wait(40); Kiki.DragTrack.moved(Qt.point(12, 30), Qt.MoveAction)
+        wait(200)
+        compare(spy.count, 0, "a step between rows is not going out")
+        Kiki.DragTrack.left()
+        tryCompare(spy, "count", 1, 1000)
+        spy.destroy()
+    }
+
+
+    // The drag is carried by the ghost's own source, not the view's proxy: the proxy sits in a
+    // row that a spring may replace mid-drag, and the source has to outlive the rows.
+    function test_the_drag_is_started_on_the_ghosts_own_source() {
+        const ghost = ghostC.createObject(tc)
+        pane.ghost = ghost
+        const proxy = proxyC.createObject(tc)
+        proxy.Drag.mimeData = pane.uriListMime(["file:///home/t/a.txt"])
+        proxy.Drag.proposedAction = Qt.CopyAction
+        ghost.prepareRows([{ kind: "file", thumb: "" }], 1, false)
+        ghost.startDrag(proxy, () => true)
+        verify(ghost.dragging)
+        verify(ghost.proxy !== proxy, "not the view's proxy")
+        compare(ghost.proxy.Drag.mimeData["text/uri-list"], "file:///home/t/a.txt\r\n", "carrying what the view gave it")
+        compare(ghost.proxy.Drag.proposedAction, Qt.CopyAction)
+        verify(!proxy.Drag.active, "the view's proxy drags nothing itself")
+        ghost.end(); proxy.destroy(); pane.ghost = null; ghost.destroy()
     }
 
 }

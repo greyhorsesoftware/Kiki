@@ -7,6 +7,9 @@ import "../ui" as UI
 Item {
     id: root
     property Kiki.Pane pane
+    // Takes a drag over from a folder row that is about to spring, so the rows can be replaced
+    // under it without Qt losing the drag's target (SpringPad.qml).
+    SpringPad { pane: root.pane }
     signal activate(int index)
     signal contextMenu(int index, point pos)
     readonly property real zoom: root.pane ? root.pane.iconZoom : 1

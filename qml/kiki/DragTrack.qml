@@ -14,6 +14,10 @@ QtObject {
     /// copy, Shift says move. The window never sees the keys themselves during a drag (Qt runs
     /// the drag in a loop of its own), but every drop area is told this on every move.
     property int action: 0
-    function moved(p, action) { pointer = p; inside = true; if (action !== undefined) track.action = action }
-    function left() { inside = false }
+    function moved(p, action) { pointer = p; inside = true; gone.stop(); if (action !== undefined) track.action = action }
+    function left() { inside = false; gone.restart() }
+    /// The drag has left the window, or ended: `inside` has stayed false long enough that this
+    /// was not the gap between one row and the next. A tunnel closes on it.
+    signal wentOut()
+    property Timer gone: Timer { interval: 150; onTriggered: track.wentOut() }
 }
