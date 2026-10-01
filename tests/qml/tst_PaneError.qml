@@ -6,7 +6,7 @@ import KikiTest
 
 // A folder that could not be listed says so. It used to look like an empty folder: no view read
 // the listing's error, and the reason was overwritten by the "no listing" that the Window request
-// sent along with the failed Open comes back with.
+// that then went with every Open came back with.
 TestCase {
     id: tc
     name: "PaneError"
@@ -22,10 +22,10 @@ TestCase {
 
     function failOpen(message) {
         pane.listing.open("sftp://nas/")
-        const o = Wire.last("Open"), w = Wire.last("Window")
-        verify(o && w)
+        const o = Wire.last("Open")
+        verify(o)
+        verify(!Wire.last("Window"), "no Window goes with an Open: the rows come with it")
         Wire.fail(o.id, "Io", message)
-        Wire.fail(w.id, "NotFound", "no listing " + o.lid)
     }
     function test_the_reason_survives_and_is_shown() {
         failOpen("connect failed: failed to lookup address information")
@@ -39,8 +39,7 @@ TestCase {
         mouseClick(findChild(panel, "pane-error-retry"))
         compare(retried.count, 1)
         pane.listing.open("sftp://nas/")
-        Wire.reply(Wire.last("Open").id, { cached: false })
-        Wire.reply(Wire.last("Window").id, { first: 0, n: 0, done: true, rows: [] })
+        Wire.reply(Wire.last("Open").id, { cached: true, first: 0, n: 0, done: true, gen: 1, rows: [] })
         compare(pane.listing.error, "")
         verify(!panel.visible, "an empty folder is just empty")
     }

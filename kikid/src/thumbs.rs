@@ -198,6 +198,9 @@ mod tests {
     /// A file that reads but does not decode is marked, and the marker says why.
     #[test]
     fn a_bad_file_is_marked_with_its_reason() {
+        // Both of these set the thumbnail directory for the process: one at a time, or the
+        // other's `remove_var` lands between this one's `set_var` and its read.
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = std::env::temp_dir().join(format!("kiki-thumb-why-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
@@ -220,6 +223,9 @@ mod tests {
 
     #[test]
     fn a_fail_marker_expires() {
+        // Both of these set the thumbnail directory for the process: one at a time, or the
+        // other's `remove_var` lands between this one's `set_var` and its read.
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = std::env::temp_dir().join(format!("kiki-thumb-fail-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();

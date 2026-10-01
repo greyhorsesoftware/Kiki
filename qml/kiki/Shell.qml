@@ -1126,8 +1126,14 @@ FloatingWindow {
     }
 
     UI.ScrollProbe { id: scrollProbe }
+    UI.OpenProbe { id: openProbe }
     IpcHandler {
         target: "shell"
+        /// Open `uri` in the focused pane, measuring what the opening cost from this side of the
+        /// socket; `openStats` says `running` until the first screenful is whole. The open_perf
+        /// flow (docs/0.5.0/10-faster-listings.md); nothing here depends on it.
+        function openProbe(uri: string): void { openProbe.start(win.pane, uri) }
+        function openStats(): string { return JSON.stringify(openProbe.result) }
         function open(uri: string): void { win.pane.open(uri) }
         /// What `kiki-dbus` puts to this window: another application's "Show in file manager",
         /// or the file chooser the portal asked for (docs/0.3.0/01-daemon-on-demand.md,

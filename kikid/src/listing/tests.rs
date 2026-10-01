@@ -52,7 +52,7 @@ fn open_window_and_stats() {
     assert!(!cached);
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 7, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 7, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     let w = l.window(1, 7, 0, 10, None);
     assert_eq!(w.u64_field("n"), Some(51));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
@@ -98,7 +98,7 @@ fn rescan_keeps_meta_for_unchanged() {
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 2, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    l.subscribe(Subscriber { client: 2, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     l.enrich(None);
     let deadline = Instant::now() + Duration::from_secs(5);
     while l.inner.lock().unwrap().meta.iter().any(Option::is_none) {
@@ -112,10 +112,14 @@ fn rescan_keeps_meta_for_unchanged() {
     assert_eq!(rows.len(), 7);
     let kept = rows.iter().find(|r| r.str_field("name") == Some("file1.txt")).unwrap();
     assert!(kept.get("meta").unwrap() != &Value::Null);
-    let fresh = rows.iter().find(|r| r.str_field("name") == Some("new.txt")).unwrap();
-    assert_eq!(fresh.get("meta").unwrap(), &Value::Null);
+    // The new file is there; whether it has been stated yet is timing, since the `Reset` that
+    // announced the rescan carried this window's rows and queued the stat for it at once.
+    assert!(rows.iter().any(|r| r.str_field("name") == Some("new.txt")));
     let events = drain(&rx);
-    assert!(events.iter().any(|e| e.str_field("event") == Some("Reset")));
+    let reset = events.iter().find(|e| e.str_field("event") == Some("Reset")).expect("a Reset");
+    let carried = reset.get("rows").unwrap().as_arr().unwrap();
+    let kept = carried.iter().find(|r| r.str_field("name") == Some("file1.txt")).unwrap();
+    assert!(kept.get("meta").unwrap() != &Value::Null, "the rows the Reset carried kept their metadata across the rescan");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -288,7 +292,7 @@ fn windows_are_clamped_not_refused() {
 
     // A subscriber that leaves stops being sent to.
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 9, lid: 3, tx, first: 0, count: 5, view_first: 0, view_count: 5 });
+    l.subscribe(Subscriber { client: 9, lid: 3, tx, first: 0, count: 5, view_first: 0, view_count: 5, initial: 0 });
     l.unsubscribe(9, 3);
     l.filter("file1");
     assert!(drain(&rx).is_empty(), "no events after unsubscribing");
@@ -421,7 +425,7 @@ fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
     l.rescan();
     // Somebody has to be looking at the row, or the job is dropped before it is ever started.
     let (tx, _rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 100, view_first: 0, view_count: 100 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 100, view_first: 0, view_count: 100, initial: 0 });
     // Not a picture, so the job fails and records "none" — which is all this needs: where it lands.
     l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(old_idx, crate::kinds::Kind::Image, 1, "file7.txt");
@@ -449,7 +453,7 @@ fn a_small_change_is_spliced_not_reset() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50, view_first: 0, view_count: 50 });
+    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50, view_first: 0, view_count: 50, initial: 0 });
     let before = l.window(3, 9, 0, 50, None).u64_field("gen").unwrap();
     let _ = drain(&rx);
 
@@ -502,7 +506,7 @@ fn a_thumbnail_nobody_is_looking_at_any_more_is_dropped_unstarted() {
 
     // A window that does not reach this row — the scroll has gone past it.
     let (tx, _rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 2, view_first: 0, view_count: 2 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 2, view_first: 0, view_count: 2, initial: 0 });
     l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(idx, crate::kinds::Kind::Image, 1, "file7.txt");
 
@@ -683,7 +687,7 @@ fn pushing_a_row_that_a_rescan_has_taken_away_is_not_a_crash() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     l.push_rows(&[0, 9999, 1]);
     // The rows that are still there are sent; the one that is not is passed over.
     let sent: Vec<Value> = drain(&rx).into_iter().filter(|e| e.str_field("event") == Some("Rows")).collect();
@@ -736,4 +740,202 @@ fn remote_owner_and_group_names_survive_the_round_trip() {
     let j = rows::meta_json(&bare);
     assert!(j.get("owner").is_none_or(|o| matches!(o, Value::Null)), "no name given: no owner ({j:?})");
     assert_eq!(names::user(unsafe { libc::getuid() }).as_deref(), std::env::var("USER").ok().as_deref());
+}
+
+// ---------------------------------------------------------------- the first screenful unasked
+// (docs/0.5.0/10-faster-listings.md): rows ride on the `Reset` that ends a scan, for every
+// `Reset` after, and come whole — stated before they go, within a bound.
+
+/// A folder that is not on any disk: `scan` hands out `n` names with no metadata, each
+/// `stat_child` takes `stat_ms`, and `scan` fails outright when `fails` is set — the cases a
+/// real folder cannot be made to show on demand.
+struct StubDir {
+    n: usize,
+    stat_ms: u64,
+    fails: bool,
+}
+
+impl Source for StubDir {
+    fn scan(&self, sink: &mut dyn FnMut(Vec<local::RawEntry>)) -> Result<usize> {
+        if self.fails {
+            return Err(VfsError::Io("the stub would not list".into()));
+        }
+        sink((0..self.n).map(|i| local::RawEntry { name: format!("row{i:03}").into(), kind: EntryType::File, meta: None }).collect());
+        Ok(self.n)
+    }
+    fn stat_child(&self, _name: &OsStr) -> Result<(Meta, EntryType)> {
+        thread::sleep(Duration::from_millis(self.stat_ms));
+        Ok((Meta { size: 7, ..Default::default() }, EntryType::File))
+    }
+    fn watchable(&self) -> bool {
+        true
+    }
+}
+
+fn stub_listing(dir: StubDir) -> Arc<Listing> {
+    let uri = Uri::parse("file:///stub").unwrap();
+    Arc::new(Listing {
+        uri: uri.clone(),
+        path: PathBuf::from("/stub"),
+        dir: Box::new(dir),
+        inner: Mutex::new(Inner {
+            pool: StringPool::with_capacity(16),
+            meta: Vec::new(),
+            queued: Vec::new(),
+            deco: Default::default(),
+            git_done: false,
+            scan_done: false,
+            scan_error: None,
+            scan_said: None,
+            view: Vec::new(),
+            pos: Vec::new(),
+            sort: (SortRole::Name, true),
+            sorted: false,
+            filter: None,
+            show_hidden: false,
+            uri_string: uri.to_string(),
+            generation: 0,
+            epoch: 0,
+            enrich: None,
+            subscribers: Vec::new(),
+            stale: false,
+            last_used: Instant::now(),
+        }),
+    })
+}
+
+fn reset_from(rx: &mpsc::Receiver<Value>) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Ok(v) if v.str_field("event") == Some("Reset") => return v,
+            Ok(_) => continue,
+            Err(e) => panic!("no Reset came: {e}"),
+        }
+    }
+}
+
+fn with_meta(rows: &[Value]) -> usize {
+    rows.iter().filter(|r| r.get("meta").map(|m| m != &Value::Null).unwrap_or(false)).count()
+}
+
+#[test]
+fn the_scan_ends_with_the_first_screenful_on_its_reset_stated() {
+    // A stub rather than a folder on disk: `open` starts the scan on the spot, and a subscriber
+    // added after it has ended is told nothing — which is the race this test must not have.
+    let l = stub_listing(StubDir { n: 30, stat_ms: 0, fails: false });
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    let l2 = Arc::clone(&l);
+    thread::spawn(move || l2.scan()).join().unwrap();
+    let r = reset_from(&rx);
+    assert_eq!(r.u64_field("first"), Some(0));
+    let rows = r.get("rows").unwrap().as_arr().unwrap();
+    assert_eq!(rows.len(), 10, "the first `initial` rows, no more");
+    assert_eq!(rows[0].str_field("name"), Some("row000"), "in the view's order");
+    assert_eq!(with_meta(rows), 10, "every one of them stated before it went");
+    assert_eq!(rows[0].get("meta").unwrap().u64_field("size"), Some(7));
+}
+
+#[test]
+fn a_window_once_asked_is_what_a_later_reset_carries() {
+    let dir = temp_tree(43);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    let _ = l.window(1, 1, 20, 5, None);
+    let _ = drain(&rx);
+    l.sort(SortRole::Name, false, None);
+    let r = reset_from(&rx);
+    assert_eq!(r.u64_field("first"), Some(20), "the rows this connection holds, not the top");
+    assert_eq!(r.get("rows").unwrap().as_arr().unwrap().len(), 5);
+    let _ = drain(&rx);
+    assert_eq!(l.filter("file1"), 11);
+    let r = reset_from(&rx);
+    assert_eq!(r.u64_field("first"), Some(20));
+    assert!(r.get("rows").unwrap().as_arr().unwrap().is_empty(), "a window past the end of a filtered view carries nothing — and says so");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_subscriber_that_wants_nothing_unasked_gets_a_bare_reset() {
+    let dir = temp_tree(7);
+    let (l, _) = open(&Uri::from_path(&dir)).unwrap();
+    assert!(wait_scan(&l, Duration::from_secs(5)));
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 0 });
+    l.sort(SortRole::Kind, true, None);
+    let r = reset_from(&rx);
+    assert!(r.get("rows").is_none() && r.get("first").is_none(), "{r:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_empty_folder_says_so_with_an_empty_list() {
+    let l = stub_listing(StubDir { n: 0, stat_ms: 0, fails: false });
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    let l2 = Arc::clone(&l);
+    thread::spawn(move || l2.scan()).join().unwrap();
+    let r = reset_from(&rx);
+    assert_eq!(r.u64_field("n"), Some(0));
+    assert!(r.get("rows").unwrap().as_arr().unwrap().is_empty());
+}
+
+#[test]
+fn a_sort_asked_during_the_scan_is_noted_and_not_announced() {
+    let l = stub_listing(StubDir { n: 20, stat_ms: 0, fails: false });
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
+    // The order the window states on every open, before the scan has run: no `Reset` for it.
+    assert_eq!(l.sort(SortRole::Name, true, None), 0);
+    assert!(drain(&rx).is_empty(), "a sort of a folder still listing says nothing");
+    let l2 = Arc::clone(&l);
+    thread::spawn(move || l2.scan()).join().unwrap();
+    let events: Vec<Value> = drain(&rx);
+    let resets = events.iter().filter(|e| e.str_field("event") == Some("Reset")).count();
+    assert_eq!(resets, 1, "one Reset, the scan's: {events:?}");
+}
+
+#[test]
+fn a_scan_that_failed_carries_no_rows() {
+    let l = stub_listing(StubDir { n: 0, stat_ms: 0, fails: true });
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
+    let l2 = Arc::clone(&l);
+    thread::spawn(move || l2.scan()).join().unwrap();
+    let r = reset_from(&rx);
+    assert_eq!(r.u64_field("n"), Some(0));
+    assert!(r.get("rows").unwrap().as_arr().unwrap().is_empty());
+    assert!(l.error().is_some());
+}
+
+/// The stat before the `Reset` is bounded: a disk that answers slowly delays the first frame by
+/// the bound and no more, and the rows it did not get to arrive the old way, by `Rows`.
+#[test]
+fn the_stat_before_the_reset_gives_up_within_its_bound() {
+    let l = stub_listing(StubDir { n: 60, stat_ms: 4, fails: false });
+    let (tx, rx) = mpsc::channel();
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 60 });
+    let started = Instant::now();
+    let l2 = Arc::clone(&l);
+    thread::spawn(move || l2.scan()).join().unwrap();
+    let r = reset_from(&rx);
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(120), "the Reset left after {took:?}: sixty stats at 4 ms would be 240");
+    let rows = r.get("rows").unwrap().as_arr().unwrap();
+    assert_eq!(rows.len(), 60);
+    let stated = with_meta(rows);
+    assert!((1..60).contains(&stated), "some stated within the bound, not all: {stated}");
+    // What was left is not stuck behind a `queued` mark: the small-folder enrichment that
+    // follows the scan brings the rest.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if l.inner.lock().unwrap().meta.iter().all(Option::is_some) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the rest never arrived");
+        thread::sleep(Duration::from_millis(5));
+    }
 }

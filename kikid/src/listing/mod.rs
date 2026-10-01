@@ -64,20 +64,45 @@ pub struct Subscriber {
     /// scroll; their pictures need not.
     pub view_first: u32,
     pub view_count: u32,
+    /// How many rows from the top the client wants handed to it unasked — on the `Open` reply
+    /// when the folder is already listed, else on the `Reset` that ends the scan — so that its
+    /// first screenful costs no `Window` request (docs/0.5.0/10-faster-listings.md). Nought is
+    /// a client that will ask.
+    pub initial: u32,
 }
 
 impl Subscriber {
+    /// The rows this connection is holding, or — before any `Window` has said — the first
+    /// `initial` from the top: what a `Reset` carries so the client need not ask.
+    fn held(&self) -> (u32, u32, (u32, u32)) {
+        if self.count == 0 {
+            let n = self.initial.min(WINDOW_MAX);
+            // On screen: what `Open` said with `view`, else all of it. The look-ahead is most of
+            // `initial`, and a thumbnail for every row of it on a cold open of a picture folder
+            // was four times the decoders the old mid-scan `Window` had started — and a slower
+            // first paint, not a faster one (2026-10-01, the desktop measurement).
+            let on_screen = if self.view_count > 0 { self.view_count.min(n) } else { n };
+            (0, n, (0, on_screen))
+        } else {
+            (self.first, self.count, (self.view_first, self.view_count))
+        }
+    }
+
+    /// Held — by a `Window` it asked, or, until it asks one, by the first screenful it was handed:
+    /// a stat for a row inside it is wanted, one outside is skipped (`run_stats`).
     fn covers(&self, pos: u32) -> bool {
-        pos >= self.first && pos < self.first + self.count
+        let (first, count, _) = self.held();
+        pos >= first && pos < first.saturating_add(count)
     }
 
     /// On screen, as opposed to merely held. A client that does not say where it is looking is
     /// taken to be looking at everything it asked for, which is what the older behaviour was.
     fn covers_view(&self, pos: u32) -> bool {
-        if self.view_count == 0 {
+        let (_, _, (vf, vc)) = self.held();
+        if vc == 0 {
             return self.covers(pos);
         }
-        pos >= self.view_first && pos < self.view_first + self.view_count
+        pos >= vf && pos < vf.saturating_add(vc)
     }
 }
 

@@ -70,14 +70,27 @@ QtObject {
         lid = d().allocLid()
         d().bind(lid, cache)
         _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1; _gen = -1; _stale = false; _pending = 0
-        // Open and the first Window leave in one write.
-        d().request("Open", { lid: lid, uri: uri }, (ok, err) => {
+        // No Window with the Open: the first screenful rides on the reply when the daemon has
+        // the folder listed, and on the Reset that ends the scan when it has not
+        // (docs/0.5.0/10-faster-listings.md). `initial` says how much — the viewport and its
+        // look-ahead, the same as the Window that used to leave here asked for.
+        _opening = true
+        const mine = lid
+        // `view` is how many of those are on screen: pictures are made for those alone.
+        d().request("Open", { lid: lid, uri: uri, initial: Math.min(viewportCount + padAhead, maxRequest), view: viewportCount }, (ok, err) => {
+            // An answer for a folder since left: the rows it carries belong to that folder, not
+            // to whatever this cache has moved on to.
+            if (lid !== mine) return
             // Nothing more is coming: say so, or the pane waits on a folder that never opened.
-            if (err) { error = err.message; done = true; return }
+            if (err) { error = err.message; done = true; _opening = false; return }
             cached = ok.cached
+            if (ok.rows !== undefined) { _opening = false; _take(ok, false) }
         })
-        _request(0, Math.min(viewportCount + padAhead, maxRequest))
     }
+    /// Between the Open leaving and the rows that come with it: nothing is asked for, since the
+    /// answer is on its way unasked — a viewport settling in the meantime would otherwise send
+    /// the very Window this saves.
+    property bool _opening: false
 
     // A cache made on the fly (a column, the project tree) is destroyed, not closed: without this
     // the daemon kept the listing subscribed — never evicted, its folder watched — for the life of
@@ -144,30 +157,43 @@ QtObject {
                 _rtt = _rtt === 0 ? waited : _rtt * 0.7 + waited * 0.3
                 _pending = 0
             }
-            // The Window that left with a failed Open only reports "no listing": keep the reason.
+            // A Window that followed a failed Open only reports "no listing": keep the reason.
             if (err) { if (!error) error = err.message; if (_stale) { _stale = false; _rows = ({}) } return }
-            if (ok.gen !== undefined) {
-                // Computed before a change we have already been told of: its positions are the old
-                // ones. Ask again rather than show them.
-                // (Unless something newer has been asked since, which will bring them.)
-                // Asked through the timer, never from inside the answer; and a daemon that keeps
-                // answering from the past is believed after a few tries rather than asked for ever.
-                if (_gen >= 0 && ok.gen < _gen && _oldReplies < 5) { _oldReplies++; if (serial === _serial) { _stale = true; if (!debounce.running) debounce.start() } return }
-                _oldReplies = 0
-                // Newer than anything held (the event is still on its way): only it can be trusted.
-                if (_gen >= 0 && ok.gen > _gen) _stale = true
-                _gen = ok.gen
-            }
-            if (_stale) { _stale = false; _rows = ({}) }
-            _apply(ok.first, ok.rows)
-            count = ok.n; done = ok.done
-            // The viewport may have moved on while this was on its way: ask for what it lacks now,
-            // without waiting out the timer — behind a fling, a frame's wait per answer is the
-            // difference between keeping up and not. (Later, not here: a daemon that answers at
-            // once must not be asked from inside its own answer. And not after an answer with
-            // nothing in it, which asking again would not improve.)
-            if (awaited && ok.rows.length > 0) Qt.callLater(_fill)
+            _take(ok, awaited, serial)
         })
+    }
+
+    /// Rows in the shape a Window answers in — from a Window, or unasked on the Open's reply —
+    /// taken into the cache if they are not from before a change already known of.
+    function _take(ok, awaited, serial) {
+        if (ok.gen !== undefined) {
+            // Computed before a change we have already been told of: its positions are the old
+            // ones. Ask again rather than show them — unless the change brought the rows on
+            // screen with it, in which case there is nothing to ask for.
+            // (Unless something newer has been asked since, which will bring them.)
+            // Asked through the timer, never from inside the answer; and a daemon that keeps
+            // answering from the past is believed after a few tries rather than asked for ever.
+            if (_gen >= 0 && ok.gen < _gen && _oldReplies < 5) { _oldReplies++; if (serial === _serial && !_visibleHeld()) { _stale = true; if (!debounce.running) debounce.start() } return }
+            _oldReplies = 0
+            // Newer than anything held (the event is still on its way): only it can be trusted.
+            if (_gen >= 0 && ok.gen > _gen) _stale = true
+            _gen = ok.gen
+        }
+        if (_stale) { _stale = false; _rows = ({}) }
+        _apply(ok.first, ok.rows)
+        count = ok.n; done = ok.done
+        // The viewport may have moved on while this was on its way: ask for what it lacks now,
+        // without waiting out the timer — behind a fling, a frame's wait per answer is the
+        // difference between keeping up and not. (Later, not here: a daemon that answers at
+        // once must not be asked from inside its own answer. And not after an answer with
+        // nothing in it, which asking again would not improve.)
+        if (awaited && ok.rows.length > 0) Qt.callLater(_fill)
+    }
+
+    function _visibleHeld() {
+        const end = Math.min(count, viewportFirst + viewportCount)
+        for (let i = viewportFirst; i < end; i++) if (!_rows[i]) return false
+        return end > viewportFirst
     }
 
     /// Where the viewport will be by the time an answer to a request sent now gets back. Asking
@@ -198,6 +224,9 @@ QtObject {
     }
 
     function _fill() {
+        // The rows are on their way unasked; or the folder is known to be empty, which no
+        // request improves (`count` alone cannot say: nought is also "not counted yet").
+        if (_opening || (done && count === 0)) return
         // What is held is known to be out of date and nothing is on its way to replace it.
         if (_stale && !_pending) { _refetch(); return }
         // An answer is on its way (and has not been for so long that it is never coming).
@@ -264,9 +293,23 @@ QtObject {
             _apply(msg.first, msg.rows)
             break
         case "Reset":
-            _stale = true; count = msg.n; _reqFirst = -1; _reqEnd = -1
+            _stale = true; count = msg.n; _reqFirst = -1; _reqEnd = -1; _opening = false
             _gen = msg.gen !== undefined ? msg.gen : -1
             for (const k in _rows) if (Number(k) >= count) delete _rows[k]
+            // The rows the change brought with it — the ones this window was holding, in their
+            // new places — are all that is trusted now; what was held is from before the change
+            // and goes. Nothing is asked for: what the viewport wants beyond them, `_fill` sees.
+            if (msg.rows !== undefined) {
+                _rows = ({})
+                for (let i = 0; i < msg.rows.length; i++) _rows[msg.first + i] = msg.rows[i]
+                _stale = false
+                reset()
+                rowsUpdated(msg.first, msg.rows.length)
+                // Through the timer, as every fill from an event is: a cache made on the fly
+                // (a column) can be gone by the time a deferred call runs.
+                if (!debounce.running) debounce.start()
+                break
+            }
             reset()
             _refetch()
             break

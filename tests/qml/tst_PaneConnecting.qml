@@ -19,8 +19,7 @@ TestCase {
 
     function init() { Wire.reset(); pane.open("file:///home/t"); answer(0) }
     function answer(n) {
-        Wire.reply(Wire.last("Open").id, { cached: false })
-        Wire.reply(Wire.last("Window").id, { first: 0, n: n, done: true, rows: [] })
+        Wire.reply(Wire.last("Open").id, { cached: true, first: 0, n: n, done: true, gen: 1, rows: [] })
     }
 
     function test_a_server_that_takes_its_time_says_it_is_connecting() {
@@ -43,9 +42,7 @@ TestCase {
     function test_a_failure_hands_over_to_the_error() {
         pane.open("sftp://homelab/srv/site")
         tryVerify(() => panel.visible, 1000)
-        const o = Wire.last("Open"), w = Wire.last("Window")
-        Wire.fail(o.id, "Io", "connect failed: timed out")
-        Wire.fail(w.id, "NotFound", "no listing " + o.lid)
+        Wire.fail(Wire.last("Open").id, "Io", "connect failed: timed out")
         verify(!panel.visible, "what went wrong is said instead, by PaneError")
     }
 

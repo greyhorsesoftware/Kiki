@@ -53,12 +53,28 @@ impl Listing {
             s.view_first = vf;
             s.view_count = vc;
         }
+        let mut pending = Pending::new(inner.epoch);
+        let rows = self.gather(&mut inner, first, count, view.unwrap_or((first, count)), &mut pending);
+        let n = inner.view.len() as u64;
+        let done = inner.scan_done;
+        let gen = inner.generation;
+        drop(inner);
+        pending.finish(self);
+        Value::obj().u("first", first as u64).u("n", n).b("done", done).u("gen", gen).v("rows", Value::Arr(rows)).done()
+    }
+
+    /// The rows `first..first+count` as JSON, with what they still need put into `pending`: a
+    /// stat for each row whose metadata is not known, a thumbnail for each picture inside the
+    /// `view` that is on screen. One place for this, because the rows now go out two ways — in
+    /// answer to a `Window`, and unasked on an `Open` reply or a `Reset` — and the two must not
+    /// drift (docs/0.5.0/10-faster-listings.md).
+    pub(super) fn gather(&self, inner: &mut Inner, first: u32, count: u32, view: (u32, u32), pending: &mut Pending) -> Vec<Value> {
         let n = inner.view.len() as u32;
         let end = first.saturating_add(count).min(n);
         let mut rows = Vec::new();
         let mut missing: Vec<(u32, u32)> = Vec::new(); // (distance from centre, pool idx)
         let centre = first + count / 2;
-        let mut want_thumbs: Vec<(u32, crate::kinds::Kind, u64, String)> = Vec::new();
+        let (vf, vc) = view;
         for p in first.min(n)..end {
             let idx = inner.view[p as usize];
             rows.push(inner.row_json(idx));
@@ -75,25 +91,109 @@ impl Listing {
             // `run_stats` asks for the thumbnail as soon as that lands.
             let Some(mtime) = inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms) else { continue };
             // Only what is on screen. During a scroll `first..count` runs thousands of rows ahead.
-            if self.thumbable(kind) && inner.subscribers.iter().any(|s| s.covers_view(p)) && inner.deco.wants_thumb(inner.pool.name(idx), mtime) {
+            if p >= vf && p < vf.saturating_add(vc) && self.thumbable(kind) && inner.deco.wants_thumb(inner.pool.name(idx), mtime) {
                 let name = String::from_utf8_lossy(inner.pool.name(idx)).into_owned();
                 inner.deco.set_thumb(name.as_bytes(), deco::Thumb::Asked);
-                want_thumbs.push((idx, kind, mtime, name));
+                pending.thumbs.push((idx, kind, mtime, name));
             }
-        }
-        let done = inner.scan_done;
-        let gen = inner.generation;
-        let epoch = inner.epoch;
-        drop(inner);
-        for (idx, kind, mtime, name) in want_thumbs {
-            self.submit_thumb(idx, kind, mtime, &name);
         }
         if !missing.is_empty() {
             missing.sort_unstable();
-            let rows: Vec<u32> = missing.into_iter().map(|(_, i)| i).collect();
-            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows, epoch, low_priority: false });
+            pending.stats.push(missing.into_iter().map(|(_, i)| i).collect());
         }
-        Value::obj().u("first", first as u64).u("n", n as u64).b("done", done).u("gen", gen).v("rows", Value::Arr(rows)).done()
+        rows
+    }
+
+    /// A `Reset` for every subscriber, each carrying the rows that subscriber holds — or, for one
+    /// that has never asked, its first screenful — so the change is shown without a `Window`
+    /// round trip. Built under the caller's lock, so no `Window` can be answered between the
+    /// change and the word of it; sent and followed up when the caller is ready (`Pending`).
+    pub(super) fn reset_all(&self, inner: &mut Inner) -> Pending {
+        let n = inner.view.len() as u64;
+        let gen = inner.generation;
+        let mut pending = Pending::new(inner.epoch);
+        for s in inner.subscribers.clone() {
+            let (first, count, view) = s.held();
+            let mut ev = proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen);
+            if count > 0 {
+                let rows = self.gather(inner, first, count, view, &mut pending);
+                ev = ev.u("first", first as u64).v("rows", Value::Arr(rows));
+            }
+            pending.events.push((s.tx, ev.done()));
+        }
+        pending
+    }
+
+    /// What ends a scan on a local folder before its `Reset` goes out: the metadata of the rows
+    /// that `Reset` will carry, fetched now, so the first screenful arrives whole rather than as
+    /// names with the sizes and dates trickling in after. Bounded twice — a screenful of rows and
+    /// twenty milliseconds — and done with the lock let go, as the stat workers do: a cold disk
+    /// or a network mount does not hold every other request on this listing while it answers.
+    /// Whatever is not fetched in time is left for `Rows` to bring, as before.
+    pub(super) fn stat_first_screen(self: &Arc<Self>) {
+        const ROWS: usize = 128;
+        const WITHIN: std::time::Duration = std::time::Duration::from_millis(20);
+        if !self.dir.watchable() {
+            return; // a server's rows come with their metadata
+        }
+        let (epoch, wanted): (u64, Vec<(u32, Vec<u8>)>) = {
+            let mut inner = self.inner.lock().unwrap();
+            let want = inner
+                .subscribers
+                .iter()
+                .map(|s| {
+                    let (f, c, _) = s.held();
+                    f.saturating_add(c) as usize
+                })
+                .max()
+                .unwrap_or(0)
+                .min(ROWS)
+                .min(inner.view.len());
+            let rows: Vec<(u32, Vec<u8>)> = (0..want).map(|p| inner.view[p]).filter(|&i| inner.meta[i as usize].is_none() && !inner.queued[i as usize]).map(|i| (i, inner.pool.name(i).to_vec())).collect();
+            for (i, _) in &rows {
+                inner.queued[*i as usize] = true;
+            }
+            (inner.epoch, rows)
+        };
+        if wanted.is_empty() {
+            return;
+        }
+        let start = Instant::now();
+        let mut left = wanted.into_iter();
+        for (idx, name) in left.by_ref() {
+            if start.elapsed() > WITHIN {
+                // Put back for the workers, this one included: it was taken but not fetched.
+                let mut inner = self.inner.lock().unwrap();
+                if inner.epoch == epoch {
+                    inner.queued[idx as usize] = false;
+                }
+                break;
+            }
+            let res = self.dir.stat_child(OsStr::from_bytes(&name));
+            let mut inner = self.inner.lock().unwrap();
+            if inner.epoch != epoch {
+                return; // a rescan dealt the indexes again; it stats its own
+            }
+            inner.queued[idx as usize] = false;
+            match res {
+                Ok((m, t)) => {
+                    if inner.pool.entry_type(idx) == EntryType::Unknown {
+                        inner.pool.set_entry_type(idx, t);
+                    }
+                    inner.meta[idx as usize] = Some(m);
+                }
+                Err(_) => inner.meta[idx as usize] = Some(Meta::default()),
+            }
+        }
+        let rest: Vec<u32> = left.map(|(i, _)| i).collect();
+        if !rest.is_empty() {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.epoch == epoch {
+                for i in rest {
+                    inner.queued[i as usize] = false;
+                }
+            }
+        }
     }
 
     /// Send `Rows` events for the given pool rows to every subscriber whose window covers them.
@@ -126,6 +226,41 @@ impl Listing {
                 prev = p;
             }
             flush(run_start, prev);
+        }
+    }
+}
+
+/// What a batch of rows leaves to be done once the lock is let go: the events to send, the
+/// stats to queue (one job per batch, nearest the centre first), the thumbnails to ask for.
+/// `submit_thumb` and the stat pool are not called under the listing's lock, which is why this
+/// is carried out rather than done on the spot.
+pub(super) struct Pending {
+    pub(super) events: Vec<(Sender<Value>, Value)>,
+    stats: Vec<Vec<u32>>,
+    thumbs: Vec<(u32, crate::kinds::Kind, u64, String)>,
+    epoch: u64,
+}
+
+impl Pending {
+    pub(super) fn new(epoch: u64) -> Pending {
+        Pending { events: Vec::new(), stats: Vec::new(), thumbs: Vec::new(), epoch }
+    }
+
+    /// The events, in the order they were made. May be called with the listing's lock held.
+    pub(super) fn send(&mut self) {
+        for (tx, ev) in self.events.drain(..) {
+            let _ = tx.send(ev);
+        }
+    }
+
+    /// Everything else, with the lock let go. Sends whatever events are still unsent first.
+    pub(super) fn finish(mut self, l: &Arc<Listing>) {
+        self.send();
+        for (idx, kind, mtime, name) in self.thumbs.drain(..) {
+            l.submit_thumb(idx, kind, mtime, &name);
+        }
+        for rows in self.stats.drain(..) {
+            let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(l), rows, epoch: self.epoch, low_priority: false });
         }
     }
 }

@@ -1,94 +1,62 @@
-"""A demo video: what is new in this release, recorded (the version from `version.js`).
+"""The 0.4 what's-new video (owner, 2026-09-28: "show quicklook, then show the improved open /
+save as panels, then show a list of core internal improvements").
 
 Not a test and not in the default run — `KIKI_E2E_DESKTOP=1 tests/e2e/run.sh --flow whatsnew`
 records it on the compositor you are sitting at (see `demo.py` for the two ways to record and
-what each needs); the file is `tests/e2e/out/kiki-whatsnew.mp4`. The 0.1.1 one is `whatsnew011`.
+what each needs); the file is `tests/e2e/out/kiki-whatsnew.mp4`, the raw capture beside it. The
+0.2 one is `whatsnew020`.
 
-What it shows, in order: a title card; the Vim letters as the keys — h j k l, v, y p, dd and z,
-`.`, f; Quick Look on Space — a picture, a Markdown document with its contents down the left,
-a PDF page by page, a video playing, code in colour, a spreadsheet's Open with… face; a file on
-a server fetched and shown; side by side with the server, both panes listing at once.
+What it shows, in order: a title card with the About mark; a folder of pictures, paper and a
+clip, and Quick Look over it — a picture, a document, the paper, the clip — in a window of its
+own beside the list; another application's Open dialog, which is kiki's, walked with the keys
+and answered, then its Save dialog; a card in the middle of the picture listing what 0.3 and 0.4
+changed underneath, which no frame shows; an end card. Quick Look tiles beside the window, so
+the window is left tiled rather than made full screen, and the crop is the tiled window's place
+— which is the whole workspace, and where both windows sit when there are two.
 """
 
-import getpass, os, re, shutil, time
-from harness import make_tree, wait_for
-from media import png, pdf, mp4, MARKDOWN
-from servers import Servers, add_location
+import json, os, shutil, time
+from harness import make_tree
+from media import pdf, mp4, MARKDOWN
 from flows import demo
-from flows.demo import DESKTOP, Desktop, Recorder, home_spec
+from flows.demo import DESKTOP, Desktop, Recorder, home_spec, pictures_into
 
 NEEDS = {"shell", "keyboard"}
-TITLE = "a demo video: what is new in this release"
-probe = demo.probe
+TITLE = "the 0.4 what's-new video"
 
-CODE = """//! Where the week's notes go.
-use std::path::PathBuf;
 
-/// One line per day, newest last.
-pub fn notes_file(home: &str) -> PathBuf {
-    let mut p = PathBuf::from(home);
-    p.push("Documents");
-    p.push("Field notes.md");
-    p
-}
-
-fn main() {
-    for day in ["Monday", "Tuesday"] {
-        println!("{day}: {}", notes_file("/home/gideon").display());
-    }
-}
-"""
+def probe(ctx):
+    return demo.probe(ctx)
 
 
 def run(ctx):
-    c, sh, d = ctx.checks, ctx.shell, ctx.daemon
+    c, sh = ctx.checks, ctx.shell
     out = os.environ.get("KIKI_E2E_OUT", "/tmp")
     fixture = os.environ.get("HOME_FIXTURE", ctx.base)
     home = make_tree(fixture if DESKTOP else os.path.join(fixture, "gideon"), home_spec())
-    aside = os.path.join(os.path.dirname(fixture.rstrip("/")), "whatsnew")
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))   # flows → e2e → tests → the checkout
-    # The release the video is for: the window's own version, never a number typed here.
-    version = re.search(r'var version = "([^"]+)"', open(os.path.join(root, "qml", "kiki", "version.js"), encoding="utf-8").read()).group(1)
+    # The release the video is for. Fixed, not read from the tree: the tree moved on to 0.5.0 the
+    # day after this was recorded, and a re-recording of the 0.4 video must still say 0.4.
+    label = "0.4"
+    kikid = os.path.join(os.environ.get("KIKI_PLUGIN_DIR", ""), "kikid")
+    if not os.path.exists(kikid):
+        kikid = shutil.which("kikid") or "kikid"
 
-    # The looks: two of the owner's pictures when they are there, else made ones; a document,
-    # a paper, a clip, a program, a spreadsheet — named so j walks them in this order.
+    # The looks: the owner's pictures (the ones demo.py has looked at), a note, paper and the clip.
     looks = os.path.join(home, "Looks"); os.makedirs(looks, exist_ok=True)
-    own = os.path.expanduser("~/Pictures")
-    pics = [f for f in (sorted(os.listdir(own)) if os.path.isdir(own) else []) if f.lower().endswith((".jpg", ".jpeg", ".png"))][:2]
-    for i, f in enumerate(pics, 1):
-        shutil.copy(os.path.join(own, f), os.path.join(looks, f"01 photo {i}{os.path.splitext(f)[1].lower()}"))
-    if not pics:
-        png(os.path.join(looks, "01 photo 1.png"), 1200, 800)
-    open(os.path.join(looks, "02 Field notes.md"), "w").write(MARKDOWN)
-    # The owner's own paper when it is there, else a made one of three pages.
+    pictures_into(looks, kikid)
+    open(os.path.join(looks, "Field notes.md"), "w").write(MARKDOWN)
     own_pdf = os.path.expanduser("~/Downloads/10-Yard-50-200-Zero-Target.pdf")
+    paper = "Zero target.pdf" if os.path.isfile(own_pdf) else "Paper.pdf"
     if os.path.isfile(own_pdf):
-        shutil.copy(own_pdf, os.path.join(looks, "03 zero target.pdf"))
+        shutil.copy(own_pdf, os.path.join(looks, paper))
     else:
-        pdf(os.path.join(looks, "03 paper.pdf"), 3)
-    # The owner's own clip when it is there (a real one reads better than a test pattern).
+        pdf(os.path.join(looks, paper), 3)
     own_clip = os.path.expanduser("~/Videos/spot-en.mp4")
     if os.path.isfile(own_clip):
-        shutil.copy(own_clip, os.path.join(looks, "04 clip.mp4")); has_video = True
+        shutil.copy(own_clip, os.path.join(looks, "Spot.mp4"))
     else:
-        has_video = mp4(os.path.join(looks, "04 clip.mp4"), 6)
-    open(os.path.join(looks, "05 notes.rs"), "w").write(CODE)
-    open(os.path.join(looks, "06 budget.xlsx"), "wb").write(b"PK\x03\x04" + b"\0" * 400)
-    open(os.path.join(home, "Documents", ".drafts"), "w").write("hidden\n")
-
-    # The server on the right, as in the demo: a short path, ours for the run.
-    servers = Servers(os.path.join(aside, "servers"))
-    remote_root = "/tmp/homelab"
-    shutil.rmtree(remote_root, ignore_errors=True)
-    os.makedirs(os.path.join(remote_root, "shared"))
-    open(os.path.join(remote_root, "shared", "Field notes.md"), "w").write(MARKDOWN)
-    open(os.path.join(remote_root, "shared", "todo.md"), "w").write("- fix the fence\n- count the sheep again\n")
-    port, key = servers.start_sftp()
-    r = add_location(d, {"name": "homelab", "plugin": "sftp", "remoteUri": "sftp://homelab" + remote_root, "localUri": "",
-                         "config": {"host": "127.0.0.1", "port": str(port), "username": getpass.getuser(), "auth": "key", "identityFile": key}}, {})
-    c.check("the SFTP server is up and the location added", "ok" in r and not r["ok"].get("verify"), r)
-    remote_uri = "sftp://homelab" + remote_root
-    docs = "file://" + os.path.join(home, "Documents")
+        mp4(os.path.join(looks, "Spot.mp4"), 6)
+    first_picture = next((n for n in sorted(os.listdir(looks)) if n.lower().endswith((".jpg", ".png", ".webp"))), None)
 
     def beat(s):
         time.sleep(s)
@@ -97,111 +65,104 @@ def run(ctx):
         if sh.wait_state(pred, timeout) is None:
             print(f"  ... did not see: {what}   {sh.state()}")
 
-    def ql():
-        return sh.state().get("quickLook") or {}
+    def ql(s):
+        return s.get("quickLook") or {}
+
+    def chooser_up(s):
+        return (s.get("dialogs") or {}).get("portal") is True
 
     desk = Desktop()
     rec = Recorder(out)
     rec.out = os.path.join(out, "kiki-whatsnew.mp4")
-    rec.title = (os.path.join(root, "app-images", "kikifull.png"), f"kiki {version} — what\u2019s new", 3.5)
-    sh.call("dismiss")
-    sh.call("split", "off")
-    sh.call("setView", "list")
-    sh.open(docs)
-    expect("Documents", lambda s: s.get("uri") == docs and s.get("done"))
-    if DESKTOP:
-        desk.enter(fullscreen=False)      # Quick Look tiles beside kiki, not over the screen
-    beat(0.6)
-    rec.start(desk.monitor)
+    rec.title = (None, f"kiki {label}", 4.0, "Quick Look, the file chooser — and what changed underneath")
+    rec.end = (f"kiki {label}", 4.5, "github.com/greyhorsesoftware/Kiki")
+    ok = False
+    try:
+        sh.call("dismiss")
+        sh.call("split", "off")
+        sh.call("inspector", "off")
+        sh.call("setView", "list")
+        sh.open("file://" + looks)
+        expect("Looks", lambda s: s.get("uri") == "file://" + looks and s.get("done"))
+        if first_picture:
+            sh.select(first_picture)
+        if DESKTOP:
+            desk.enter(fullscreen=False)      # Quick Look tiles beside kiki, not over the screen
+            desk.park_pointer()
+            rec.crop = desk.crop              # the workspace: the window alone, or both windows
+        beat(0.8)
+        rec.start(desk.monitor)
+        beat(2.0)
 
-    # ------------------------------------------------------------ the keys are the Vim keys
-    rec.say(f"{version} — the keys are the Vim keys: h j k l move, no preference to turn on")
-    sh.select("Budget 2026.csv")
-    beat(1.2)
-    for k in ("j", "j", "k"):
-        sh.keys((k,)); beat(0.7)
-    sh.select("Receipts"); beat(0.5)
-    sh.keys(("l",)); beat(1.2)
-    sh.keys(("h",)); beat(1.0)
-    rec.say("v extends the selection; y copies, p pastes")
-    sh.select("Budget 2026.csv"); beat(0.5)
-    sh.keys(("v",)); beat(0.4); sh.keys(("j",)); beat(0.4); sh.keys(("j",)); beat(0.8)
-    sh.keys(("y",)); beat(0.6)
-    sh.select("Receipts"); sh.keys(("l",)); beat(0.8)
-    sh.keys(("p",)); beat(2.0)
-    sh.keys(("h",)); beat(0.8)
-    rec.say("dd trashes, z brings it back")
-    sh.select("Reading list.md"); beat(0.5)
-    sh.keys(("d",), ("d",)); beat(1.8)
-    sh.keys(("z",)); beat(1.8)
-    rec.say(". shows hidden files; f filters — typing no longer jumps, it filters")
-    sh.keys(("period",)); beat(1.4); sh.keys(("period",)); beat(0.8)
-    sh.keys(("f",)); beat(0.4); sh.type("not"); beat(1.6); sh.keys(("Escape",)); beat(0.6)
+        # ------------------------------------------------------------------------ quick look
+        rec.say("Quick Look", "Space on a file: a window of its own beside the list. It follows the selection.")
+        beat(1.2)
+        sh.keys(("space",))
+        expect("quick look", lambda s: ql(s).get("visible"))
+        beat(3.5)
+        sh.select("Field notes.md")
+        expect("the document", lambda s: ql(s).get("kind") == "markdown")
+        rec.say("Quick Look", "A document, rendered, with its headings down the side.")
+        beat(3.5)
+        sh.select(paper)
+        expect("the paper", lambda s: ql(s).get("kind") == "pdf")
+        rec.say("Quick Look", "A PDF, drawn by the daemon — the same decoder that makes its thumbnail.")
+        beat(3.5)
+        sh.select("Spot.mp4")
+        expect("the clip", lambda s: ql(s).get("kind") == "video")
+        rec.say("Quick Look", "A video, playing. Escape, and it is gone.")
+        beat(4.0)
+        sh.keys(("Escape",))
+        expect("closed", lambda s: not ql(s).get("visible"))
+        beat(1.2)
 
-    # ------------------------------------------------------------ quick look
-    sh.open("file://" + looks)
-    expect("Looks", lambda s: s.get("uri") == "file://" + looks and s.get("done"))
-    sh.select("01 photo 1" + (os.path.splitext(pics[0])[1].lower() if pics else ".png"))
-    beat(0.8)
-    rec.say("Space: Quick Look — a window of its own, beside the list")
-    sh.keys(("space",))
-    expect("quick look", lambda s: (s.get("quickLook") or {}).get("visible"))
-    beat(3.0)
-    rec.say("j and k step through the folder without leaving it")
-    sh.keys(("j",)); beat(2.2)
-    sh.keys(("j",))
-    expect("the document", lambda s: (s.get("quickLook") or {}).get("kind") == "markdown")
-    rec.say("A Markdown document, rendered, with its contents down the left — t folds them")
-    beat(2.5); sh.keys(("t",)); beat(1.2); sh.keys(("t",)); beat(1.2)
-    sh.keys(("j",))
-    expect("the paper", lambda s: (s.get("quickLook") or {}).get("kind") == "pdf")
-    rec.say("A PDF, rendered by the daemon — + zooms in and it is rendered again, sharp; 0 fits")
-    beat(2.0); sh.keys(("plus",)); beat(1.6); sh.keys(("plus",)); beat(1.6); sh.keys(("0",)); beat(1.2)
-    if has_video:
-        sh.keys(("j",))
-        expect("the clip", lambda s: (s.get("quickLook") or {}).get("kind") == "video")
-        rec.say("A video, playing — k pauses, the arrows seek")
-        beat(3.5); sh.keys(("k",)); beat(1.0); sh.keys(("k",)); beat(1.5)
-    sh.keys(("j",))
-    expect("the code", lambda s: (s.get("quickLook") or {}).get("kind") == "text")
-    rec.say("Code in colour — HTML, JavaScript, Rust, C, Java and fifty more")
-    beat(3.5)
-    sh.keys(("j",))
-    expect("the spreadsheet", lambda s: (s.get("quickLook") or {}).get("kind") == "other")
-    rec.say("What it cannot show, it says — and offers Open with…")
-    beat(2.5)
-    sh.keys(("Escape",))
-    expect("closed", lambda s: not (s.get("quickLook") or {}).get("visible"))
-    beat(0.6)
+        # ------------------------------------------------------------------ the file chooser
+        # What another application gets when it asks the desktop for a file: the request goes to
+        # the window the way the listener sends it, and the dialog is answered with the keys.
+        rec.say("One file chooser", "Another app's Open dialog is kiki's: the same list, . for hidden files, / to filter.")
+        sh.call("dbus", "ShowChooser", json.dumps({"token": "whatsnew-open", "mode": "open", "title": "Open a file", "currentFolder": looks}))
+        expect("the open chooser", chooser_up)
+        beat(2.5)
+        for _ in range(3):
+            sh.keys(("j",)); beat(0.7)
+        beat(1.2)
+        sh.keys(("slash",)); beat(0.5)
+        sh.type("notes"); beat(2.2)
+        # Return in the filter is the way to Search everywhere, as in the window; Escape clears
+        # the text and a second closes the bar, then the keys are the list's again.
+        sh.keys(("Escape",)); beat(0.4); sh.keys(("Escape",)); beat(0.8)
+        sh.keys(("j",)); beat(0.9)
+        sh.keys(("Return",))
+        expect("the file chosen", lambda s: not chooser_up(s))
+        beat(1.5)
+        rec.say("One file chooser", "And its Save dialog: the name above, the folder it goes in below.")
+        sh.call("dbus", "ShowChooser", json.dumps({"token": "whatsnew-save", "mode": "save", "title": "Save as", "currentFolder": looks, "currentName": "Field notes (revised).md"}))
+        expect("the save chooser", chooser_up)
+        beat(4.5)
+        sh.keys(("Return",))
+        expect("saved", lambda s: not chooser_up(s))
+        beat(1.2)
 
-    # ------------------------------------------------------------ a server
-    rec.say("Side by side with a server: both panes list at once, neither waits for the other")
-    sh.call("split", "on")
-    expect("side by side", lambda s: s.get("split") is True)
-    sh.call("focusPane", "right")
-    sh.open(remote_uri + "/shared")
-    expect("the server's folder", lambda s: s.get("uri") == remote_uri + "/shared" and s.get("done"), 20)
-    beat(1.5)
-    sh.select("Field notes.md"); beat(0.6)
-    rec.say("Space on a file on a server: fetched, then shown — nothing is left behind")
-    sh.keys(("space",))
-    expect("fetched and shown", lambda s: (s.get("quickLook") or {}).get("face") == "content", 20)
-    beat(3.5)
-    sh.keys(("Escape",)); beat(0.6)
-    rec.say("A double-click on a server's file opens Quick Look too; the local one, its application")
-    beat(2.5)
+        # ---------------------------------------------------------------------- under the hood
+        # A quiet frame — the home, nothing selected — and the card over it for as long as it is up.
+        sh.open("file://" + home)
+        expect("home", lambda s: s.get("uri") == "file://" + home and s.get("done"))
+        beat(1.0)
+        rec.card(f"0.3 and {label} were under the hood", [
+            "kiki starts its own daemon and it leaves after the last window — nothing to enable",
+            "one file chooser: another app's Open and Save dialog is kiki's",
+            "drag and drop shows what it does: the files under the pointer, a + for a copy",
+            "folder tunnelling: hold over a folder and it opens; out, and you are back",
+            "files in flight are dimmed while they are written",
+            "one decoder for thumbnails and Quick Look; a bad file is tried again in a day",
+            "the daemon keeps its own log",
+            "an Omarchy store package",
+        ], 13.0)
+        beat(14.0)
 
-    # ------------------------------------------------------------ out
-    rec.say(f"In English, Spanish and Japanese, by the desktop's language. kiki {version}, for Omarchy")
-    sh.call("split", "off")
-    expect("one pane again", lambda s: s.get("split") is False)
-    sh.open("file://" + home)
-    beat(2.5)
-
-    ok = rec.finish()
-    if DESKTOP:
-        desk.leave()
-    servers.stop()
-    shutil.rmtree(remote_root, ignore_errors=True)
+        ok = rec.finish()
+    finally:
+        if DESKTOP:
+            desk.leave()
     c.check("the video was written", ok and os.path.getsize(rec.out) > 100_000, rec.out)
     print(f"  video: {rec.out}")

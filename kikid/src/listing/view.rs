@@ -47,6 +47,19 @@ impl Listing {
         }
         inner.sort = (role, asc);
         inner.sorted = false;
+        // Still scanning: the order is noted and applied when the scan ends, which rebuilds the
+        // view and says so with one `Reset`. Saying so here as well cost every cold open a
+        // `Reset` with nothing in it and a `Window` round trip to answer it (the window states
+        // the order on every open, docs/0.5.0/10-faster-listings.md). A sort by size or date
+        // goes on below: it has enrichment to start.
+        if !inner.scan_done && !role.needs_meta() {
+            let n = inner.view.len() as u64;
+            drop(inner);
+            if let Some(w) = waiter {
+                let _ = w.0.send(proto::ok(w.1, Value::obj().u("n", n).done()));
+            }
+            return n;
+        }
         if role.needs_meta() && inner.meta.iter().any(Option::is_none) {
             // Sort is applied when enrichment completes.
             drop(inner);
@@ -64,30 +77,24 @@ impl Listing {
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
-        let gen = inner.generation;
-        let subs = inner.subscribers.clone();
+        let pending = self.reset_all(&mut inner);
         drop(inner);
-        for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
-        }
+        pending.finish(self);
         if let Some(w) = waiter {
             let _ = w.0.send(proto::ok(w.1, Value::obj().u("n", n).done()));
         }
         n
     }
 
-    pub fn filter(&self, text: &str) -> u64 {
+    pub fn filter(self: &Arc<Self>, text: &str) -> u64 {
         let mut inner = self.inner.lock().unwrap();
         inner.filter = if text.is_empty() { None } else { Some(text.to_ascii_lowercase().into_bytes()) };
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
-        let gen = inner.generation;
-        let subs = inner.subscribers.clone();
+        let pending = self.reset_all(&mut inner);
         drop(inner);
-        for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
-        }
+        pending.finish(self);
         n
     }
 
@@ -111,7 +118,7 @@ impl Listing {
     }
 
     /// Show or hide dot-files; a `Reset` follows like a filter change.
-    pub fn set_hidden(&self, show: bool) -> u64 {
+    pub fn set_hidden(self: &Arc<Self>, show: bool) -> u64 {
         let mut inner = self.inner.lock().unwrap();
         if inner.show_hidden == show {
             return inner.view.len() as u64;
@@ -120,12 +127,9 @@ impl Listing {
         inner.rebuild_view();
         inner.generation += 1;
         let n = inner.view.len() as u64;
-        let gen = inner.generation;
-        let subs = inner.subscribers.clone();
+        let pending = self.reset_all(&mut inner);
         drop(inner);
-        for s in subs {
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
-        }
+        pending.finish(self);
         n
     }
 }

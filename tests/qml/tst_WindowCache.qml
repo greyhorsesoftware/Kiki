@@ -18,17 +18,29 @@ TestCase {
         // With `hold` set a Window's reply waits in `held` until the test delivers it.
         property bool hold: false
         property var held: []
+        // A folder the daemon has not listed: the Open's reply carries no rows, and the test
+        // sends the Reset that ends the scan itself.
+        property bool cold: false
         function allocLid() { return _lid++ }
         function bind(lid, l) { bound = l }
         function unbind(lid) { bound = null }
         property var bound: null
+        function rows(first, count) {
+            const out = []
+            for (let i = 0; i < count && first + i < total; i++) out.push({ name: prefix + (first + i), kind: "file", isDir: false, isLink: false, meta: null, thumb: null, git: null })
+            return out
+        }
         function request(type, fields, cb) {
             sent.push({ type: type, fields: fields })
-            if (type === "Open") cb({ cached: false }, undefined)
+            if (type === "Open") {
+                if (cold) { cb({ cached: false }, undefined); return }
+                // The first screenful rides on the reply (docs/0.5.0/10-faster-listings.md).
+                const reply = { cached: true, first: 0, rows: rows(0, fields.initial || 0), n: total, done: true }
+                if (gen !== undefined) reply.gen = gen
+                cb(reply, undefined)
+            }
             if (type === "Window") {
-                const rows = []
-                for (let i = 0; i < fields.count && fields.first + i < total; i++) rows.push({ name: prefix + (fields.first + i), kind: "file", isDir: false, isLink: false, meta: null, thumb: null, git: null })
-                const reply = { first: fields.first, rows: rows, n: total, done: true }
+                const reply = { first: fields.first, rows: rows(fields.first, fields.count), n: total, done: true }
                 if (gen !== undefined) reply.gen = gen
                 if (hold) held.push(() => cb(reply, undefined)); else cb(reply, undefined)
             }
@@ -37,18 +49,68 @@ TestCase {
 
     Kiki.WindowCache { id: cache; daemon: fake; padAhead: 20; padBehind: 10; viewportCount: 10 }
 
-    function init() { fake.hold = false; cache.debounce.stop(); cache.close(); cache._velocity = 0; cache._movedAt = 0; cache.viewportFirst = 0; cache.viewportCount = 10; cache._lastDirection = 1; sent = []; fake.total = 100000; fake.prefix = "f"; fake.gen = undefined; fake.hold = false; fake.held = [] }
+    function init() { fake.hold = false; fake.cold = false; cache.debounce.stop(); cache.close(); cache._velocity = 0; cache._movedAt = 0; cache.viewportFirst = 0; cache.viewportCount = 10; cache._lastDirection = 1; sent = []; fake.total = 100000; fake.prefix = "f"; fake.gen = undefined; fake.hold = false; fake.held = [] }
     function names(a, b) { const out = []; for (let i = a; i < b; i++) { const r = cache.row(i); out.push(r ? r.name : null) } return out }
 
-    function test_open_sends_open_and_first_window_together() {
+    // The first screenful comes with the open (docs/0.5.0/10-faster-listings.md): the Open says
+    // how much it wants, and no Window leaves with it or after it.
+    function test_open_sends_no_window_the_rows_come_with_the_reply() {
         cache.open("file:///tmp")
+        compare(sent.length, 1)
         compare(sent[0].type, "Open")
-        compare(sent[1].type, "Window")
-        compare(sent[1].fields.first, 0)
+        compare(sent[0].fields.initial, 30)          // the viewport and its look-ahead
         compare(cache.count, 100000)
         verify(cache.row(0) !== null)
         compare(cache.row(0).name, "f0")
-        verify(cache.row(5000) === null)
+        compare(cache.row(29).name, "f29")
+        verify(cache.row(30) === null)
+        cache.setViewport(0, 10); wait(40)
+        compare(sent.length, 1, "a viewport settling on what it holds asks nothing")
+    }
+
+    // A folder the daemon has not listed: the reply carries nothing, the Reset that ends the
+    // scan carries the rows — and nothing is asked for in between, however the viewport moves.
+    function test_a_cold_open_paints_on_the_reset_without_asking() {
+        fake.cold = true
+        cache.open("file:///tmp")
+        compare(sent.length, 1)
+        verify(cache.row(0) === null)
+        cache.setViewport(0, 10); wait(40)
+        compare(sent.length, 1, "nothing asked while the scan runs: the rows are on their way")
+        cache.handleEvent({ event: "Count", lid: cache.lid, n: 100000, done: true })
+        cache.handleEvent({ event: "Reset", lid: cache.lid, n: 100000, gen: 1, first: 0, rows: fake.rows(0, 30) })
+        compare(cache.row(0).name, "f0")
+        compare(cache.row(29).name, "f29")
+        verify(cache.done)
+        wait(40)
+        compare(sent.length, 1, "and nothing after: the screenful is whole")
+    }
+
+    // A Reset whose rows cover the screen makes the Window still in flight pointless: its reply
+    // is from before the change and is dropped — and not asked again, since nothing is missing.
+    function test_rows_on_a_reset_make_an_older_window_reply_dead() {
+        fake.gen = 3
+        cache.open("file:///tmp")
+        fake.hold = true
+        cache.setViewport(1000, 10); wait(40)
+        compare(fake.held.length, 1)              // computed at gen 3, still in flight
+        fake.gen = 4; fake.prefix = "h"
+        cache.handleEvent({ event: "Reset", lid: cache.lid, n: 100000, gen: 4, first: 990, rows: fake.rows(990, 40) })
+        compare(cache.row(1000).name, "h1000")
+        fake.held.shift()()                       // the old answer lands…
+        compare(cache.row(1000).name, "h1000")    // …and changes nothing
+        wait(40)
+        compare(fake.held.length, 0, "nothing asked again: the screen is held")
+    }
+
+    function test_a_scroll_past_the_rows_handed_over_asks_a_window() {
+        cache.open("file:///tmp")
+        sent = []
+        cache.setViewport(5000, 10); wait(40)
+        compare(sent.length, 1)
+        compare(sent[0].type, "Window")
+        compare(sent[0].fields.first, 4990)
+        compare(cache.row(5000).name, "f5000")
     }
 
     function test_viewport_requests_only_missing_rows() {
@@ -210,11 +272,14 @@ TestCase {
         tryVerify(() => cache.row(5000) !== null, 3000, "the viewport fills once the scroll stops")
     }
 
-    function test_an_empty_folder_is_asked_once() {
+    function test_an_empty_folder_is_asked_nothing() {
         fake.total = 0
         cache.open("file:///tmp")
+        cache.setViewport(0, 10)
         wait(60)
-        compare(sent.filter(r => r.type === "Window").length, 1)
+        compare(sent.filter(r => r.type === "Window").length, 0)
+        compare(cache.count, 0)
+        verify(cache.done)
     }
 
     // A daemon that only ever answers from the past must not be asked for ever.

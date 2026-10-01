@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history coverage run daemon shell dev-clean fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history open-perf coverage run daemon shell dev-clean fmt lint clean
 
 all: build
 
@@ -61,6 +61,10 @@ scroll-perf: build
 
 scroll-history:
 	@tests/e2e/scroll_history.py
+
+# Opening a folder, timed (docs/0.5.0/10-faster-listings.md); records to bench/open-history.jsonl.
+open-perf: build
+	KIKID=$(ROOT)/target/release/kikid tests/e2e/run.sh --flow open_perf
 
 # The checkout's daemon and window keep to themselves: a socket of their own (the installed
 # kiki of the same version would otherwise be found first — the socket is named for the

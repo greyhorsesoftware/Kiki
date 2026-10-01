@@ -54,16 +54,28 @@ impl Listing {
         let elapsed = start.elapsed();
         inner.rebuild_view();
         inner.generation += 1;
-        let n = inner.view.len() as u64;
-        let gen = inner.generation;
+        let epoch = inner.epoch;
         let failed = inner.scan_error.clone();
+        drop(inner);
+        // The first screenful's metadata, before the word goes out, so the rows the `Reset`
+        // carries are whole (bounded: see `stat_first_screen`). Not for a folder that failed to
+        // list — there is nothing to stat — and not past a rescan that got in first.
+        if failed.is_none() {
+            self.stat_first_screen();
+        }
+        let mut inner = self.inner.lock().unwrap();
+        if inner.epoch != epoch {
+            return; // the rescan has sent its own Reset, with its own rows
+        }
+        let n = inner.view.len() as u64;
         let said = inner.scan_said.clone();
         let subs = inner.subscribers.clone();
+        let pending = self.reset_all(&mut inner);
         drop(inner);
         for s in &subs {
             let _ = s.tx.send(finished(s.lid, n, failed.as_deref(), said.as_ref()));
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
         }
+        pending.finish(self);
         if std::env::var_os("KIKI_TRACE").is_some() {
             eprintln!("scan {} entries in {:?}", total, elapsed);
         }
@@ -93,6 +105,7 @@ impl Listing {
                     (inner.epoch, (0..inner.pool.len() as u32).map(|i| (i, String::from_utf8_lossy(inner.pool.name(i)).into_owned(), inner.pool.entry_type(i) == EntryType::Dir)).collect())
                 };
                 let mut changed = Vec::new();
+                let mut pending = None;
                 {
                     let mut inner = me.inner.lock().unwrap();
                     // A rescan since the names were read has dealt the indexes again, and has
@@ -119,14 +132,15 @@ impl Listing {
                         inner.rebuild_view();
                         if inner.view.len() != before {
                             inner.generation += 1;
-                            let n = inner.view.len() as u64;
-                            let gen = inner.generation;
-                            for s in inner.subscribers.clone() {
-                                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
-                            }
+                            let mut p = me.reset_all(&mut inner);
+                            p.send();
+                            pending = Some(p);
                             changed.clear();
                         }
                     }
+                }
+                if let Some(p) = pending {
+                    p.finish(&me);
                 }
                 me.push_rows(&changed);
                 let subs = me.inner.lock().unwrap().subscribers.clone();
@@ -283,11 +297,11 @@ impl Listing {
         inner.epoch += 1;
         inner.rebuild_view();
         inner.generation += 1;
-        let gen = inner.generation;
         let count = inner.view.len() as u64;
         let failed = inner.scan_error.clone();
         let said = inner.scan_said.clone();
         let subs = inner.subscribers.clone();
+        let pending = self.reset_all(&mut inner);
         drop(inner);
         {
             let mut c = cache().lock().unwrap();
@@ -295,8 +309,8 @@ impl Listing {
         }
         for s in &subs {
             let _ = s.tx.send(finished(s.lid, count, failed.as_deref(), said.as_ref()));
-            let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", count).u("gen", gen).done());
         }
+        pending.finish(self);
         if !crate::git::is_slow(&self.path) {
             self.git_status();
         }
@@ -387,18 +401,28 @@ impl Listing {
             let c = &mut cache().lock().unwrap();
             c.entries += added.len();
         }
+        let mut pending = None;
         if changed {
             // Sent with the lock held, so that no `Window` can be answered between the change and
             // the word of it; a reply already on its way carries the older `gen` and is dropped.
-            for s in &inner.subscribers {
-                let _ = match &splice {
-                    Some(ops) if ops.is_empty() => continue,
-                    Some(ops) => s.tx.send(proto::event("Splice").u("lid", s.lid).u("n", n).u("gen", gen).v("ops", Value::Arr(ops.clone())).done()),
-                    None => s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done()),
-                };
+            match &splice {
+                Some(ops) if ops.is_empty() => {}
+                Some(ops) => {
+                    for s in &inner.subscribers {
+                        let _ = s.tx.send(proto::event("Splice").u("lid", s.lid).u("n", n).u("gen", gen).v("ops", Value::Arr(ops.clone())).done());
+                    }
+                }
+                None => {
+                    let mut p = self.reset_all(&mut inner);
+                    p.send();
+                    pending = Some(p);
+                }
             }
         }
         drop(inner);
+        if let Some(p) = pending {
+            p.finish(self);
+        }
         if !to_stat.is_empty() {
             let _ = stat_pool().tx.send(StatJob { listing: Arc::clone(self), rows: to_stat, epoch, low_priority: true });
         }

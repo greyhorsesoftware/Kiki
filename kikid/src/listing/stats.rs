@@ -244,17 +244,16 @@ impl Listing {
         }
         let e = inner.enrich.take().unwrap();
         let needs_resort = inner.sort.0.needs_meta() && !inner.sorted;
+        let mut pending = None;
         if needs_resort {
             inner.rebuild_view();
             inner.generation += 1;
+            pending = Some(self.reset_all(&mut inner));
         }
         let n = inner.view.len() as u64;
-        let gen = inner.generation;
         drop(inner);
-        for s in &subs {
-            if needs_resort {
-                let _ = s.tx.send(proto::event("Reset").u("lid", s.lid).u("n", n).u("gen", gen).done());
-            }
+        if let Some(p) = pending {
+            p.finish(self);
         }
         for (tx, id) in e.waiters {
             let _ = tx.send(proto::ok(id, Value::obj().u("n", n).done()));

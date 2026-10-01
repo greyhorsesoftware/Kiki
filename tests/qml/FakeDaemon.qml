@@ -34,8 +34,12 @@ QtObject {
     property var pdfs: ({})
 
     property int _nextLid: 1
-    property var _open: ({})         // lid -> { uri, filter, hidden, role, order }
+    property var _open: ({})         // lid -> { uri, filter, hidden, role, order, first, count }
     property var _bound: ({})        // lid -> the WindowCache
+    /// Answer `Open` the way the daemon does for a folder it has not listed: no rows on the
+    /// reply, and a `Reset` carrying them when `scanned(lid)` is called. Off, every folder is
+    /// one the daemon has (rows on the reply), which is what most tests want.
+    property bool cold: false
 
     // ---------------------------------------------------------------- fixtures
 
@@ -103,12 +107,18 @@ QtObject {
         const f = fields || {}
         sent = sent.concat([{ type: type, fields: f }])
         switch (type) {
-        case "Open":
-            _open[f.lid] = { uri: f.uri, filter: "", hidden: false, role: "name", order: "asc" }
-            if (cb) cb({ cached: false }, undefined)
+        case "Open": {
+            // The first screenful rides on the reply (docs/0.5.0/10-faster-listings.md): the
+            // first `initial` rows, which this connection then holds until a Window says otherwise.
+            _open[f.lid] = { uri: f.uri, filter: "", hidden: false, role: "name", order: "asc", first: 0, count: f.initial || 0 }
+            if (cold) { if (cb) cb({ cached: false }, undefined); break }
+            const rows = rowsOf(f.lid)
+            if (cb) cb({ cached: true, first: 0, rows: rows.slice(0, f.initial || 0), n: rows.length, done: true }, undefined)
             break
+        }
         case "Window": {
             const rows = rowsOf(f.lid)
+            if (_open[f.lid]) { _open[f.lid].first = f.first; _open[f.lid].count = f.count }
             if (cb) cb({ first: f.first, rows: rows.slice(f.first, f.first + f.count), n: rows.length, done: true }, undefined)
             break
         }
@@ -199,8 +209,19 @@ QtObject {
         else cb(undefined, e)
     }
 
-    /// What the daemon sends after a sort, filter or refresh: the window is invalid, refetch.
+    /// What the daemon sends after a sort, filter or refresh: the order or membership changed,
+    /// and here are the rows this connection holds, in their new places.
     function _resetListing(lid) {
-        emitEvent({ event: "Reset", lid: lid, n: rowsOf(lid).length })
+        const rows = rowsOf(lid), st = _open[lid] || { first: 0, count: 0 }
+        const ev = { event: "Reset", lid: lid, n: rows.length }
+        if (st.count > 0) { ev.first = st.first; ev.rows = rows.slice(st.first, st.first + st.count) }
+        emitEvent(ev)
+    }
+    /// With `cold` set: the scan of `lid`'s folder ends, and the Reset that says so carries the
+    /// first screenful.
+    function scanned(lid) {
+        const l = _bound[lid]
+        if (l) l.handleEvent({ event: "Count", lid: lid, n: rowsOf(lid).length, done: true })
+        _resetListing(lid)
     }
 }

@@ -94,7 +94,7 @@ fn stub_plugin_end_to_end() {
     assert!(!cached);
     assert!(listing::wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     let w = l.window(1, 1, 0, 10, None);
     assert_eq!(w.u64_field("n"), Some(4));
     let rows = w.get("rows").unwrap().as_arr().unwrap();

@@ -110,8 +110,8 @@ fn a_watched_folder_tells_every_window_what_changed_and_gives_its_watch_up_last(
     // Two windows on the one listing, as two panes showing the same folder are.
     let (tx_a, rx_a) = mpsc::channel();
     let (tx_b, rx_b) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx_a, first: 0, count: 512, view_first: 0, view_count: 512 });
-    l.subscribe(Subscriber { client: 2, lid: 7, tx: tx_b, first: 0, count: 512, view_first: 0, view_count: 512 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx_a, first: 0, count: 512, view_first: 0, view_count: 512, initial: 0 });
+    l.subscribe(Subscriber { client: 2, lid: 7, tx: tx_b, first: 0, count: 512, view_first: 0, view_count: 512, initial: 0 });
     assert_eq!(window_rows(&l).len(), 3);
     // A small folder is enriched straight after its scan, and that is a `Rows` of its own on the
     // way. Let it land, and start from quiet.
@@ -204,12 +204,16 @@ fn a_watched_folder_tells_every_window_what_changed_and_gives_its_watch_up_last(
         }
         assert_eq!(row(&rows, name).get("meta").and_then(|m| m.u64_field("size")), *size, "{name} kept the Meta it already had — nothing was stated again");
     }
-    assert_eq!(row(&rows, "while-away.txt").get("meta"), Some(&Value::Null), "and the new one has none yet, which is what says the rest were kept");
+    // The new one is there. Whether it has been stated by now is timing: the `Reset` that
+    // announced the re-listing carried every watcher's rows and queued the stat for it at
+    // once (0.5.0). That the rest were kept rather than stated again is what
+    // `listing::tests::rescan_keeps_meta_for_unchanged` proves, on the rows the Reset carries.
+    assert!(row(&rows, "while-away.txt").str_field("name").is_some());
 
     // And it is live again: a folder you come back to is watched, or it would be listed once and
     // then quietly stop keeping up.
     let (tx_c, rx_c) = mpsc::channel();
-    back.subscribe(Subscriber { client: 3, lid: 2, tx: tx_c, first: 0, count: 512, view_first: 0, view_count: 512 });
+    back.subscribe(Subscriber { client: 3, lid: 2, tx: tx_c, first: 0, count: 512, view_first: 0, view_count: 512, initial: 0 });
     let at = Instant::now();
     std::fs::write(home.join("after-return.txt"), b"live").unwrap();
     let (ev, _) = until(&rx_c, at, "a Splice for the folder that came back", |v| is("Splice")(v) && named(v).contains(&"after-return.txt".to_string()));

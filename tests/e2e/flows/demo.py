@@ -60,6 +60,9 @@ class Desktop:
     def __init__(self):
         self.was = None
         self.monitor = None
+        # Where the window is on the recording, in its pixels (Hyprland's logical geometry times
+        # the monitor's scale), for a recording cropped to the window and nothing round it.
+        self.crop = None
 
     def enter(self, fullscreen=True):
         """`fullscreen=False` leaves the window tiled — alone it fills the workspace anyway — so a
@@ -84,6 +87,20 @@ class Desktop:
                 print(f"  hyprctl {call}: {r}")
             time.sleep(0.3)
         time.sleep(0.8)
+        try:
+            k = float(m.get("scale") or 1)
+            win = next(c for c in json.loads(hypr("clients", "-j")) if c.get("title") == "kiki")
+            x, y = (win["at"][0] - m["x"]) * k, (win["at"][1] - m["y"]) * k
+            w, h = win["size"][0] * k, win["size"][1] * k
+            self.crop = (int(round(x)), int(round(y)), int(round(w)) // 2 * 2, int(round(h)) // 2 * 2)
+        except (ValueError, KeyError, StopIteration, IndexError, TypeError):
+            self.crop = None
+
+    def park_pointer(self):
+        """The pointer to the screen's far corner, out of the picture. wlrctl only moves
+        relatively, so a step bigger than any screen lands there from anywhere."""
+        if shutil.which("wlrctl"):
+            subprocess.run(["wlrctl", "pointer", "move", "8000", "8000"], capture_output=True, env=REAL_ENV, timeout=5)
 
     def leave(self):
         if self.was is not None:
@@ -93,6 +110,128 @@ class Desktop:
 def font_file():
     r = subprocess.run(["fc-match", "-f", "%{file}", "sans-serif:bold"], capture_output=True, text=True)
     return r.stdout.strip() or None
+
+
+
+# ---------------------------------------------------------------- the look of the cards and panels
+
+def theme():
+    """The colours the shell is drawing with — Omarchy's active theme, the way Theme.qml reads it
+    (`~/.local/state/omarchy/current/theme/colors.toml`) — so a card or a panel matches the
+    window beside it. Theme.qml's own defaults when there is no theme to read."""
+    t = {"bg": "#1a1b26", "bgDark": "#16161e", "line": "#292e42", "fg": "#c0caf5", "muted": "#565f89", "accent": "#7aa2f7"}
+    path = os.path.expanduser("~/.local/state/omarchy/current/theme/colors.toml")
+    keys = {"background": "bg", "dark_background": "bgDark", "lighter_background": "line", "foreground": "fg", "muted": "muted", "accent": "accent"}
+    try:
+        for line in open(path, encoding="utf-8"):
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"')
+            if k in keys and v.startswith("#"):
+                t[keys[k]] = v
+    except OSError:
+        pass
+    return t
+
+
+def rgb(hexcolour):
+    h = hexcolour.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+def mono_family():
+    """The family the shell's mono font resolves to here — `Cascadia Mono` when installed, else
+    what fontconfig gives in its place, which is what the window is showing too."""
+    r = subprocess.run(["fc-match", "-f", "%{family[0]}", "Cascadia Mono"], capture_output=True, text=True)
+    return r.stdout.strip() or "monospace"
+
+
+def mark_png(out, px, colour):
+    """The About box's mark — the wireframe cat — at `px` across in the theme's colour. The
+    artwork is stroked near-black (`app-images/cat-head-wireframe.svg`); AppMark redraws it as
+    vector paths in the accent colour, so here the raster is tinted the same way."""
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    svg = os.path.join(root, "app-images", "cat-head-wireframe.svg")
+    raw = out + ".raw.png"
+    subprocess.run(["rsvg-convert", "-w", str(px), "-h", str(px), "-o", raw, svg], check=True)
+    subprocess.run(["magick", raw, "-fuzz", "35%", "-fill", colour, "-opaque", "#111111", out], check=True)
+    os.remove(raw)
+    return out
+
+
+def rounded(ctx, x, y, w, h, r):
+    import math
+    ctx.new_sub_path()
+    ctx.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    ctx.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    ctx.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    ctx.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+    ctx.close_path()
+
+
+def panel_png(out, title, lines, width_max, scale, big=False):
+    """A caption as an overlay panel: rounded, the theme's background at 80 %, a hairline, the
+    title bold with the lines beneath (owner, 2026-09-28: "the info panels at bottom should be
+    in a nice overlay box over the video"). Sized to its words, never wider than `width_max`.
+
+    `big` is the card in the middle of the picture (`Recorder.card`): larger type, more room
+    round it, the title in the accent and a dot before each line — a window over the window,
+    for what a release changed that no frame can show."""
+    import cairo
+    t = theme()
+    fam = mono_family()
+    ts, ls = (round(34 * scale), round(21 * scale)) if big else (round(24 * scale), round(18 * scale))
+    pad, gap = (round(44 * scale), round(15 * scale)) if big else (round(22 * scale), round(8 * scale))
+    dot = round(ls * 0.85) if big else 0       # the room a line's dot takes, before the words
+    m = cairo.ImageSurface(cairo.FORMAT_ARGB32, 10, 10)
+    mc = cairo.Context(m)
+    mc.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD); mc.set_font_size(ts)
+    tw = mc.text_extents(title).x_advance
+    mc.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL); mc.set_font_size(ls)
+    lw = max([mc.text_extents(l).x_advance for l in lines] + [0]) + dot
+    w = int(min(width_max, max(tw, lw) + 2 * pad))
+    h = int(pad + ts + (gap + ls) * len(lines) + pad * 0.9 + (gap if big and lines else 0))
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+    c = cairo.Context(surf)
+    rounded(c, 1, 1, w - 2, h - 2, round((16 if big else 12) * scale))
+    # The card is nearly solid: a list's rows showing through its lines made both hard to read.
+    c.set_source_rgba(*rgb(t["bg"]), 0.95 if big else 0.82); c.fill_preserve()
+    c.set_source_rgba(*rgb(t["line"]), 0.9); c.set_line_width(1); c.stroke()
+    c.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD); c.set_font_size(ts)
+    c.set_source_rgb(*rgb(t["accent"] if big else t["fg"]))
+    c.move_to(pad, pad + ts * 0.8); c.show_text(title)
+    c.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL); c.set_font_size(ls)
+    y = pad + ts * 0.8 + (gap if big else 0)
+    for l in lines:
+        y += gap + ls
+        if big:
+            c.set_source_rgba(*rgb(t["accent"]), 0.9)
+            c.arc(pad + dot * 0.25, y - ls * 0.32, ls * 0.13, 0, 6.2832); c.fill()
+        c.set_source_rgba(*rgb(t["fg"]), 0.86)
+        c.move_to(pad + dot, y); c.show_text(l)
+    surf.write_to_png(out)
+    return w, h
+
+
+def card_png(out, w, h, heading, sub):
+    """A full-frame card: the mark centred on the theme's background, the heading under it in
+    the accent and a line beneath in the foreground — the About box, at the size of the video."""
+    import cairo
+    t = theme()
+    fam = mono_family()
+    mark = mark_png(out + ".mark.png", round(h * 0.34), t["accent"])
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+    c = cairo.Context(surf)
+    c.set_source_rgb(*rgb(t["bg"])); c.paint()
+    img = cairo.ImageSurface.create_from_png(mark)
+    c.save(); c.translate((w - img.get_width()) / 2, h * 0.16); c.set_source_surface(img, 0, 0); c.paint_with_alpha(0.78); c.restore()
+    os.remove(mark)
+    c.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD); c.set_font_size(round(h / 13))
+    c.set_source_rgb(*rgb(t["accent"]))
+    e = c.text_extents(heading); c.move_to((w - e.x_advance) / 2, h * 0.16 + img.get_height() + h * 0.12); c.show_text(heading)
+    c.select_font_face(fam, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL); c.set_font_size(round(h / 30))
+    c.set_source_rgba(*rgb(t["fg"]), 0.85)
+    e = c.text_extents(sub); c.move_to((w - e.x_advance) / 2, h * 0.16 + img.get_height() + h * 0.12 + h * 0.07); c.show_text(sub)
+    surf.write_to_png(out)
 
 
 class Recorder:
@@ -108,23 +247,46 @@ class Recorder:
         self.stop = threading.Event()
         self.n = 0
         self.t0 = 0.0
-        self.marks = []          # (seconds from the start of the recording, text)
-        # A card before the first frame: an image and a line of text, `seconds` long.
-        self.title = None        # (image path, text, seconds)
+        self.marks = []          # (seconds from the start of the recording, title, text or None, seconds or None)
+                                 # — a caption runs until the next mark; a card (`card`) runs its own seconds, centred
+        # A card before the first frame: an image and a line of text, `seconds` long — or, when
+        # `image` is None, the About mark on the theme with `text` as the heading and `sub` beneath.
+        self.title = None        # (image path or None, text, seconds[, sub])
+        # A card after the last frame, the same shape as the title's.
+        self.end = None          # (text, seconds, sub)
+        # (x, y, w, h) to crop the recording to, in its pixels: the window without the desktop.
+        self.crop = None
 
-    def say(self, text):
-        self.marks.append((time.monotonic() - self.t0, text))
-        print(f"  {self.marks[-1][0]:5.1f}s  {text}")
+    @property
+    def raw(self):
+        """The capture as it came off the screen, beside the output (a flow may set `out` after
+        construction, so this follows it): the file a re-composite starts from."""
+        return self.out + ".raw.mp4"
+
+    def say(self, title, text=None):
+        """A caption from now until the next one: a title and, beneath it, `text` (lines split
+        on newlines). The one-argument form is the 0.2 video's, a line with no title."""
+        self.marks.append((time.monotonic() - self.t0, title, text, None))
+        print(f"  {self.marks[-1][0]:5.1f}s  {title}" + (f" — {text}" if text else ""))
+
+    def card(self, title, lines, seconds):
+        """A card in the middle of the picture for `seconds`, over whatever the window is showing:
+        a title and a line per entry (owner, 2026-09-28: "a window that outlines this release
+        was an under the hood release"). The flow holds the window still for as long; the
+        caption before it ends when the card comes up, and nothing follows until the next `say`."""
+        self.marks.append((time.monotonic() - self.t0, title, "\n".join(lines), float(seconds)))
+        print(f"  {self.marks[-1][0]:5.1f}s  [card {seconds}s] {title}")
 
     def start(self, monitor=None):
-        if os.path.exists(self.out):
-            os.remove(self.out)
+        for stale in (self.out, self.raw):
+            if os.path.exists(stale):
+                os.remove(stale)
         if DESKTOP:
             # Omarchy's own invocation (omarchy-capture-screenrecording --fullscreen), minus audio.
             self.proc = subprocess.Popen(["gpu-screen-recorder", "-w", monitor or "focused", "-s", "0x0", "-k", "auto", "-f", "60", "-fm", "cfr",
-                                          "-fallback-cpu-encoding", "yes", "-o", self.out], stdout=subprocess.DEVNULL,
+                                          "-fallback-cpu-encoding", "yes", "-o", self.raw], stdout=subprocess.DEVNULL,
                                          stderr=open(os.path.join(os.path.dirname(self.out), "recorder.log"), "w"), env=REAL_ENV)
-            wait_for(lambda: os.path.exists(self.out) or None, timeout=10)
+            wait_for(lambda: os.path.exists(self.raw) or None, timeout=10)
             time.sleep(0.5)
             self.t0 = time.monotonic()
             return
@@ -149,95 +311,147 @@ class Recorder:
                 self.proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-            if not os.path.exists(self.out):
+            if not os.path.exists(self.raw):
                 return False
-            return self.caption(self.out, end)
+            return self.caption(self.raw, end)
         self.stop.set()
         self.thread.join(timeout=5)
         fps = self.n / max(0.1, end) if self.n > 1 else 12
-        raw = self.out + ".raw.mp4"
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-framerate", f"{fps:.3f}", "-i", os.path.join(self.frames, "f%05d.ppm"),
-                            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", raw],
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", self.raw],
                            capture_output=True, text=True)
         shutil.rmtree(self.frames, ignore_errors=True)
         if r.returncode != 0:
             print("  ffmpeg:", r.stderr.strip()[:400])
             return False
-        return self.caption(raw, end)
+        return self.caption(self.raw, end)
 
     def caption(self, src, end):
-        """Burn the marks in along the bottom: each line from its mark to the next. The text is
-        drawn over a dark band a little above the status bar, sized to the frame."""
-        font = font_file()
-        if not self.marks or not font or not shutil.which("ffprobe"):
+        """Burn the marks in as overlay panels: each from its mark to the next, a rounded
+        translucent box a little above the bottom edge, fading in and out over a quarter second.
+        The 0.2 video's one-line marks get a panel with the line as its title."""
+        if not self.marks or not shutil.which("ffprobe"):
             if src != self.out:
                 os.replace(src, self.out)
             return True
-        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", src],
-                               capture_output=True, text=True).stdout.strip()
-        h = int(probe or 1080)
-        size = max(18, round(h / 36))
-        # A band of its own under the picture, so no caption ever sits over a toast or a footer:
-        # the frame grows by the band (kept even, for the encoder).
-        band = (round(size * 1.9) + 1) // 2 * 2
-        filters = [f"pad=iw:ih+{band}:0:0:black"]
-        for i, (t, text) in enumerate(self.marks):
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", src],
+                               capture_output=True, text=True).stdout.strip().split(",")
+        try:
+            w, h = int(probe[0]), int(probe[1])
+        except (ValueError, IndexError):
+            w, h = 1920, 1080
+        inputs, chain, prev = [], [], "0:v"
+        if self.crop:
+            cx, cy, cw, ch = self.crop
+            if 0 <= cx < cx + cw <= w and 0 <= cy < cy + ch <= h:
+                chain.append(f"[0:v]crop={cw}:{ch}:{cx}:{cy}[base]"); prev = "base"; w, h = cw, ch
+        scale = h / 1080
+        panels = os.path.join(os.path.dirname(self.out), "panels")
+        shutil.rmtree(panels, ignore_errors=True); os.makedirs(panels)
+        for i, (t, title, text, held) in enumerate(self.marks):
             until = self.marks[i + 1][0] if i + 1 < len(self.marks) else end + 1
-            # `expansion=none`: the text is what it says, `%` included; only the filter graph's
-            # own separators want escaping, and an apostrophe is a right quote instead.
-            esc = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
-            filters.append(f"drawtext=fontfile='{font}':expansion=none:text='{esc}':fontsize={size}:fontcolor=white@0.95"
-                           f":x=(w-text_w)/2:y={h}+({band}-text_h)/2-{size // 8}"
-                           f":enable='between(t,{t:.2f},{until:.2f})'")
+            # A card has its own length; a caption runs to the next mark.
+            dur = held if held else max(0.6, until - t)
+            png = os.path.join(panels, f"p{i:02d}.png")
+            pw, ph = panel_png(png, title, (text or "").split("\n") if text else [], round(w * 0.72), scale, big=bool(held))
+            n = i + 1                    # input 0 is the recording; each panel is the next
+            inputs += ["-loop", "1", "-t", f"{dur:.2f}", "-i", png]
+            # High enough to clear a dialog's own button row (the chooser's Cancel/Open sit in the
+            # bottom tenth): 16 % up, not 7.5 %, after a first cut crowded them (2026-09-28).
+            # A card sits in the middle, and takes a little longer to come and go.
+            y = round((h - ph) / 2) if held else round(h - ph - h * 0.16)
+            f = 0.5 if held else 0.25
+            chain.append(f"[{n}:v]format=rgba,fade=t=in:st=0:d={f}:alpha=1,fade=t=out:st={max(0.0, dur - f):.2f}:d={f}:alpha=1,setpts=PTS-STARTPTS+{t:.2f}/TB[c{i}];"
+                         f"[{prev}][c{i}]overlay=x=(W-w)/2:y={y}:eof_action=pass[b{i}]")
+            prev = f"b{i}"
         tmp = self.out + ".captioned.mp4"
-        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "medium", "-crf", "19",
-                            "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", tmp], capture_output=True, text=True)
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, *inputs, "-filter_complex", ";".join(chain), "-map", f"[{prev}]",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", tmp],
+                           capture_output=True, text=True)
+        shutil.rmtree(panels, ignore_errors=True)
         if r.returncode != 0:
             print("  ffmpeg (captions):", r.stderr.strip()[:400])
             if src != self.out:
                 os.replace(src, self.out)
             return True
         os.replace(tmp, self.out)
-        if src != self.out and os.path.exists(src):
-            os.remove(src)
+        # The raw capture (`self.raw`) stays beside the output: a change to the panels or cards
+        # is a re-composite of that file, not another recording of the owner's screen.
         if self.title:
-            self.prepend_title(h + band)
+            self.prepend_title(h)
+        if self.end:
+            self.append_end()
         return True
 
-    def prepend_title(self, height):
-        """The title card — the image centred over black with the text under it, the size of the
-        captioned video — concatenated before it (owner, 2026-09-25: "demo should open showing
-        kiki image and title then move to showing")."""
-        image, text, seconds = self.title
+    def _card(self, path, w, h, image, text, sub):
+        """A card the size of the video: the About mark on the theme with `text` under it, or
+        the given image over black with `text` beneath (the 0.2 video's card)."""
+        if image is None:
+            card_png(path, w, h, text, sub or "")
+            return f"-loop 1 -framerate 30 -i {path}", ""
         font = font_file()
-        if not font or not os.path.exists(image):
-            print(f"  ... no title card: font {font!r}, image {image!r}")
-            return
+        size = max(24, round(h / 18))
+        esc = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
+        return f"-loop 1 -framerate 30 -i {image}", (f"scale=-2:{round(h * 0.5)},pad={w}:{h}:(ow-iw)/2:(oh-ih)/2-{round(h * 0.06)}:black,"
+                                                     f"drawtext=fontfile='{font}':expansion=none:text='{esc}':fontsize={size}:fontcolor=white@0.95:x=(w-text_w)/2:y={round(h * 0.78)},")
+
+    def _size(self):
         probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", self.out],
                                capture_output=True, text=True).stdout.strip().split(",")
         try:
-            w, h = int(probe[0]), int(probe[1])
+            return int(probe[0]), int(probe[1])
         except (ValueError, IndexError):
-            return
-        size = max(24, round(h / 18))
-        esc = text.replace("\\", "\\\\").replace("'", "\u2019").replace(":", "\\:")
-        card = self.out + ".title.mp4"
-        vf = (f"scale=-2:{round(h * 0.5)},pad={w}:{h}:(ow-iw)/2:(oh-ih)/2-{round(h * 0.06)}:black,"
-              f"drawtext=fontfile='{font}':expansion=none:text='{esc}':fontsize={size}:fontcolor=white@0.95:x=(w-text_w)/2:y={round(h * 0.78)},"
-              f"fade=t=in:st=0:d=0.5,fade=t=out:st={seconds - 0.5:.2f}:d=0.5,format=yuv420p")
-        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-i", image, "-t", f"{seconds:.2f}", "-vf", vf,
-                            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", card], capture_output=True, text=True)
-        if r.returncode != 0:
-            print("  ffmpeg (title):", r.stderr.strip()[:400])
-            return
+            return None
+
+    def _join(self, first, second):
         joined = self.out + ".joined.mp4"
-        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", card, "-i", self.out, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", first, "-i", second, "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]", "-map", "[v]",
                             "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-movflags", "+faststart", joined], capture_output=True, text=True)
-        os.remove(card)
         if r.returncode != 0:
             print("  ffmpeg (join):", r.stderr.strip()[:400])
-            return
+            return False
         os.replace(joined, self.out)
+        return True
+
+    def _card_video(self, tag, image, text, sub, seconds):
+        size = self._size()
+        if not size:
+            return None
+        w, h = size
+        png = self.out + f".{tag}.png"
+        inp, pre = self._card(png, w, h, image, text, sub)
+        vf = pre + f"fade=t=in:st=0:d=0.5,fade=t=out:st={seconds - 0.5:.2f}:d=0.5,format=yuv420p"
+        card = self.out + f".{tag}.mp4"
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inp.split(), "-t", f"{seconds:.2f}", "-vf", vf,
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", card], capture_output=True, text=True)
+        if os.path.exists(png):
+            os.remove(png)
+        if r.returncode != 0:
+            print(f"  ffmpeg ({tag} card):", r.stderr.strip()[:400])
+            return None
+        return card
+
+    def prepend_title(self, height):
+        """The title card before the video: the About mark on the theme's colours with the
+        heading and a line under it (owner, 2026-09-28: "use the same image we use for the about
+        box"), or, for the 0.2 video, its image over black."""
+        image, text, seconds = self.title[:3]
+        sub = self.title[3] if len(self.title) > 3 else ""
+        if image is not None and not os.path.exists(image):
+            print(f"  ... no title card: image {image!r}")
+            return
+        card = self._card_video("title", image, text, sub, seconds)
+        if card:
+            self._join(card, self.out)
+            os.remove(card)
+
+    def append_end(self):
+        """The end card after the last frame, the title card's shape."""
+        text, seconds, sub = self.end
+        card = self._card_video("end", None, text, sub, seconds)
+        if card:
+            self._join(self.out, card)
+            os.remove(card)
 
 
 def home_spec():

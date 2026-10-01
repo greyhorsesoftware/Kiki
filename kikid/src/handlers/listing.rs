@@ -58,17 +58,39 @@ fn open(cx: &mut Cx, b: &Value) -> Reply {
     let lid = b.u64_field("lid").ok_or(("Protocol", "missing lid".to_string()))?;
     let uri = parse_uri(b, "uri")?;
     let (l, cached) = listing::open(&uri).map_err(vfs_err)?;
+    // How many rows from the top the window wants without asking: on this reply when the
+    // folder is already listed, else on the `Reset` the scan ends with. Its first screenful
+    // then costs no `Window` round trip (docs/0.5.0/10-faster-listings.md).
+    let initial = b.u64_field("initial").unwrap_or(0).min(listing::WINDOW_MAX as u64) as u32;
     if let Some(old) = cx.listings.insert(lid, Arc::clone(&l)) {
         old.unsubscribe(cx.id, lid);
     }
-    l.subscribe(Subscriber { client: cx.id, lid, tx: cx.tx.clone(), first: 0, count: 0, view_first: 0, view_count: 0 });
+    // How many of those are on screen, from the top: thumbnails are made for these and no
+    // others. Unsaid, all of them.
+    let screen = b.u64_field("view").map(|v| (v as u32).min(initial)).unwrap_or(initial);
+    l.subscribe(Subscriber { client: cx.id, lid, tx: cx.tx.clone(), first: 0, count: 0, view_first: 0, view_count: screen, initial });
     let (n, done) = l.count();
-    // The first Count arrives with the reply so a client can size its model immediately.
+    let mut reply = Value::obj().b("cached", cached);
+    if done && initial > 0 && l.error().is_none() {
+        // Already listed: the rows go with the reply, the shape a `Window` answers in, which
+        // also makes this connection's window those rows so what lands for them is pushed.
+        let w = l.window(cx.id, lid, 0, initial, Some((0, screen)));
+        for key in ["first", "rows", "n", "done", "gen"] {
+            if let Some(v) = w.get(key) {
+                reply = reply.v(key, v.clone());
+            }
+        }
+    }
+    // The first Count arrives with the reply so a client can size its model immediately — and
+    // AFTER the rows are built, not before: the two then reach the window in one read. Sent
+    // first, the count landed alone, the window laid out a screenful of empty rows in the few
+    // milliseconds the rows took to build, and filled them in afterwards — a cached open that
+    // measured twice as long as the round trip it had saved (2026-10-01, on the desktop).
     let _ = cx.tx.send(proto::event("Count").u("lid", lid).u("n", n).b("done", done).done());
     if let Some(e) = l.error() {
         return Err(("Io", e));
     }
-    Ok(Some(Value::obj().b("cached", cached).done()))
+    Ok(Some(reply.done()))
 }
 
 fn window(cx: &mut Cx, b: &Value) -> Reply {

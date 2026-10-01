@@ -275,7 +275,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let t0 = Instant::now();
     let (l, _) = listing::open(&uri).expect("open");
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 0, lid: 1, tx, first: 0, count: 60, view_first: 0, view_count: 60 });
+    l.subscribe(Subscriber { client: 0, lid: 1, tx, first: 0, count: 60, view_first: 0, view_count: 60, initial: 0 });
     let (mut first_chunk, mut done) = (None, None);
     while done.is_none() {
         match rx.recv_timeout(Duration::from_secs(120)) {

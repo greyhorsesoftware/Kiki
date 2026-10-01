@@ -19,7 +19,7 @@ fn a_plugin_can_hide_an_entry_whose_name_is_not_hidden() {
     let (l, _) = listing::open(&uri).unwrap();
     assert!(listing::wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 20, view_first: 0, view_count: 20 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 20, view_first: 0, view_count: 20, initial: 0 });
     let names = |l: &std::sync::Arc<listing::Listing>| -> Vec<String> {
         let w = l.window(1, 1, 0, 20, None);
         w.get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect()

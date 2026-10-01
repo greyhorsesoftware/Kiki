@@ -70,7 +70,7 @@ A listing is opened with a client-chosen `lid` so that `Open` and the first `Win
 
 | Request | Fields | Reply |
 |---|---|---|
-| `Open` | `lid: u32`, `uri: Uri` | `{ cached: bool }` |
+| `Open` | `lid: u32`, `uri: Uri`, `initial?: u32`, `view?: u32` | `{ cached: bool }` — and, when the daemon already has the folder listed and `initial` is given, the first `initial` rows in the shape a `Window` answers in: `first: 0, rows, n, done, gen`. When it has not, the `Reset` that ends the scan carries them instead (0.5.0: the first screenful costs no `Window`). `view` is how many of those rows are on screen, from the top — thumbnails are made for those only, as `Window`'s `viewCount`; unsaid, all of them |
 | `Window` | `lid`, `first: u32`, `count: u32` (max 512), `viewFirst?`, `viewCount?` | `{ first, rows: [Row], n: u32, done: bool, gen: u64 }` in the current sort and filter; becomes the connection's live window for this `lid`. `gen` numbers the state of the view the rows describe (below). `viewFirst`/`viewCount` say which of those rows are **on screen** rather than held against a scroll; thumbnails are made for those only. Omit them and the whole range counts as on screen |
 | `Sort` | `lid`, `role: "name" \| "kind" \| "size" \| "mtime" \| "atime"`, `order: "asc" \| "desc"` | `{ n }`; a `Reset` event follows when the order is applied (immediately when cached, after an `Enrich` pass for size and mtime) |
 | `Filter` | `lid`, `text: string` (substring, case-insensitive; empty clears) | `{ n }` then `Reset` |
@@ -87,7 +87,7 @@ Events for listings:
 |---|---|---|
 | `Count` | `lid`, `n`, `done` | phase 1 progress; `done: true` once, when the scan completes |
 | `Rows` | `lid`, `first`, `rows: [Row]` | pushed rows inside the live window whose `meta` or `thumb` changed, or that a watch patched |
-| `Reset` | `lid`, `n`, `gen` | the order or membership changed; the client re-requests its window, and may go on showing the rows it holds until the answer arrives (a rescan brings the same rows back) |
+| `Reset` | `lid`, `n`, `gen`, `first?`, `rows?: [Row]` | the order or membership changed. `rows` are the rows this connection holds — its live window, or, until it has asked one, the first `initial` of its `Open` — in their new places, stated before they went (local folders: a screenful at most, within 20 ms; the rest by `Rows`); the client shows them and asks only for what its viewport wants beyond. Without `rows` (an `Open` with no `initial`) the client re-requests its window, and may go on showing the rows it holds until the answer arrives |
 | `Splice` | `lid`, `n`, `gen`, `ops: [{ op: "remove", pos } \| { op: "insert", pos, row: Row }]` | a few rows came or went in place (a watched folder, name or kind order, no filter; at most 64 changes — anything else is a `Reset`). Applied in order, each `pos` as of that step; every held position after it moves by one. `n` is the count afterwards |
 | `Progress` | `lid`, `done`, `total` | `Enrich` progress |
 | `Gone` | `lid` | the directory was deleted or the location disconnected |
