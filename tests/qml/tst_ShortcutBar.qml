@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../../qml/kiki/ui" as UI
+import "../../qml/kiki" as Kiki
 
 // The shortcut bar's chips slide under the wheel when there are more than fit, as the path
 // does (owner, 2026-09-22: "needs to support scrolling too vs being cut off"). At rest the first
@@ -35,19 +36,34 @@ TestCase {
         compare(chips.y, rest, "and back in place")
         verify(!msg.visible)
     }
-    function test_undo_and_the_cross_are_the_bars_word() {
-        let undone = 0, dismissed = 0
-        bar.undo.connect(() => undone++); bar.dismiss.connect(() => dismissed++)
+    // Undo is the bar's one word; the × it had went with 01-ui-cleanup.md (item 2): nobody aimed
+    // at it, and the message leaves by itself.
+    function test_undo_is_the_bars_word_and_there_is_no_cross() {
+        let undone = 0
+        bar.undo.connect(() => undone++)
         bar.toast = { text: "Deleted a.txt", undoable: true }
         tryCompare(bar, "roll", 1, 1000)
         mouseClick(findChild(bar, "toast-undo"))
         compare(undone, 1)
-        mouseClick(findChild(bar, "toast-close"))
-        compare(dismissed, 1)
+        compare(findChild(bar, "toast-close"), null, "no ×")
         bar.toast = { text: "Nothing to undo", undoable: false }
         tryCompare(bar, "roll", 1, 1000)
         verify(!findChild(bar, "toast-undo").visible, "an error has no Undo")
         bar.toast = null; tryCompare(bar, "roll", 0, 1000)
+    }
+    // A message stays `toastMs`; one with Undo stays `toastUndoMs`, longer, since Undo is why
+    // it is there (the timers are Jobs's, set short here).
+    function test_a_message_leaves_by_itself_and_one_with_undo_stays_longer() {
+        const was = Kiki.Settings.timers
+        Kiki.Settings.timers = Object.assign({}, was, { toastMs: 80, toastUndoMs: 400 })
+        Kiki.Jobs.showToast({ text: "Copied 2 items", undoable: false })
+        verify(Kiki.Jobs.toast !== null)
+        tryVerify(() => Kiki.Jobs.toast === null, 1000, "a plain message is gone in toastMs")
+        Kiki.Jobs.showToast({ text: "Moved 2 items to Trash", undoable: true })
+        wait(200)
+        verify(Kiki.Jobs.toast !== null, "one with Undo is still up past toastMs")
+        tryVerify(() => Kiki.Jobs.toast === null, 1000, "and gone by toastUndoMs")
+        Kiki.Settings.timers = was
     }
     function test_at_rest_the_first_chips_show_and_the_last_is_past_the_edge() {
         const row = findChild(bar, "shortcut-row"), view = findChild(bar, "shortcut-chips")

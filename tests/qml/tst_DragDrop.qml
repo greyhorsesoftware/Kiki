@@ -111,6 +111,57 @@ TestCase {
         compare(Wire.last("Submit").op.op, "copy")
     }
 
+    // The badge follows what the drop WOULD do, not the keys (01-ui-cleanup.md, item 3): what
+    // DropTarget hands DragTrack is `drag.action` as `dragOver` has just set it.
+    function test_over_a_server_the_plus_is_up_without_a_key() {
+        const e = dropEvent(["file:///home/t/a.txt"])
+        verify(pane.dragOver("sftp://lab/srv", e), "taken")
+        compare(e.action, Qt.CopyAction, "a copy, no key held")
+        Kiki.DragTrack.moved(Qt.point(10, 10), e.action)
+        compare(Kiki.DragTrack.action, Qt.CopyAction, "and the window badges it")
+        const local = dropEvent(["file:///home/t/a.txt"])
+        pane.dragOver("file:///home/t/Projects", local)
+        compare(local.action, Qt.MoveAction, "within this machine, no key: a move, no +")
+        Kiki.DragTrack.moved(Qt.point(10, 10), local.action)
+        compare(Kiki.DragTrack.action, Qt.MoveAction)
+    }
+
+    // A different mountpoint is a different place: the home and a stick are two devices, and a
+    // drag between them is a copy with a + — where a move would have been a copy and a delete.
+    function test_across_mountpoints_it_copies_and_within_one_it_moves() {
+        const ghost = ghostC.createObject(tc)
+        pane.ghost = ghost
+        fake.devices = { "file:///home/t": 11, "file:///mnt/stick": 22, "file:///home/t/Projects": 11 }
+        fake.tree["file:///mnt/stick"] = [fake.dir("photos")]
+        pane.open("file:///home/t"); wait(50)
+        compare(pane.listing.device, 11, "the folder's device came with the open")
+        ghost.prepare(pane, 1, false)
+        compare(ghost.sourceDevice, 11)
+        // The target pane stands on the stick.
+        const target = paneC.createObject(tc)
+        target.listing.daemon = fake; target.ghost = ghost
+        target.open("file:///mnt/stick"); wait(50)
+        compare(target.listing.device, 22)
+        const e = dropEvent(["file:///home/t/a.txt"])
+        verify(target.dragOver("file:///mnt/stick/photos", e))
+        compare(e.action, Qt.CopyAction, "another device: a copy")
+        // A fresh event for the drop: `dragOver` marks its event accepted, as a DropArea's is.
+        target.dropInto("file:///mnt/stick/photos", dropEvent(["file:///home/t/a.txt"]))
+        compare(Wire.last("Submit").op.op, "copy")
+        // The same device: a move, as ever.
+        target.open("file:///home/t/Projects"); wait(50)
+        const same = dropEvent(["file:///home/t/a.txt"])
+        target.dragOver("file:///home/t/Projects", same)
+        compare(same.action, Qt.MoveAction)
+        // No source device (a drag from another application): one machine, a move.
+        ghost.end()
+        const foreign = dropEvent(["file:///home/t/a.txt"])
+        target.open("file:///mnt/stick"); wait(50)
+        target.dragOver("file:///mnt/stick/photos", foreign)
+        compare(foreign.action, Qt.MoveAction)
+        target.destroy(); ghost.destroy()
+    }
+
     function test_dropping_into_the_folder_it_came_from_does_nothing() {
         const e = dropEvent(["file:///home/t/a.txt"])
         pane.dropInto("file:///home/t", e)

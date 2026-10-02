@@ -25,4 +25,11 @@ here is kept as an alias. The full tables are in `docs/0.1.0/API-DAEMON.md`.
   own `Reset` applies it. (It used to send one with nothing in it, and the window answered with
   a `Window` request — one of the three a cold open made.)
 
+## A drag across mountpoints is a copy (`01-ui-cleanup.md`, item 3)
+
+- **`Open`**'s reply carries `device?: u64` — the local folder's `st_dev`; absent for a
+  server's folder. The window compares the dragged items' with the target's: different
+  devices are different places, and the drop is a copy with a + rather than a move the daemon
+  would do as a copy and a delete.
+
 Nothing was removed.

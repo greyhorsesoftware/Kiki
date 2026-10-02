@@ -71,6 +71,11 @@ fn open(cx: &mut Cx, b: &Value) -> Reply {
     l.subscribe(Subscriber { client: cx.id, lid, tx: cx.tx.clone(), first: 0, count: 0, view_first: 0, view_count: screen, initial });
     let (n, done) = l.count();
     let mut reply = Value::obj().b("cached", cached);
+    // The device the folder is on, so the window can tell a drag between two local places
+    // apart from one within a place (01-ui-cleanup.md, item 3). A server's folder has none.
+    if let Some(dev) = l.device() {
+        reply = reply.u("device", dev);
+    }
     if done && initial > 0 && l.error().is_none() {
         // Already listed: the rows go with the reply, the shape a `Window` answers in, which
         // also makes this connection's window those rows so what lands for them is pushed.

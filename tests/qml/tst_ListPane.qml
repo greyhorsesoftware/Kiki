@@ -125,6 +125,18 @@ TestCase {
         compare(pane.renamingIndex, -1)
     }
 
+    // The editor's text sits exactly over the name's: the name does not jump on F2 (it did, by
+    // ten pixels, while the row and the editor each kept a literal of their own).
+    function test_the_rename_editor_sits_over_the_name() {
+        pane.selection.set(1)
+        pane.renamingIndex = 1
+        const row = findChild(list, "row-1")
+        const editor = findChild(row, "renameEditor"), name = findChild(row, "row-name")
+        verify(editor !== null && name !== null)
+        compare(editor.mapToItem(row, 0, 0).x, name.mapToItem(row, 0, 0).x, "the editor's first character over the name's")
+        pane.renamingIndex = -1
+    }
+
     // Sorting is a daemon round trip: the request goes out and the reset brings new rows back.
     function test_sort_by_size_descending_goes_through_the_daemon() {
         pane.setSort("size", "desc")

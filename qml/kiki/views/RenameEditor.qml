@@ -16,10 +16,14 @@ Rectangle {
     signal dismissed()
     radius: 2; z: 2
     color: Kiki.Theme.bgDark; border.width: 1; border.color: Kiki.Theme.accent
+    /// Where the text begins inside the box. A view places the box so that this lands on the
+    /// name's own first character, and the name does not jump when F2 is pressed
+    /// (docs/0.5.0/01-ui-cleanup.md, item 1): `x: nameX - textInset`.
+    readonly property int textInset: 6
     // The stem, not the extension: renaming a file almost never means renaming its kind.
     onVisibleChanged: if (visible) { edit.text = box.name; edit.forceActiveFocus(); const dot = edit.text.lastIndexOf("."); edit.select(0, dot > 0 ? dot : edit.text.length) }
     TextInput {
-        id: edit; objectName: "renameEditor"; anchors.fill: parent; anchors.leftMargin: 6; anchors.rightMargin: 6; verticalAlignment: TextInput.AlignVCenter
+        id: edit; objectName: "renameEditor"; anchors.fill: parent; anchors.leftMargin: box.textInset; anchors.rightMargin: box.textInset; verticalAlignment: TextInput.AlignVCenter
         color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize; selectionColor: Kiki.Theme.accent; clip: true
         onAccepted: { const n = text; box.dismissed(); if (n && n !== box.name) box.renamed(n) }
         Keys.onEscapePressed: box.dismissed()

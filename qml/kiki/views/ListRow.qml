@@ -23,6 +23,14 @@ Rectangle {
     property int valueWidth: 160 + 80 + 120 + 36
     // Matches ListPane: whatever the value columns leave, never less than a sliver.
     readonly property int nameWidth: Math.max(48, r.width - 24 - r.valueWidth)
+    // Where the name begins: the row's inset, the icon, the gap after it. Named once and used
+    // by the row and the rename editor both, so the editor's text sits over the name's and the
+    // name does not jump on F2 — it did, by ten pixels, while the two were literals kept apart
+    // (docs/0.5.0/01-ui-cleanup.md, item 1).
+    readonly property int inset: 12
+    readonly property int iconSize: 16
+    readonly property int iconGap: 8
+    readonly property int nameX: inset + iconSize + iconGap
     // A folder that is a repository of its own (plan 15); at most a share of the name column,
     // because the file's name comes first and a branch can be called anything.
     readonly property var capsule: Kiki.Format.gitCapsule(row)
@@ -61,11 +69,11 @@ Rectangle {
         color: r.selected ? (r.active ? Kiki.Theme.accent : Kiki.Theme.surface) : (hover.containsMouse ? Qt.rgba(1, 1, 1, 0.03) : "transparent")
     }
     Row {
-        anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 12
+        anchors.fill: parent; anchors.leftMargin: r.inset; anchors.rightMargin: r.inset; spacing: 12
         Row {
-            width: r.nameWidth; height: parent.height; spacing: 8
+            width: r.nameWidth; height: parent.height; spacing: r.iconGap
             Item {
-                width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
+                width: r.iconSize; height: r.iconSize; anchors.verticalCenter: parent.verticalCenter
                 UI.KindIcon { visible: !(r.row && r.row.thumb); kind: r.row ? r.row.kind : ""; color: r.selected && r.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(r.row ? r.row.kind : "file") }
                 Image { visible: r.row && r.row.thumb; anchors.fill: parent; source: r.row && r.row.thumb ? "file://" + r.row.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
             }
@@ -90,8 +98,9 @@ Rectangle {
     }
     // Inline rename (F2): a text input over the name column.
     RenameEditor {
+        id: renamer
         visible: r.pane && r.pane.renamingIndex === r.rowIndex
-        x: 40; y: 2; width: Math.max(40, r.nameWidth - 24); height: parent.height - 4
+        x: r.nameX - renamer.textInset; y: 2; width: Math.max(40, r.nameWidth - r.iconSize - r.iconGap + renamer.textInset); height: parent.height - 4
         name: r.row ? r.row.name : ""
         onDismissed: if (r.pane.renamingIndex === r.rowIndex) r.pane.renamingIndex = -1
         onRenamed: n => { if (r.row) r.pane.renameRequested(r.pane.childUri(r.row.name), n) }

@@ -27,7 +27,9 @@ QtObject {
         loadViewPrefs()
     }
     function loadViewPrefs() { Kiki.Daemon.request("ViewPrefs", {}, ok => { if (ok) viewPrefs = ok.folders }) }
-    property var timers: ({ toastMs: 8000, searchDebounceMs: 150, mirrorPollMs: 400 })
+    // A message in the bar stays `toastMs`; one with Undo a little longer, since Undo is why it
+    // is there. Eight seconds was long enough to read it three times (01-ui-cleanup.md, item 2).
+    property var timers: ({ toastMs: 3000, toastUndoMs: 5000, searchDebounceMs: 150, mirrorPollMs: 400 })
     property var editor: ({ terminal: "auto", placement: "right" })
     property var git: ({ enabled: true, showIgnored: "dim", folders: "aggregate" })
     property var project: ({ width: 320, arrange: true, agent: true })

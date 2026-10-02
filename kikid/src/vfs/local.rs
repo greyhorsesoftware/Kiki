@@ -57,6 +57,9 @@ impl super::Source for DirHandle {
     fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)> {
         stat_impl(self, name)
     }
+    fn device(&self) -> Option<u64> {
+        self.id().map(|(dev, _)| dev)
+    }
     fn watchable(&self) -> bool {
         true
     }

@@ -554,14 +554,20 @@ Item {
                                 color: cr.sel ? (cr.active ? Kiki.Theme.accent : Kiki.Theme.surface) : "transparent"
                             }
                             Connections { target: cr.cache; function onRowsUpdated(first, n) { if (cr.index >= first && cr.index < first + n) cr.r = cr.cache.row(cr.index) } function onReset() { cr.r = cr.cache.row(cr.index) } }
+                            // Where the name begins — inset, icon, gap — named once for the row
+                            // and its rename editor, as ListRow does (01-ui-cleanup.md, item 1).
+                            readonly property int inset: 10
+                            readonly property int iconSize: 16
+                            readonly property int iconGap: 8
+                            readonly property int nameX: inset + iconSize + iconGap
                             Row {
-                                anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 8
+                                anchors.fill: parent; anchors.leftMargin: cr.inset; anchors.rightMargin: cr.inset; spacing: cr.iconGap
                                 Item {
-                                    width: 16; height: 16; anchors.verticalCenter: parent.verticalCenter
+                                    width: cr.iconSize; height: cr.iconSize; anchors.verticalCenter: parent.verticalCenter
                                     UI.KindIcon { visible: !(cr.r && cr.r.thumb); anchors.centerIn: parent; kind: cr.r ? cr.r.kind : ""; color: cr.active ? Kiki.Theme.bg : Kiki.Theme.kindColor(cr.r ? cr.r.kind : "file") }
                                     Image { visible: cr.r && cr.r.thumb; anchors.fill: parent; source: cr.r && cr.r.thumb ? "file://" + cr.r.thumb : ""; sourceSize: Qt.size(32, 32); fillMode: Image.PreserveAspectFit; asynchronous: true; smooth: true }
                                 }
-                                Text { anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0) - (cr.mark ? 22 : 0) - (colCapsule.visible ? colCapsule.width + 8 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: Kiki.Format.gitDimmed(cr.r) && !cr.sel ? Kiki.Theme.muted : cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
+                                Text { objectName: "colrow-name"; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24 - (cr.r && cr.r.isDir ? 20 : 0) - (cr.mark ? 22 : 0) - (colCapsule.visible ? colCapsule.width + 8 : 0); elide: Text.ElideRight; text: cr.r ? cr.r.name : ""; color: Kiki.Format.gitDimmed(cr.r) && !cr.sel ? Kiki.Theme.muted : cr.fg; font.family: Kiki.Theme.mono; font.pixelSize: Kiki.Theme.fontSize }
                                 // The same letter, in the same colours, as a list row (plan 15): every
                                 // column is a listing like any other, and its rows carry `git`.
                                 Text { objectName: "git-badge"; visible: !!cr.mark; anchors.verticalCenter: parent.verticalCenter; width: 14; horizontalAlignment: Text.AlignHCenter; text: Kiki.Format.gitBadge(cr.mark); color: cr.active ? Kiki.Theme.bg : Kiki.Format.gitColor(cr.mark); font.family: Kiki.Theme.mono; font.pixelSize: 11; font.bold: true }
@@ -573,8 +579,9 @@ Item {
                             // — which may be in a folder the pane is not standing in, so the new
                             // name goes out against the column's own URI.
                             RenameEditor {
+                                id: colRenamer
                                 visible: list.colIndex === root.renamingCol && cr.index === root.renamingIndex
-                                x: 30; y: 2; width: Math.max(40, parent.width - 36); height: parent.height - 4
+                                x: cr.nameX - colRenamer.textInset; y: 2; width: Math.max(40, parent.width - cr.nameX - cr.inset + colRenamer.textInset); height: parent.height - 4
                                 name: cr.r ? cr.r.name : ""
                                 onDismissed: root.cancelRename()
                                 onRenamed: n => { if (cr.r) root.pane.renameRequested(modelData.uri.replace(/\/+$/, "") + "/" + encodeURIComponent(cr.r.name), n) }

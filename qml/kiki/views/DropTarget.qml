@@ -35,8 +35,12 @@ DropArea {
     /// SpringPad's to do: this row must not replace the rows while it holds the drag.
     function spring() { flashing = true; flashOn = false; _flashes = 0; flash.start() }
     onContainsDragChanged: if (!containsDrag && flashing) { flash.stop(); flashing = false; flashOn = true }
-    onEntered: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
-    onPositionChanged: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.proposedAction) }
+    // The window's badge is drawn from what `dragOver` has just resolved — `drag.action`, what
+    // letting go HERE would do — not from the keys (`proposedAction`): a drag from this machine
+    // onto a server is a copy with no key held, and the + was not up until Ctrl was pressed
+    // (01-ui-cleanup.md, item 3).
+    onEntered: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.action) }
+    onPositionChanged: drag => { t.refusing = !t.pane.dragOver(t.dest, drag); Kiki.DragTrack.moved(t.mapToItem(null, drag.x, drag.y), drag.action) }
     onExited: { t.refusing = false; Kiki.DragTrack.left() }
     onDropped: drop => { t.refusing = false; t.pane.dropInto(t.dest, drop) }
 }

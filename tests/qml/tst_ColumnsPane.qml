@@ -220,6 +220,17 @@ TestCase {
         cols.cancelRename()
     }
 
+    // And the editor's text sits over the name's, as in the list (01-ui-cleanup.md, item 1).
+    function test_the_editor_sits_over_the_name() {
+        const row = findChild(cols, "colrow-0-2")
+        mouseClick(row, row.width / 2, row.height / 2)
+        cols.beginRename()
+        const editor = editorIn(row), name = findChild(row, "colrow-name")
+        verify(editor !== null && name !== null)
+        compare(editor.mapToItem(row, 0, 0).x, name.mapToItem(row, 0, 0).x)
+        cols.cancelRename()
+    }
+
     function test_with_nothing_highlighted_there_is_nothing_to_rename() {
         cols.beginRename()
         compare(cols.renamingIndex, -1)

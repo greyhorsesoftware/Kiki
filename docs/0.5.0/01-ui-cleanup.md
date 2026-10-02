@@ -1,8 +1,21 @@
 # 01 — UI cleanup
 
-**Status:** planned, 2026-09-29 (owner: "under 0.5.0 lets create a ui cleanup plan"). A list,
-not a design: small things seen in daily use, each with where it is in the code and what done
-looks like. Items are added as they are found; each is built on its own and ticked here.
+**Status:** built, 2026-10-02 — all three items (owner, 2026-09-29: "under 0.5.0 lets create a
+ui cleanup plan"). A list, not a design: small things seen in daily use, each with where it is
+in the code and what done looks like. Items are added as they are found; each is built on its
+own and ticked here.
+
+- [x] 1 — the row names where its name starts (`nameX`: inset, icon, gap) and the editor sits
+  at `nameX - textInset`, in the list and the columns; the icon view has no inline rename.
+  Tests in `tst_ListPane` and `tst_ColumnsPane` compare the two x's. 2026-10-02.
+- [x] 2 — `toastMs` 3 000, `toastUndoMs` 5 000 (`Settings.qml`, `Jobs.toastTimer` picks by
+  `undoable`); the × and the bar's `dismiss` signal are gone. `tst_ShortcutBar` lost the × case
+  and gained the two lengths. 2026-10-02.
+- [x] 3 — `DropTarget` hands `DragTrack` the resolved `drag.action`; the `Open` reply carries
+  the folder's `device` (`Source::device`, local only; `API-DELTA.md`), the ghost remembers the
+  dragged items' (`sourceDevice`) and `Pane.dropAction` compares it with the target pane's —
+  the two known, different devices are different places. Tests: `tst_DragDrop` (two),
+  `open_initial.rs` (the field equals `st_dev`). 2026-10-02.
 
 ## The list
 

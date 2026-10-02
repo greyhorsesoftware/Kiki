@@ -12,6 +12,10 @@ QtObject {
     property bool done: false
     property bool cached: false
     property string error: ""
+    /// The device the folder is on (`st_dev`), from the Open's reply; 0 for a server's folder
+    /// or before the reply. Two local folders on different devices are different places to a
+    /// drag (Pane.placeOf).
+    property double device: 0
 
     // Viewport reported by the view, in rows.
     property int viewportFirst: 0
@@ -76,7 +80,7 @@ QtObject {
         uri = newUri
         lid = d().allocLid()
         d().bind(lid, cache)
-        _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1; _gen = -1; _stale = false; _pending = 0
+        _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1; _gen = -1; _stale = false; _pending = 0; device = 0
         countThrottle.stop(); _countPending = -1       // a count still owed to the folder just left
         // No Window with the Open: the first screenful rides on the reply when the daemon has
         // the folder listed, and on the Reset that ends the scan when it has not
@@ -92,6 +96,7 @@ QtObject {
             // Nothing more is coming: say so, or the pane waits on a folder that never opened.
             if (err) { error = err.message; done = true; _opening = false; return }
             cached = ok.cached
+            device = ok.device || 0
             if (ok.rows !== undefined) { _opening = false; _take(ok, false) }
         })
     }

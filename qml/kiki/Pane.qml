@@ -277,8 +277,11 @@ QtObject {
         Kiki.Jobs.submit(op)
     }
     /// Where a URI lives: its scheme and authority. `sftp://nas` and `sftp://backup` are two
-    /// machines, however alike they look; every `file://` is this one.
-    function placeOf(u) { const m = /^([a-z][a-z0-9+.-]*):\/\/([^\/]*)/i.exec(u); return m ? (m[1] + "://" + m[2]).toLowerCase() : "" }
+    /// machines, however alike they look; every `file://` is this one — unless `device` says
+    /// which disk, in which case the home and a stick plugged in are two places: a move
+    /// between them is a copy and a delete, and a drag badges it as the copy it is
+    /// (01-ui-cleanup.md, item 3). Both sides must know their device for it to count.
+    function placeOf(u, device) { const m = /^([a-z][a-z0-9+.-]*):\/\/([^\/]*)/i.exec(u); if (!m) return ""; const p = (m[1] + "://" + m[2]).toLowerCase(); return p === "file://" && device ? p + "#" + device : p }
     /// What dropping `urls` on the folder `dest` does: `{ op, items, policy? }`, or null for nothing.
     ///  - What is already there is not dropped again: an item whose folder IS `dest`, `dest`
     ///    itself, and a folder onto itself or into something inside it — except that a COPY asked
@@ -302,7 +305,14 @@ QtObject {
             return true
         })
         if (!items.length) return null
-        const samePlace = items.every(u => placeOf(u) === placeOf(dest))
+        // The devices, when both are known: the dragged items' from the ghost (their pane's
+        // listing), the target's from this pane's — a folder row dropped on is taken to be on
+        // its pane's device, which it is unless the row is itself a mountpoint, an edge this
+        // accepts (it is then a move the daemon does as copy-and-delete, as before). A drop from
+        // another application has no source device and keeps the one-machine rule.
+        const srcDev = ghost && ghost.sourceDevice ? ghost.sourceDevice : 0
+        const dstDev = srcDev && listing.device ? listing.device : 0
+        const samePlace = items.every(u => placeOf(u, dstDev ? srcDev : 0) === placeOf(dest, dstDev))
         const op = copy || !samePlace ? "copy" : "move"
         const r = { op: op, items: items }
         if (duplicates) r.policy = "keepBoth"

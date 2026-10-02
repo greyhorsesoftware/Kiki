@@ -40,6 +40,9 @@ QtObject {
     /// reply, and a `Reset` carrying them when `scanned(lid)` is called. Off, every folder is
     /// one the daemon has (rows on the reply), which is what most tests want.
     property bool cold: false
+    /// uri -> device number, for a test of drags across mountpoints; a folder not named here
+    /// reports none, as a server's does.
+    property var devices: ({})
 
     // ---------------------------------------------------------------- fixtures
 
@@ -111,9 +114,13 @@ QtObject {
             // The first screenful rides on the reply (docs/0.5.0/10-faster-listings.md): the
             // first `initial` rows, which this connection then holds until a Window says otherwise.
             _open[f.lid] = { uri: f.uri, filter: "", hidden: false, role: "name", order: "asc", first: 0, count: f.initial || 0 }
-            if (cold) { if (cb) cb({ cached: false }, undefined); break }
+            // `devices[uri]` is the st_dev a real daemon would report for a local folder.
+            const dev = devices[f.uri]
+            if (cold) { if (cb) cb(dev ? { cached: false, device: dev } : { cached: false }, undefined); break }
             const rows = rowsOf(f.lid)
-            if (cb) cb({ cached: true, first: 0, rows: rows.slice(0, f.initial || 0), n: rows.length, done: true }, undefined)
+            const ok = { cached: true, first: 0, rows: rows.slice(0, f.initial || 0), n: rows.length, done: true }
+            if (dev) ok.device = dev
+            if (cb) cb(ok, undefined)
             break
         }
         case "Window": {

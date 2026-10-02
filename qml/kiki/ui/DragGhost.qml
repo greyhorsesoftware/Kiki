@@ -94,9 +94,15 @@ Item {
         end()
     }
     Connections { target: source.Drag; function onDragFinished(action) { ghost.finished(action) } }
+    /// The device the dragged items are on (their pane's listing says), 0 when not known — a
+    /// drag from another application, or a row a column holds for a folder of its own. What
+    /// `Pane.dropAction` compares with the target's to tell a move from a copy across a
+    /// mountpoint (01-ui-cleanup.md, item 3). Cleared when the drag ends.
+    property double sourceDevice: 0
     function prepare(pane, index, ctrl, pressAt) {
         if (pressAt !== undefined) origin = pressAt
         if (!pane || !pane.listing) return
+        sourceDevice = pane.listing.device || 0
         const at0 = pane.selection.has(index) ? pane.selection.positions() : [index]
         _drawnFor = pane.uri + "|" + at0.join(",") + "|" + (ctrl ? 1 : 0) + "|" + (pane.isLocal ? 0 : 1)
         const at = pane.selection.has(index) ? pane.selection.positions() : [index]
@@ -143,7 +149,7 @@ Item {
     /// The view's button came up, or the drag finished: the source is inactive again — set, not
     /// assumed, or the next `active = true` on a source still marked active starts nothing and
     /// every drag after looks stuck (owner, 2026-09-28).
-    function end() { proxy = null; source.Drag.active = false }
+    function end() { proxy = null; source.Drag.active = false; sourceDevice = 0 }
     // No rebadging by keys: the window never sees them during a drag. The badge the window
     // draws follows `DragTrack.action`, which Qt sets from the modifiers on every move.
     /// The image for a drag that starts now, or "" when the grab has not landed (the drag then

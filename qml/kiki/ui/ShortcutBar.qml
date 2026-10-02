@@ -4,9 +4,10 @@ import ".." as Kiki
 // The bottom strip: context keys on the left, status on the right. A message for the user — the
 // last destructive job with its Undo, an error — takes the keys' place for a while: the chips
 // roll up out of the strip, the message rolls in from below, and when it is done (the toast's
-// timer, its ×, Undo) they change places again (owner, 2026-09-24: "instead of toast, show the
+// timer, Undo) they change places again (owner, 2026-09-24: "instead of toast, show the
 // message on the bottom bar where the shortcuts are"). Until then it was a card floating over
-// the view.
+// the view. It had an × too; nobody aimed at it, and the strip comes back by itself
+// (01-ui-cleanup.md, item 2).
 Rectangle {
     id: bar
     property var keys: []        // [{key, label}]
@@ -14,7 +15,6 @@ Rectangle {
     /// The message up now: `{ text, undoable }`, or null. `Kiki.Jobs.toast`, handed in.
     property var toast: null
     signal undo()
-    signal dismiss()
     /// Where the chips and the message are between their two places: 0 chips, 1 message.
     readonly property real rolled: toast ? 1 : 0
     property real roll: rolled
@@ -66,7 +66,7 @@ Rectangle {
             visible: bar.roll > 0
             y: Math.round((parent.height - height) / 2) + (1 - bar.roll) * bar.height; x: 14; spacing: 12
             Text { anchors.verticalCenter: parent.verticalCenter; text: bar.shownText; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12; elide: Text.ElideRight
-                   width: Math.min(implicitWidth, chipView.width - 14 - (undoChip.visible ? undoChip.width + 12 : 0) - 12 - 12 - 12) }
+                   width: Math.min(implicitWidth, chipView.width - 14 - (undoChip.visible ? undoChip.width + 12 : 0) - 12) }
             Rectangle {
                 id: undoChip
                 objectName: "toast-undo"
@@ -78,7 +78,6 @@ Rectangle {
                 }
                 MouseArea { anchors.fill: parent; onClicked: bar.undo() }
             }
-            Icon { objectName: "toast-close"; name: "x"; size: 10; color: Kiki.Theme.muted; anchors.verticalCenter: parent.verticalCenter; MouseArea { anchors.fill: parent; anchors.margins: -4; onClicked: bar.dismiss() } }
         }
     }
     Text { id: status; anchors.right: parent.right; anchors.rightMargin: bar.statusInset; anchors.verticalCenter: parent.verticalCenter; text: bar.status; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }

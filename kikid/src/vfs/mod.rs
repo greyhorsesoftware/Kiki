@@ -155,6 +155,13 @@ pub trait Source: Send + Sync {
     fn stat_child(&self, name: &std::ffi::OsStr) -> Result<(Meta, EntryType)>;
     /// True when inotify can watch it (local directories only).
     fn watchable(&self) -> bool;
+    /// The device the directory is on (`st_dev`), for a local one: two local folders on
+    /// different devices are different places to a drag — a move across them is a copy and a
+    /// delete, and the window badges it as the copy it is (docs/0.5.0/01-ui-cleanup.md, item 3).
+    /// A server's folder has no device the window could compare.
+    fn device(&self) -> Option<u64> {
+        None
+    }
     /// Whether this handle still refers to what lives at `path`. A directory deleted and
     /// recreated with the same name is a different directory, and a handle opened on the old one
     /// reads the old one — which is empty — for ever. Sources that cannot tell say yes.

@@ -161,6 +161,11 @@ fn the_first_screenful_comes_with_the_open() {
     // Listed already: the rows are on the reply, the shape a Window answers in.
     let r = c.ask("Open", Value::obj().u("lid", 2).s("uri", &uri).u("initial", 5).done());
     assert_eq!(r.get("cached").and_then(Value::as_bool), Some(true));
+    // The folder's device rides on the reply too (01-ui-cleanup.md, item 3): the one `stat` says.
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(r.u64_field("device"), Some(std::fs::metadata(&folder).unwrap().dev()), "{r:?}");
+    }
     assert_eq!(r.u64_field("first"), Some(0));
     assert_eq!(r.u64_field("n"), Some(N as u64 + 1));
     assert_eq!(r.get("done").and_then(Value::as_bool), Some(true));

@@ -141,7 +141,10 @@ QtObject {
         changed()
     }
 
-    property Timer toastTimer: Timer { interval: Kiki.Settings.timers.toastMs; onTriggered: jobs.toast = null }
+    property Timer toastTimer: Timer {
+        interval: jobs.toast && jobs.toast.undoable ? (Kiki.Settings.timers.toastUndoMs || 5000) : (Kiki.Settings.timers.toastMs || 3000)
+        onTriggered: jobs.toast = null
+    }
     property Connections c: Connections {
         target: Kiki.Daemon
         function onReadyChanged() { if (Kiki.Daemon.ready) { Kiki.Daemon.request("JobEvents", {}); Kiki.Daemon.request("Jobs", {}, ok => { if (ok) { jobs.list = ok.jobs; jobs.changed() } }) } }

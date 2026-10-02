@@ -1648,7 +1648,6 @@ FloatingWindow {
             status: (win.runningShown ? win.runningShown + " running · " : "") + win.countText()
             toast: Kiki.Jobs.toast
             onUndo: { Kiki.Jobs.undo(); Kiki.Jobs.dismissToast() }
-            onDismiss: Kiki.Jobs.dismissToast()
         }
 
     }

@@ -32,6 +32,11 @@ impl Listing {
         (inner.view.len() as u64, inner.scan_done)
     }
 
+    /// The device this folder is on, when it has one (`Source::device`).
+    pub fn device(&self) -> Option<u64> {
+        self.dir.device()
+    }
+
     pub fn error(&self) -> Option<String> {
         self.inner.lock().unwrap().scan_error.clone()
     }
