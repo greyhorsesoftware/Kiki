@@ -14,8 +14,10 @@ are in each.
    in the tree, CI's warning-that-is-not-coverage replaced by a step that fails.
 4. `04-shell-split.md` — **`Shell.qml` split along its seams** (1 866 lines): IPC, keys, menus,
    drag, chooser out, no test edited.
-5. `05-window-memory.md` — **the window's memory floor** measured (a flow and a history file),
-   then the four suspects tried one at a time.
+5. `05-window-memory.md` — **the window's memory floor** measured (a flow and a history file)
+   and the window's share of a first paint: the count-per-chunk screen rebuild found and fixed
+   (10 000 files cold 56 → 17 ms on the desktop); the floor measured at 38 MB after four
+   folders, the gallery's, and left to the driver. **Built 2026-10-01.**
 6. `06-index-live.md` — **the index keeps up**: watched folders feed it as they change, the
    refresh descends only where an mtime moved.
 7. `07-measure-before-tag.md` — **the benchmarks run again** before the tag, on the baseline's

@@ -176,6 +176,7 @@ Item {
             pane: root.pane
             rowIndex: index
             width: view.width
+            Component.onCompleted: root.pane.listing._delegates++
             columns: root.columns; valueWidth: root.valueWidth; widths: root.colWidth
             onActivate: root.activate(index)
             onContextMenu: pos => root.contextMenu(index, pos)

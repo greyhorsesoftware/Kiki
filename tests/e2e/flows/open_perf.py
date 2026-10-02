@@ -31,7 +31,7 @@ FIXTURE = os.environ.get("KIKI_PERF_DIR", "/tmp/kiki-perf")
 # 76 ms in consecutive runs, 2026-10-01); five medians read the same to a couple of ms.
 REPEAT = int(os.environ.get("KIKI_PERF_REPEAT", "5"))
 HISTORY = os.environ.get("KIKI_OPEN_HISTORY", os.path.join(ROOT, "bench", "open-history.jsonl"))
-KEPT = ("firstRowsMs", "firstFrameMs", "firstMetaMs", "doneMs", "requestsAtRows", "requests", "rows", "cached")
+KEPT = ("firstRowsMs", "firstFrameMs", "firstMetaMs", "doneMs", "requestsAtRows", "requests", "countEvents", "eventMs", "delegates", "rows", "cached")
 # Opened in this order, so "cached" is a folder the daemon listed a moment ago and was left.
 CASES = ("local1k", "local10k", "sftp1k")
 
@@ -175,6 +175,7 @@ def run(ctx):
                 c.check(f"{case} {tag}: opened, {r['rows']} rows, nothing wrong", r["rows"] and not r["error"] and not r["timedOut"], r)
                 print(f"      {case:9} {tag:6}  median of {REPEAT}:  rows {r['firstRowsMs']:4} ms  frame {r['firstFrameMs']:4} ms  meta {r['firstMetaMs']:4} ms  done {r['doneMs']:4} ms  "
                       f"requests before rows {r['requestsAtRows']}, in all {r['requests']}" + ("  (daemon cache)" if r["cached"] else ""))
+                print(f"      {'':9} {'':6}  {'':12}   Count events {r['countEvents']}, {r['eventMs']} ms in events, {r['delegates']} delegates built")
     finally:
         d.call("RemoveLocation", name="open-perf")
         servers.stop()

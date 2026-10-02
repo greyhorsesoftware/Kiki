@@ -49,7 +49,14 @@ QtObject {
     property real _msStore: 0
     property real _msBind: 0
     property int _answers: 0
-    function resetCost() { _msWait = 0; _msStore = 0; _msBind = 0; _answers = 0 }
+    // What a listing costs the window before any answer: the `Count` events a scan sends as its
+    // chunks land, the time spent inside `handleEvent` for everything, and the delegates the
+    // views built for this cache (the views count them in, `Component.onCompleted`). The open
+    // probe reads these; nothing in the window depends on them.
+    property int _countEvents: 0
+    property real _msEvents: 0
+    property int _delegates: 0
+    function resetCost() { _msWait = 0; _msStore = 0; _msBind = 0; _answers = 0; _countEvents = 0; _msEvents = 0; _delegates = 0 }
     property double _pendingAt: 0
     // Resolved lazily so a test can inject a fake without the real singleton (and its Quickshell
     // socket) ever being instantiated.
@@ -70,6 +77,7 @@ QtObject {
         lid = d().allocLid()
         d().bind(lid, cache)
         _rows = ({}); count = 0; done = false; error = ""; _reqFirst = -1; _reqEnd = -1; _gen = -1; _stale = false; _pending = 0
+        countThrottle.stop(); _countPending = -1       // a count still owed to the folder just left
         // No Window with the Open: the first screenful rides on the reply when the daemon has
         // the folder listed, and on the Reset that ends the scan when it has not
         // (docs/0.5.0/10-faster-listings.md). `initial` says how much — the viewport and its
@@ -279,8 +287,23 @@ QtObject {
     }
 
     function handleEvent(msg) {
+        const t0 = Date.now()
+        _handle(msg)
+        _msEvents += Date.now() - t0
+    }
+    function _handle(msg) {
         switch (msg.event) {
         case "Count":
+            _countEvents++
+            // A count still growing is applied at most four times a second, not per chunk. The
+            // views' model is this count, and a model that is a number is a NEW model each time
+            // it changes: every delegate on screen is torn down and built again, for rows that
+            // have not arrived — a cold open of ten thousand files spent 108 of its 118 ms
+            // inside this handler, building 215 delegates for the 21 it ended with
+            // (docs/0.5.0/05-window-memory.md, 2026-10-01). The final count is applied at once,
+            // and a scan that ends within the wait is applied once, by its end.
+            if (!msg.done) { _countPending = msg.n; done = false; if (!countThrottle.running) countThrottle.start(); break }
+            countThrottle.stop()
             count = msg.n; done = msg.done
             // The scan that has just ended says how it went. Only the reply to `Open` used to,
             // so a folder that failed to list a SECOND time — a share whose server had gone
@@ -293,6 +316,9 @@ QtObject {
             _apply(msg.first, msg.rows)
             break
         case "Reset":
+            // A count still owed from a chunk before this change would land after it, smaller
+            // and from the old membership (a filter typed while a server's folder is listing).
+            countThrottle.stop(); _countPending = -1
             _stale = true; count = msg.n; _reqFirst = -1; _reqEnd = -1; _opening = false
             _gen = msg.gen !== undefined ? msg.gen : -1
             for (const k in _rows) if (Number(k) >= count) delete _rows[k]
@@ -335,6 +361,12 @@ QtObject {
         }
     }
 
+    property int _countPending: -1
+    property Timer countThrottle: Timer {
+        interval: 250
+        repeat: false
+        onTriggered: { if (cache._countPending >= 0 && !cache.done) cache.count = cache._countPending; cache._countPending = -1 }
+    }
     property Timer debounce: Timer {
         interval: 16
         repeat: false

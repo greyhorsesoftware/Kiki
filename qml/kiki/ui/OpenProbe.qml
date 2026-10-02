@@ -29,6 +29,7 @@ Item {
         pane = p; cache = p.listing
         _firstRows = 0; _firstFrame = 0; _firstMeta = 0; _done = 0; _requestsAtRows = 0
         _serial0 = cache._serial
+        cache.resetCost()
         result = { running: true }
         running = true
         _t0 = Date.now()
@@ -63,6 +64,9 @@ Item {
             running: false, uri: cache.uri, rows: cache.count, cached: cache.cached, error: cache.error,
             firstRowsMs: ms(_firstRows), firstFrameMs: ms(_firstFrame), firstMetaMs: ms(_firstMeta), doneMs: ms(_done),
             requestsAtRows: _requestsAtRows, requests: cache._serial - _serial0,
+            // Where the window's own time went: the scan's Count events, every event's handling,
+            // and the delegates the view built for this folder (docs/0.5.0/05-window-memory.md).
+            countEvents: cache._countEvents, eventMs: Math.round(cache._msEvents * 10) / 10, delegates: cache._delegates,
             timedOut: now - _t0 > 10000
         }
     }

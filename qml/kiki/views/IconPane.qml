@@ -165,6 +165,7 @@ Item {
             id: cell
             required property int index
             objectName: "tile-" + index
+            Component.onCompleted: root.pane.listing._delegates++
             property var row: root.pane.listing.row(index)
             property bool selected: root.pane.selection.has(index)
             // A file a transfer is still writing is not whole yet: dimmed, so nobody opens or drags a
