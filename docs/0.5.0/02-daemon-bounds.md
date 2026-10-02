@@ -1,6 +1,7 @@
 # 02 — The daemon's last unbounded things
 
-**Status:** planned, 2026-09-29. The audit of 2026-09-18 (`docs/audit-2026-09-18.md`, §2 and
+**Status:** built, 2026-10-02 — L1 to L3 as decided below, each with its test; what changed from
+the plan is in "As built". Planned 2026-09-29. The audit of 2026-09-18 (`docs/audit-2026-09-18.md`, §2 and
 §3) listed what in the daemon can grow or wait without limit; most was fixed that week, and
 what is left is here, re-checked against the tree today. None of it has bitten a user. All of
 it is the kind of thing that bites once, on a machine that cannot be looked at.
@@ -65,6 +66,34 @@ it is the kind of thing that bites once, on a machine that cannot be looked at.
 
 Nothing on the wire changes but one new error number for a request ended by the ceiling
 (`error.<n>` in the three catalogs, `API-DELTA.md`).
+
+## As built (2026-10-02)
+
+- **The channel** is `server::ClientTx`, which replaced `Sender<Value>` wherever the daemon
+  held a connection (a listing's subscriber, a job's owner, a sort's waiter, the jobs'
+  subscriber list) and is sent to the same way; tests and the bench hand it a plain channel
+  (`From<Sender<Value>>`) and are bounded by nothing. Bound 4 096; a full queue loses its
+  oldest superseded frame (`Progress`, a `Count` still growing, a `JobEvent` still running or
+  queued) to make room for *whatever* is being sent — the plan had only a superseded frame
+  evicting one; a frame that must arrive did too, or every `JobDone` behind a burst of
+  progress would have waited out the second and closed the window. Only a queue holding
+  nothing but frames that must arrive, unread for a second, closes the connection. The
+  dropped count is said once in `kikid.log`, at close (`client N: … frames were dropped
+  unread`), and the e2e suite's log must not have the line.
+- **`shutdown()`** asks with `request_within(SHUTDOWN_GRACE)` (2 s, so a plugin that answers
+  nothing is not waited on for `REQUEST_TIMEOUT`'s two minutes either), polls for the exit
+  until the grace is up, then `kill_group()` and a line in the log. The stub ignores the word
+  under `KIKI_STUB_IGNORE_SHUTDOWN=1` (`kikid/tests/plugin_shutdown.rs`).
+- **The ceiling** is `REQUEST_CEILING`, an hour, `KIKI_REQUEST_CEILING_MS` for a test; checked
+  every turn of `wait_reply_within`, moving or not, and ends the request with **1273** after
+  a `Cancel` to the plugin. The stub drips empty `Scan` chunks for ever under
+  `KIKI_STUB_DRIP_MS` (`kikid/tests/plugin_ceiling.rs`). `bsdtar`'s lines come through a
+  thread so the wait is a `recv_timeout` of 200 ms that looks at the cancel flag and the same
+  ceiling (`KIKI_ARCHIVE_CEILING_MS`) whether or not a line came; it says 1273 too — one
+  number for "given an hour and still not finished", whoever it was.
+- **`audit.log`** keeps a line count per path (counted once, kept from then on) and past
+  50 000 lines writes its newest 25 000 beside and renames over (`mirror/execute.rs`,
+  `AUDIT_CAP`; the test in `mirror/tests.rs`).
 
 ## Verification
 

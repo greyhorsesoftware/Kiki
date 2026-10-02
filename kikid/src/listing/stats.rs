@@ -2,6 +2,7 @@
 //! the names are already on screen.
 
 use super::*;
+use crate::server::ClientTx;
 
 pub(super) struct StatJob {
     pub(super) listing: Arc<Listing>,
@@ -167,7 +168,7 @@ impl Listing {
     }
 
     /// Stat every row at low priority; replies to `waiter` when complete.
-    pub fn enrich(self: &Arc<Self>, waiter: Option<(Sender<Value>, u64)>) {
+    pub fn enrich(self: &Arc<Self>, waiter: Option<(ClientTx, u64)>) {
         let complete = {
             let mut inner = self.inner.lock().unwrap();
             let complete = inner.meta.iter().all(Option::is_some);

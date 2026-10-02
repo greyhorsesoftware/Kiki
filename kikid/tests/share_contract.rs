@@ -215,7 +215,7 @@ fn the_share_plugins_describe_themselves_and_share_rs_hands_them_local_files() {
     std::fs::write(here.join("one.txt"), b"one").unwrap();
     std::fs::write(here.join("folder/inner/deep.txt"), b"deep").unwrap();
     let (tx, rx) = mpsc::channel();
-    jobs::subscribe(tx.clone());
+    jobs::subscribe(tx.clone().into());
 
     let share_op = |uris: Vec<&str>, target: &str| {
         Value::obj()
@@ -228,7 +228,7 @@ fn the_share_plugins_describe_themselves_and_share_rs_hands_them_local_files() {
     };
     let local = kikid::vfs::uri::Uri::from_path(&here.join("one.txt")).to_string();
     let folder = kikid::vfs::uri::Uri::from_path(&here.join("folder")).to_string();
-    let id = jobs::submit(share_op(vec![&local, &folder, "stub://lab/docs/notes.txt"], "near"), Some(tx.clone())).unwrap();
+    let id = jobs::submit(share_op(vec![&local, &folder, "stub://lab/docs/notes.txt"], "near"), Some(tx.clone().into())).unwrap();
     let j = finished(id);
     assert_eq!(j.str_field("state"), Some("done"), "{}", j.str_field("error").unwrap_or(""));
 
@@ -259,7 +259,7 @@ fn the_share_plugins_describe_themselves_and_share_rs_hands_them_local_files() {
     assert!(jobs::undo(None).is_err(), "and it journals nothing");
 
     // ---------------------------------------------------------------- a share that fails
-    let id = jobs::submit(share_op(vec![&local], "fail"), Some(tx.clone())).unwrap();
+    let id = jobs::submit(share_op(vec![&local], "fail"), Some(tx.clone().into())).unwrap();
     let j = finished(id);
     assert_eq!(j.str_field("state"), Some("failed"));
     assert_eq!(j.str_field("error"), Some("Network: the stub was told to fail"), "the plugin's own words reach the job, under the code it gave them");
@@ -272,7 +272,7 @@ fn the_share_plugins_describe_themselves_and_share_rs_hands_them_local_files() {
         _ => unreachable!(),
     };
     op.insert("plugin".into(), Value::Str("folders".into()));
-    let id = jobs::submit(Value::Obj(op), Some(tx)).unwrap();
+    let id = jobs::submit(Value::Obj(op), Some(tx.into())).unwrap();
     assert_eq!(finished(id).str_field("state"), Some("done"));
     let handed = strings(stub_log(&dir, "folders", "Share").last().unwrap().get("uris"));
     assert_eq!(handed, vec![folder.clone()], "no zip: the plugin said it takes folders");

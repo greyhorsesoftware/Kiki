@@ -29,6 +29,8 @@ One Settings window for everything kiki can be told, opened from the shortcut ba
 
 **The eight that exist**, in this order: General, Search, Share, Git, Project mode, AI, Omarchy, About.
 
+**In the file and on no page** (a number nobody changes by hand; one line in `settings.toml`, read without a restart): `[thumbnails] retryAfterS` — how long a thumbnail that could not be made is left alone before it is tried again, a day by default (`thumbs.rs`, plan 0.5.0/09).
+
 Rules: every control writes through immediately with a small "Saved" flash; invalid input is shown inline with the field and never written; a page that depends on a missing tool says so instead of showing dead controls.
 
 ## Protocol additions

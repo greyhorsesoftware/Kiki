@@ -7,6 +7,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 pub fn format_from_name(name: &str) -> Option<&'static str> {
     let n = name.to_ascii_lowercase();
@@ -138,20 +140,53 @@ pub fn extract(archive: &Path, dest: &Path, cancel: &AtomicBool, progress: &mut 
     placed
 }
 
+/// The most a `bsdtar` may take; `KIKI_ARCHIVE_CEILING_MS` makes it small for a test.
+const CEILING: Duration = Duration::from_secs(60 * 60);
+
+fn ceiling() -> Duration {
+    std::env::var("KIKI_ARCHIVE_CEILING_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(CEILING)
+}
+
 fn run(mut cmd: Command, cancel: &AtomicBool, progress: &mut dyn FnMut(&str)) -> Result<()> {
     cmd.stdout(Stdio::null()).stderr(Stdio::piped()).stdin(Stdio::null());
     let mut child = cmd.spawn().map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { VfsError::said(1240, &[], "bsdtar is not installed") } else { e.into() })?;
     let stderr = child.stderr.take().unwrap();
+    // Its lines come through a thread, so that waiting for one is a wait with a clock on it:
+    // a cancel used to be looked at only when bsdtar said something, and one that said nothing
+    // — writing to a mount that had gone away — was waited on for ever.
+    let (ltx, lrx) = mpsc::channel::<String>();
+    std::thread::Builder::new()
+        .name("bsdtar-lines".into())
+        .spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                match line {
+                    Ok(l) => {
+                        if ltx.send(l).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        })
+        .expect("spawn bsdtar reader");
+    let started = Instant::now();
     let mut errors = String::new();
-    for line in BufReader::new(stderr).lines() {
+    loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(VfsError::said(1230, &[], "cancelled"));
         }
-        let line = match line {
+        if started.elapsed() > ceiling() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(VfsError::said(1273, &[], "gave up after an hour: bsdtar had not finished"));
+        }
+        let line = match lrx.recv_timeout(Duration::from_millis(200)) {
             Ok(l) => l,
-            Err(_) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         // Verbose listing lines start with "x " or "a "; anything else is an error message.
         if let Some(name) = line.strip_prefix("x ").or_else(|| line.strip_prefix("a ")) {
@@ -318,5 +353,35 @@ mod tests {
         assert_eq!(stem("site.v2.tgz"), "site.v2");
         assert_eq!(stem("notes.txt"), "notes.txt");
         assert_eq!(stem(".zip"), ".zip");
+    }
+
+    /// A bsdtar that says nothing — stuck on a mount that has gone — is still cancellable, and
+    /// still ends at the ceiling: the wait looks up every 200 ms whether or not a line came.
+    #[test]
+    fn a_silent_bsdtar_is_cancelled_within_a_second_and_ended_at_the_ceiling() {
+        let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("KIKI_ARCHIVE_CEILING_MS");
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let c = std::sync::Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            c.store(true, Ordering::Relaxed);
+        });
+        let mut sleep = Command::new("sleep");
+        sleep.arg("30");
+        let t = Instant::now();
+        let r = run(sleep, &cancel, &mut |_| {});
+        assert_eq!(r.unwrap_err().said_json().map(|(n, _)| n), Some(1230));
+        assert!(t.elapsed() < Duration::from_secs(1), "cancelled within a second of asking: {:?}", t.elapsed());
+
+        std::env::set_var("KIKI_ARCHIVE_CEILING_MS", "300");
+        let cancel = AtomicBool::new(false);
+        let mut sleep = Command::new("sleep");
+        sleep.arg("30");
+        let t = Instant::now();
+        let r = run(sleep, &cancel, &mut |_| {});
+        std::env::remove_var("KIKI_ARCHIVE_CEILING_MS");
+        assert_eq!(r.unwrap_err().said_json().map(|(n, _)| n), Some(1273));
+        assert!(t.elapsed() < Duration::from_secs(2), "ended at the ceiling, not at bsdtar's leisure: {:?}", t.elapsed());
     }
 }

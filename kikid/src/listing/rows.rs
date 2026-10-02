@@ -4,6 +4,7 @@ use super::cache::cache;
 use super::deco;
 use super::stats::{stat_pool, StatJob};
 use super::*;
+use crate::server::ClientTx;
 
 impl Listing {
     pub fn subscribe(&self, sub: Subscriber) {
@@ -240,7 +241,7 @@ impl Listing {
 /// `submit_thumb` and the stat pool are not called under the listing's lock, which is why this
 /// is carried out rather than done on the spot.
 pub(super) struct Pending {
-    pub(super) events: Vec<(Sender<Value>, Value)>,
+    pub(super) events: Vec<(ClientTx, Value)>,
     stats: Vec<Vec<u32>>,
     thumbs: Vec<(u32, crate::kinds::Kind, u64, String)>,
     epoch: u64,

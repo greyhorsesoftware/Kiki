@@ -67,13 +67,20 @@ jobs:
   # The package, installed and used: the daemon and the shell it ships, driven under a headless
   # compositor through twenty-five flows (tests/e2e), from the commit the package was built at.
   # x86_64 only for now.
+  # In two halves on two machines — the flows that start a real server and the rest
+  # (tests/e2e/driver.py, PARTS; docs/0.5.0/08-ci-once.md, decision 4) — since the suite is
+  # most of this workflow's wall time and the two halves share nothing but the package.
   drive:
-    name: Install the package and drive it (x86_64, under cage)
+    name: Install the package and drive it (x86_64, under cage, ${{ matrix.part }} flows)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
       options: --privileged
     needs: pick
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [local, servers]
     steps:
       - name: Install runtime
         # Quickshell comes from `extra` (0.3.1 as of 2026-09-23): the package the PKGBUILD
@@ -103,14 +110,14 @@ jobs:
         # that the compositor can map to an output — skip by name and say so.
         run: |
           chown -R builder .
-          sudo -u builder bash -c 'tests/e2e/run.sh'
+          sudo -u builder bash -c 'tests/e2e/run.sh --part ${{ matrix.part }}'
       - name: Show the logs
         if: always()
         run: tail -n 40 tests/e2e/out/*.log || true
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: e2e-diffs
+          name: e2e-diffs-${{ matrix.part }}
           path: tests/e2e/out/**
 
   publish:
@@ -164,6 +171,10 @@ jobs:
     needs: [pick, publish]
     permissions:
       contents: write
+    # On the job, not the first step: set on that step alone, the commit below read an empty
+    # VERSION and main got "Release v: checksums" (v0.4.1, 2026-09-28).
+    env:
+      VERSION: ${{ needs.pick.outputs.version }}
     steps:
       - name: Install git and makepkg
         run: |
@@ -173,8 +184,6 @@ jobs:
         with:
           ref: main
       - name: Digests from the published assets and the tag's tarball
-        env:
-          VERSION: ${{ needs.pick.outputs.version }}
         run: |
           set -e
           [ "$(sed -n 's/^pkgver=//p' packaging/PKGBUILD)" = "$VERSION" ] || { echo "main's PKGBUILD is not $VERSION any more; leaving the checksums to that version's release"; exit 0; }

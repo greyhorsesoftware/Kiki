@@ -82,7 +82,9 @@ impl<'a> Parser<'a> {
     }
 
     fn value(&mut self, depth: usize) -> Result<Value, ParseError> {
-        if depth > MAX_DEPTH {
+        // `>=`: the outermost value is depth 0, so MAX_DEPTH brackets are the sixty-fourth
+        // level, and the one after is refused — the bound the name says, not one more.
+        if depth >= MAX_DEPTH {
             return Err(self.err("nesting too deep"));
         }
         match self.peek() {
@@ -182,14 +184,25 @@ impl<'a> Parser<'a> {
             return Err(self.err("bad number"));
         }
         if !is_float {
-            if let Ok(u) = text.parse::<u64>() {
-                return Ok(Value::Uint(u));
+            // `-0` is nought: a minus on zero means nothing to an integer, and `Int(0)` would
+            // be written `0` and read back as `Uint(0)` — a value that changed on its way
+            // through the writer (the fuzzer, 2026-10-02).
+            if let Ok(u) = text.trim_start_matches('-').parse::<u64>() {
+                if u == 0 || !text.starts_with('-') {
+                    return Ok(Value::Uint(u));
+                }
             }
             if let Ok(i) = text.parse::<i64>() {
                 return Ok(Value::Int(i));
             }
         }
-        text.parse::<f64>().map(Value::Float).map_err(|_| self.err("bad number"))
+        // A number too large for a double — `1e400` — is not infinity, which JSON cannot spell
+        // and the writer would put down as null: it is a number this reader cannot hold, and is
+        // refused like any other it cannot read (the fuzzer, 2026-10-02).
+        match text.parse::<f64>() {
+            Ok(f) if f.is_finite() => Ok(Value::Float(f)),
+            _ => Err(self.err("bad number")),
+        }
     }
 
     fn string(&mut self) -> Result<String, ParseError> {
@@ -275,8 +288,13 @@ pub fn write(v: &Value, out: &mut String) {
             let _ = write!(out, "{u}");
         }
         Value::Float(f) => {
+            // `{:?}`, not `{}`: Display writes 1000.0 as `1000`, which reads back as an
+            // integer — a float that is a whole number changed type on its way through the
+            // writer (the fuzzer's first find, 2026-10-02). Debug keeps the point. Non-finite
+            // cannot come from the parser (below) and has no JSON spelling; null is the
+            // honest word for a value that cannot be said.
             if f.is_finite() {
-                let _ = write!(out, "{f}");
+                let _ = write!(out, "{f:?}");
             } else {
                 out.push_str("null");
             }
@@ -440,10 +458,52 @@ mod tests {
         assert!(parse(deep.as_bytes()).is_err());
     }
 
+    /// The depth bound is a line, not a slope: sixty-four levels parse, the sixty-fifth is
+    /// refused by name, at the offset of the bracket that crossed it. The parser recurses once
+    /// per level, so the bound is also the stack's — a frame nested a million deep is five
+    /// bytes a level from a peer and must cost nothing here.
+    #[test]
+    fn depth_is_bounded_at_max_depth() {
+        let ok = format!("{}{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+        assert!(parse(ok.as_bytes()).is_ok(), "MAX_DEPTH levels are within the bound");
+        let over = format!("{}{}", "[".repeat(MAX_DEPTH + 1), "]".repeat(MAX_DEPTH + 1));
+        let e = parse(over.as_bytes()).expect_err("one level past MAX_DEPTH is refused");
+        assert_eq!(e.message, "nesting too deep");
+        assert_eq!(e.offset, MAX_DEPTH, "refused at the bracket that crossed the line, before it is read");
+        // Objects count the same as arrays, and the two mixed.
+        let mixed: String = (0..=MAX_DEPTH).map(|i| if i % 2 == 0 { "{\"k\":" } else { "[" }).collect();
+        assert!(parse(mixed.as_bytes()).is_err());
+    }
+
     #[test]
     fn numbers() {
         assert_eq!(parse(b"18446744073709551615").unwrap(), Value::Uint(u64::MAX));
         assert_eq!(parse(b"-5").unwrap(), Value::Int(-5));
         assert_eq!(parse(b"1e3").unwrap(), Value::Float(1000.0));
+    }
+
+    /// What the fuzzer found on its first run (docs/0.5.0/03-fuzz-json.md, 2026-10-02): three
+    /// numbers that came back from the writer as something else. None was a crash; each was a
+    /// value the daemon could have written differently from how it read it.
+    #[test]
+    fn a_whole_valued_float_stays_a_float_through_the_writer() {
+        let v = parse(b"[1e3,2.0,-4E2]").unwrap();
+        assert_eq!(to_string(&v), "[1000.0,2.0,-400.0]");
+        assert_eq!(parse(to_string(&v).as_bytes()).unwrap(), v);
+    }
+
+    #[test]
+    fn minus_zero_is_nought() {
+        assert_eq!(parse(b"-0").unwrap(), Value::Uint(0));
+        assert_eq!(parse(b"[-0,0]").unwrap(), parse(b"[0,0]").unwrap());
+        assert_eq!(parse(b"-1").unwrap(), Value::Int(-1), "a minus on anything else still counts");
+    }
+
+    #[test]
+    fn a_number_too_large_for_a_double_is_refused_not_infinity() {
+        for over in ["1e400", "-1e400", "18477e377", "1e99999"] {
+            assert!(parse(over.as_bytes()).is_err(), "{over}");
+        }
+        assert_eq!(parse(b"1e308").unwrap(), Value::Float(1e308), "the largest double still reads");
     }
 }

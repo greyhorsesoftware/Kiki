@@ -48,7 +48,7 @@ fn the_trash_view_follows_the_trash() {
     assert!(listing::wait_scan(&l, PATIENCE));
     // Somebody has to be looking, or nobody is told.
     let (tx, _rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 512, view_first: 0, view_count: 512, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 512, view_first: 0, view_count: 512, initial: 0 });
     until(&l, "as opened", &["old.txt"]);
 
     // Something else is thrown away while the view is open…

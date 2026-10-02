@@ -1,10 +1,21 @@
 # 03 — Fuzz the JSON reader for real
 
-**Status:** planned, 2026-09-29. From the audit (`docs/audit-2026-09-18.md`, §4): "the JSON
-parser that reads every frame from the socket and every plugin is not fuzzed", and CI has a
-step that suggests it is — `cargo +nightly fuzz run json_reader … || echo "::warning::fuzz
-target not present yet"` — over a `fuzz/` directory that has never existed. A step that always
-warns is worse than no step: it reads as coverage.
+**Status:** built, 2026-10-02. `fuzz/` (outside the workspace; `make fuzz`, and CI's `fuzz` job on
+x86_64, a minute per target, failing on a crash), two targets with a checked-in corpus, run here
+for thirty minutes each. **What the first run found, in its first minutes:** no crash — the
+round-trip invariant failed three ways, all in numbers, all fixed in `kiki-json` with a unit test
+naming each: a whole-valued float (`1e3`) was written `1000` and read back as an integer (the
+writer now keeps the point); `-0` parsed as `Int(0)`, was written `0` and read back as `Uint(0)`
+(it is nought, a `Uint`, from the start); and a number too large for a double (`1e400`) parsed as
+infinity, which the writer put down as `null` — a daemon writing `null` where it read a number
+(refused now, like any number the reader cannot hold). `crates/kiki-json/tests/property.rs` had
+pinned two of those as "what the writer does not promise to keep", a decision made before there
+was a fuzzer to argue with; it pins the stronger promise now, with the reason. The depth bound
+was also one more than its name said (`depth > 64` from 0) and is exact now, with a test either
+side of it; a frame one byte over either size bound is refused on its prefix with nothing
+allocated, with a test. Fuzzing after the fixes: `json_reader` ran thirty minutes, 20.3 million inputs, nothing found. The frame reader
+(`frame_reader`): thirty minutes, 14.6 million inputs, nothing found — a length over the
+bound is refused on the prefix before anything is allocated, as it was. Nothing in the two readers panicked at any point.
 
 ## Today
 

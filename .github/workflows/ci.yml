@@ -49,13 +49,23 @@ jobs:
       - run: chown -R builder . /home/builder
       - name: Format and lint
         run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" make lint
+      # The release profile, once: what the PKGBUILD's check() runs, and the build makepkg
+      # below packages — so the daemon is compiled one time per run, not a dev build for the
+      # tests and a release build for the package (docs/0.5.0/08-ci-once.md: the release
+      # build was five of the job's eleven minutes on x86_64, and the dev build another three).
+      # Under makepkg's own compiler flags (`as-makepkg`, below): cargo fingerprints every crate
+      # by RUSTFLAGS, and makepkg exports `-C force-frame-pointers=yes` from makepkg.conf — a
+      # test build without it is thrown away and compiled again by the package step, which is
+      # what was happening (measured 2026-10-02: with the flags, makepkg's build is 0.15 s).
       - name: Unit and integration tests
-        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" make test-rust
+        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" bash -c '. .github/as-makepkg.sh && cargo test --release --locked'
       - name: Protocol and plugin contract tests
-        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo test --test '*' -- --include-ignored
+        run: sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" bash -c '. .github/as-makepkg.sh && cargo test --release --locked --test "*" -- --include-ignored'
       - name: makepkg
         # `--nocheck`: the PKGBUILD's check() is the whole test suite again in release profile,
-        # and it has just run above on this commit. Building by hand still runs it.
+        # and it has just run above on this commit. Building by hand still runs it. Its build()
+        # is `cargo build --release --locked` into CARGO_TARGET_DIR, which the tests just filled:
+        # a no-op here, and the package is the binaries the tests ran.
         # `PKGEXT`: Arch Linux ARM's makepkg.conf says `.pkg.tar.xz`; the installer and the
         # release name the file with `.zst` on both architectures, so this does too.
         # `KIKI_LOCAL_SRC`: the commit under test has no tag, so it is built from the checkout;
@@ -80,16 +90,16 @@ jobs:
         # in the PKGBUILD's comment block held to by a test (kikid/tests/dep_audit.rs).
         if: matrix.arch == 'x86_64'
         run: |
-          t() { sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" "$@"; }
+          t() { sudo -u builder env HOME=/home/builder CARGO_TARGET_DIR="$CARGO_TARGET_DIR" bash -c '. .github/as-makepkg.sh && "$@"' -- "$@"; }
           echo "== without a Secret Service (libsecret present, gnome-keyring not, no session bus)"
-          t env KIKI_AUDIT_NO_SECRET_SERVICE=1 cargo test --test dep_audit -- --ignored secret_service
+          t env KIKI_AUDIT_NO_SECRET_SERVICE=1 cargo test --release --locked --test dep_audit -- --ignored secret_service
           echo "== without git"
           pacman -Rdd --noconfirm git
-          t env KIKI_AUDIT_NO_GIT=1 cargo test --test dep_audit -- --ignored without_git
+          t env KIKI_AUDIT_NO_GIT=1 cargo test --release --locked --test dep_audit -- --ignored without_git
           pacman -S --noconfirm --needed git
           echo "== without gvfs"
           pacman -Rdd --noconfirm gvfs-smb gvfs
-          t env KIKI_AUDIT_NO_GVFS=1 cargo test --test dep_audit -- --ignored without_gvfs
+          t env KIKI_AUDIT_NO_GVFS=1 cargo test --release --locked --test dep_audit -- --ignored without_gvfs
           pacman -S --noconfirm --needed gvfs gvfs-smb
       - uses: actions/upload-artifact@v7
         with:
@@ -136,6 +146,36 @@ jobs:
             makepkg -f -s --noconfirm
             ls -l kiki-*.pkg.tar.zst
             pacman -Qip kiki-*-x86_64.pkg.tar.zst | head -20'
+
+  # The JSON reader and the frame reader under libFuzzer, a minute each, on x86_64 alone: the
+  # bytes that reach them come from a window or a plugin, and the daemon is built with
+  # `panic = "abort"`, so a panic in either is the end of every window (docs/0.5.0/03-fuzz-json.md).
+  # A crash fails the job — this replaced a step that always printed a warning over a `fuzz/`
+  # directory that did not exist. Nightly is what cargo-fuzz needs; it is pinned here and
+  # nowhere else, and the fuzz crate is outside the workspace so nothing else sees it.
+  fuzz:
+    name: Fuzz the readers
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install toolchain
+        run: |
+          sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rustup clang pkgconf glib2
+          rustup toolchain install nightly-2026-09-29 --profile minimal
+          cargo +nightly-2026-09-29 install cargo-fuzz --locked
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: fuzz-${{ hashFiles('**/Cargo.lock', 'fuzz/Cargo.toml') }}
+      - name: Fuzz json_reader and frame_reader
+        run: |
+          cd fuzz
+          cargo +nightly-2026-09-29 fuzz run json_reader -- -max_total_time=60 -max_len=65536
+          cargo +nightly-2026-09-29 fuzz run frame_reader -- -max_total_time=60 -max_len=65536
 
   qml:
     name: QML leaf and interaction tests

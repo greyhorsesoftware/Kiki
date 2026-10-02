@@ -3,8 +3,8 @@ save as panels, then show a list of core internal improvements").
 
 Not a test and not in the default run — `KIKI_E2E_DESKTOP=1 tests/e2e/run.sh --flow whatsnew`
 records it on the compositor you are sitting at (see `demo.py` for the two ways to record and
-what each needs); the file is `tests/e2e/out/kiki-whatsnew.mp4`, the raw capture beside it. The
-0.2 one is `whatsnew020`.
+what each needs); the file is `tests/e2e/out/kiki-whatsnew.mp4`, the raw capture beside it —
+which `KIKI_E2E_RECOMPOSITE=1` composites again with changed captions and no new recording.
 
 What it shows, in order: a title card with the About mark; a folder of pictures, paper and a
 clip, and Quick Look over it — a picture, a document, the paper, the clip — in a window of its

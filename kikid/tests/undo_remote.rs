@@ -142,7 +142,7 @@ fn a_copy_to_a_server_is_taken_back_exactly_and_only_where_it_is_still_the_copy(
     common::save_location("lab");
     let (s, _) = locations::resolve(&Uri::parse("stub://lab/").unwrap()).expect("the stub location resolves");
     let (tx, rx) = mpsc::channel();
-    jobs::subscribe(tx);
+    jobs::subscribe(tx.into());
 
     let work = dir.join("work");
     std::fs::create_dir_all(work.join("site/img")).unwrap();

@@ -13,6 +13,23 @@ use std::time::Duration;
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// The most any one request to a plugin may take, moving or not. `REQUEST_TIMEOUT` is the
+/// patience between frames, and a plugin that says something every two minutes was never
+/// given up on — right for a transfer that is moving, wrong for one that is stuck in a loop
+/// of its own. An hour is ten times the longest transfer kiki has run through a plugin and
+/// shorter than a working day; the mirror's runs are per file and never near it.
+/// `KIKI_REQUEST_CEILING_MS` is the tests' way to make it small (docs/0.5.0/02-daemon-bounds.md).
+pub const REQUEST_CEILING: Duration = Duration::from_secs(60 * 60);
+
+pub(crate) fn request_ceiling() -> Duration {
+    std::env::var("KIKI_REQUEST_CEILING_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(REQUEST_CEILING)
+}
+
+/// How long a plugin is given to leave after `Shutdown` before it is killed. The reaper calls
+/// `shutdown` for every idle plugin in turn, so one that ignored the word used to stop all
+/// reaping — of plugins, share helpers and service helpers alike — for as long as it lived.
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
 /// How long a plugin is given to answer a `Cancel` before the request is abandoned. A JSON
 /// request (`Connect`, `Scan`) can be dropped the moment the plugin has been told, because every
 /// JSON frame carries its own id and a late one is simply thrown away — and the person who
@@ -348,6 +365,7 @@ impl Plugin {
     fn wait_reply_within(&self, id: u64, rx: &Receiver<Msg>, cancel: Option<&AtomicBool>, mut on_frame: Option<&mut dyn FnMut(Msg)>, patience: Duration, grace: Duration) -> Result<Value, VfsError> {
         let started = std::time::Instant::now();
         let mut last_frame = std::time::Instant::now();
+        let ceiling = request_ceiling();
         // When the `Cancel` went out — and so how long the plugin has had to answer it. The wait
         // after a cancel is counted from the cancel, not from the last frame: a plugin that keeps
         // streaming is exactly the one nobody must be stuck behind.
@@ -363,6 +381,13 @@ impl Plugin {
             if cancelled_at.is_some_and(|at| at.elapsed() > grace) {
                 self.pending.lock().unwrap().remove(&id);
                 return Err(VfsError::said(1230, &[], "cancelled"));
+            }
+            // Whether or not frames are still coming: the one ceiling an idle timeout that resets
+            // on every frame cannot be.
+            if started.elapsed() > ceiling {
+                self.cancel(id);
+                self.pending.lock().unwrap().remove(&id);
+                return Err(VfsError::said(1273, &[], "gave up after an hour: the plugin had not finished"));
             }
             match rx.recv_timeout(Duration::from_millis(20)) {
                 Ok(Msg::Json(v)) if v.get("ok").is_some() || v.get("err").is_some() => {
@@ -452,10 +477,22 @@ impl Plugin {
         self.wait_reply_with(id, &rx, cancel, None, BINARY_GRACE)
     }
 
+    /// Asks the plugin to leave and gives it `SHUTDOWN_GRACE` to do so, counted from the asking;
+    /// one that is still there after that is killed with everything it started, and said so.
     pub fn shutdown(&self) {
-        let _ = self.request(Value::obj().s("type", "Shutdown").done());
-        let mut c = self.child.lock().unwrap();
-        let _ = c.wait();
+        let asked = std::time::Instant::now();
+        let _ = self.request_within(Value::obj().s("type", "Shutdown").done(), SHUTDOWN_GRACE);
+        while asked.elapsed() < SHUTDOWN_GRACE {
+            if !self.alive() {
+                let _ = self.child.lock().unwrap().wait();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if self.alive() {
+            eprintln!("plugin {}: did not leave on Shutdown within {:?}, killed", self.scheme, SHUTDOWN_GRACE);
+            self.kill_group();
+        }
     }
 
     pub fn idle_for(&self) -> Duration {

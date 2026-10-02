@@ -517,6 +517,7 @@ var strings = {
     "error.1270": "El complemento no respondió o terminó",
     "error.1271": "El complemento terminó",
     "error.1272": "No hay complemento para {scheme}",
+    "error.1273": "Se abandonó tras una hora: seguía sin terminar",
     "error.1280": "El listado tardó demasiado",
     "error.1281": "No es una carpeta",
 

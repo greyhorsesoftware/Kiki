@@ -1,0 +1,1 @@
+{"id":3,"type":"AddLocation","name":"lab","plugin":"sftp","remoteUri":"sftp://lab/tmp","localUri":"","config":{"host":"1","port":"22"}}

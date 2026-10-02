@@ -30,7 +30,7 @@ fn job(id: u64) -> Value {
 /// Runs an op and hands back how it ended and what it said.
 fn run(op: Value) -> (String, String) {
     let (tx, _rx) = mpsc::channel();
-    let id = jobs::submit(op, Some(tx)).expect("submitted");
+    let id = jobs::submit(op, Some(tx.into())).expect("submitted");
     let start = Instant::now();
     loop {
         let j = job(id);

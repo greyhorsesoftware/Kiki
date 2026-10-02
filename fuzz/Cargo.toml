@@ -1,0 +1,30 @@
+# The fuzz targets (docs/0.5.0/03-fuzz-json.md): a crate of its own, outside the workspace, so
+# `cargo test` never builds it and nightly is needed only here. `make fuzz` runs both for a
+# minute; CI runs them the same way on x86_64 and fails on a crash.
+[package]
+name = "kiki-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+kiki-json = { path = "../crates/kiki-json" }
+kikid = { path = "../kikid" }
+
+[[bin]]
+name = "json_reader"
+path = "fuzz_targets/json_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "frame_reader"
+path = "fuzz_targets/frame_reader.rs"
+test = false
+doc = false
+bench = false

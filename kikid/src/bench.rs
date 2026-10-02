@@ -275,7 +275,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let t0 = Instant::now();
     let (l, _) = listing::open(&uri).expect("open");
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 0, lid: 1, tx, first: 0, count: 60, view_first: 0, view_count: 60, initial: 0 });
+    l.subscribe(Subscriber { client: 0, lid: 1, tx: tx.into(), first: 0, count: 60, view_first: 0, view_count: 60, initial: 0 });
     let (mut first_chunk, mut done) = (None, None);
     while done.is_none() {
         match rx.recv_timeout(Duration::from_secs(120)) {
@@ -313,7 +313,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     // enrich everything, then sort by size and by mtime, then filter
     let t = Instant::now();
     let (etx, erx) = mpsc::channel();
-    l.enrich(Some((etx, 1)));
+    l.enrich(Some((etx.into(), 1)));
     let _ = erx.recv_timeout(Duration::from_secs(600));
     put(&mut m, "enrich_ms", ms(t.elapsed()));
     put(&mut m, "rss_listing_mb", rss_now_mb());
@@ -351,6 +351,13 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
         let _ = crate::index::query(&ix, "photo_0001", crate::index::Mode::Prefix);
     }
     put(&mut m, "index_query_us", (t.elapsed().as_secs_f64() * 1e6 / 100.0 * 10.0).round() / 10.0);
+    // The ten-minute refresh over a tree nothing has touched: a stat per folder, no reading
+    // (docs/0.5.0/06-index-live.md).
+    let mut ix = ix;
+    let t = Instant::now();
+    let relisted = ix.refresh(&[]);
+    put(&mut m, "index_refresh_ms", ms(t.elapsed()));
+    put(&mut m, "index_refresh_relisted", relisted as f64);
     // mirror scan + diff against an empty replica (local ↔ local)
     let replica = std::env::temp_dir().join(format!("kiki-bench-replica-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&replica);
@@ -557,6 +564,7 @@ mod tests {
             "patch_ms",
             "index_build_ms",
             "index_query_us",
+            "index_refresh_ms",
             "mirror_scan_ms",
             "copy64m_ms",
             "rss_peak_mb",

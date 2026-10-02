@@ -522,6 +522,7 @@ var strings = {
     "error.1270": "The plugin timed out or exited",
     "error.1271": "The plugin exited",
     "error.1272": "No plugin for {scheme}",
+    "error.1273": "Gave up after an hour: it was still not finished",
     "error.1280": "The listing timed out",
     "error.1281": "Not a folder",
 

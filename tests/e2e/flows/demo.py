@@ -29,6 +29,10 @@ from servers import Servers, add_location, sshd_bin
 NEEDS = {"shell", "keyboard"}
 TITLE = "a demo video: views, the info panel, the gallery, a remote"
 DESKTOP = bool(os.environ.get("KIKI_E2E_DESKTOP"))
+# KIKI_E2E_RECOMPOSITE=1: no recording — the captions and cards are burned again into the raw
+# capture the last recording left beside its output (`Recorder.raw`), so a changed caption is a
+# minute of ffmpeg and not another take of the owner's screen (docs/0.5.0/09-loose-ends.md).
+RECOMPOSITE = bool(os.environ.get("KIKI_E2E_RECOMPOSITE"))
 JPEGS = os.environ.get("KIKI_PERF_DIR", "/tmp/kiki-perf/gallery1k")   # gallery_perf's fixture, if it has been made
 PICTURES = 40
 
@@ -263,6 +267,12 @@ class Recorder:
         construction, so this follows it): the file a re-composite starts from."""
         return self.out + ".raw.mp4"
 
+    @property
+    def marks_file(self):
+        """When each mark was made, kept beside the raw, so a re-composite can place the flow's
+        captions where the last recording's were."""
+        return self.out + ".marks.json"
+
     def say(self, title, text=None):
         """A caption from now until the next one: a title and, beneath it, `text` (lines split
         on newlines). The one-argument form is the 0.2 video's, a line with no title."""
@@ -278,6 +288,11 @@ class Recorder:
         print(f"  {self.marks[-1][0]:5.1f}s  [card {seconds}s] {title}")
 
     def start(self, monitor=None):
+        if RECOMPOSITE:
+            # Nothing is captured: the flow still runs its steps so its marks are left in the
+            # same order; their times are taken from the recording's own, below.
+            self.t0 = time.monotonic()
+            return
         for stale in (self.out, self.raw):
             if os.path.exists(stale):
                 os.remove(stale)
@@ -305,6 +320,23 @@ class Recorder:
 
     def finish(self):
         end = time.monotonic() - self.t0
+        if RECOMPOSITE:
+            # The flow's marks, in its order, at the recording's times: the text is today's, the
+            # moment is the original take's. A flow that added or dropped a caption since has a
+            # different count, and that is a new recording, not a re-composite.
+            try:
+                with open(self.marks_file) as fh:
+                    saved = json.load(fh)
+            except (OSError, json.JSONDecodeError):
+                print(f"  ... nothing to re-composite: no {os.path.relpath(self.marks_file)} beside the raw")
+                return False
+            if len(saved["marks"]) != len(self.marks) or not os.path.exists(self.raw):
+                print(f"  ... the flow has {len(self.marks)} marks and the recording had {len(saved['marks'])}: record it again")
+                return False
+            self.marks = [(at, m[1], m[2], m[3]) for at, m in zip(saved["marks"], self.marks)]
+            return self.caption(self.raw, saved["end"])
+        with open(self.marks_file, "w") as fh:
+            json.dump({"end": end, "marks": [m[0] for m in self.marks]}, fh)
         if self.proc:
             self.proc.send_signal(signal.SIGINT)   # SIGINT, or the file is not finalised
             try:

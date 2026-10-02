@@ -813,3 +813,25 @@ fn a_cancelled_compare_gives_up_on_the_file_it_is_hashing() {
     assert_eq!(mine.get("a.bin").unwrap().digest, None, "a cancelled compare hashes nothing");
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+/// The audit log is let grow to `AUDIT_CAP` lines and then loses its oldest half, newest intact.
+#[test]
+fn the_audit_log_is_compacted_past_its_cap() {
+    let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let d = std::env::temp_dir().join(format!("kiki-audit-cap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::env::set_var("KIKI_STATE_DIR", d.join("state"));
+    let p = d.join("state/audit.log");
+    for i in 0..=super::execute::AUDIT_CAP {
+        super::execute::audit(&format!("line {i}"));
+    }
+    let s = std::fs::read_to_string(&p).unwrap();
+    let lines: Vec<&str> = s.lines().collect();
+    assert_eq!(lines.len(), super::execute::AUDIT_CAP / 2, "the oldest half went");
+    assert!(lines.last().unwrap().ends_with(&format!("line {}", super::execute::AUDIT_CAP)), "the newest line is the last: {:?}", lines.last());
+    assert!(lines[0].ends_with(&format!("line {}", super::execute::AUDIT_CAP / 2 + 1)), "and the cut is where it should be: {:?}", lines[0]);
+    assert!(!p.with_extension("log.tmp").exists(), "the file it was written through is gone");
+    super::execute::audit("one more");
+    assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), super::execute::AUDIT_CAP / 2 + 1, "appended to again after");
+    let _ = std::fs::remove_dir_all(&d);
+}

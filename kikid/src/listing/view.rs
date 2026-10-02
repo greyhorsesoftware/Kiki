@@ -1,6 +1,7 @@
 //! What the view shows and in what order: sort, filter, hidden files, and type-ahead seek.
 
 use super::*;
+use crate::server::ClientTx;
 
 /// Sort in chunks across threads, then k-way merge (plan 01: above 50k entries).
 fn parallel_sort<F: Fn(&u32, &u32) -> std::cmp::Ordering + Sync>(v: &mut Vec<u32>, cmp: &F) {
@@ -33,7 +34,7 @@ fn parallel_sort<F: Fn(&u32, &u32) -> std::cmp::Ordering + Sync>(v: &mut Vec<u32
 }
 
 impl Listing {
-    pub fn sort(self: &Arc<Self>, role: SortRole, asc: bool, waiter: Option<(Sender<Value>, u64)>) -> u64 {
+    pub fn sort(self: &Arc<Self>, role: SortRole, asc: bool, waiter: Option<(ClientTx, u64)>) -> u64 {
         let mut inner = self.inner.lock().unwrap();
         // Clients state the order they want on every open, because a cached listing carries the
         // order an earlier client asked for. Restating the order already in force costs nothing.

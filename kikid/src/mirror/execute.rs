@@ -28,16 +28,53 @@ fn enforce_guards(plan: &Plan, spec: &Spec) -> Result<(), VfsError> {
     Ok(())
 }
 
-fn audit(line: &str) {
+/// Where the audit log is let grow to before its oldest half goes. `access.rs` keeps its log
+/// at the same mark; this one was appended to for ever (docs/0.5.0/02-daemon-bounds.md).
+pub(crate) const AUDIT_CAP: usize = 50_000;
+
+/// How many lines the log has — counted once per file, kept from then on — so that the cap
+/// costs one read, not one per line written. The path is kept beside it: a test moves the
+/// state directory between runs.
+fn audit_lines() -> &'static Mutex<Option<(std::path::PathBuf, usize)>> {
+    static N: std::sync::OnceLock<Mutex<Option<(std::path::PathBuf, usize)>>> = std::sync::OnceLock::new();
+    N.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn audit(line: &str) {
     // The state directory every other part of the daemon writes to — the journal, the failed-job
     // log. This built its own from `XDG_STATE_HOME` and so ignored `KIKI_STATE_DIR`: every e2e run
     // appended its mirrors to the audit log in the developer's own home, which the harness
     // promises it leaves as it found it.
     let d = crate::jobs::state_dir();
     let _ = std::fs::create_dir_all(&d);
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(d.join("audit.log")) {
+    let p = d.join("audit.log");
+    let mut n = audit_lines().lock().unwrap();
+    let count = match n.as_mut() {
+        Some((path, c)) if *path == p => c,
+        _ => {
+            let c = std::fs::read_to_string(&p).map(|s| s.lines().count()).unwrap_or(0);
+            *n = Some((p.clone(), c));
+            &mut n.as_mut().unwrap().1
+        }
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(&p) {
         use std::io::Write;
         let _ = writeln!(f, "{} {}", crate::ops::unix_now(), line);
+        *count += 1;
+    }
+    if *count > AUDIT_CAP {
+        // The newest half stays, in order; written beside and renamed over, so a crash in the
+        // middle leaves the whole log rather than part of one.
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            let lines: Vec<&str> = s.lines().collect();
+            let keep = &lines[lines.len().saturating_sub(AUDIT_CAP / 2)..];
+            let tmp = p.with_extension("log.tmp");
+            let mut out = keep.join("\n");
+            out.push('\n');
+            if std::fs::write(&tmp, out).is_ok() && std::fs::rename(&tmp, &p).is_ok() {
+                *count = keep.len();
+            }
+        }
     }
 }
 

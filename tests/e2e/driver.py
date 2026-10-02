@@ -5,7 +5,7 @@ Each flow gets its own folder under the fixture root and its own listing ids, so
 never see another's files. A flow that needs something this run does not have — a shell, a
 virtual keyboard — is skipped by name rather than failed, and the summary says so.
 
-    driver.py <socket> <out-dir> [--daemon-only] [--flow NAME ...]
+    driver.py <socket> <out-dir> [--daemon-only] [--flow NAME ...] [--part servers|local]
 """
 import importlib, os, shutil, sys, traceback  # noqa: F401
 
@@ -20,6 +20,17 @@ FLOWS = [
     "side_by_side", "launcher", "activity", "drag_between_panes", "columns_ops", "vim_keys", "quick_look", "dbus_activation", "mirror_local", "mirror_sftp",
     "smb", "pointer_ops",
 ]
+
+# The suite in two halves, for two machines (docs/0.5.0/08-ci-once.md, decision 4): the flows
+# that start a real server — sshd, vsftpd, smbd, a session bus — and the rest. `--part NAME`
+# (or KIKI_E2E_PART) runs one half; neither is run concurrently with anything else on one
+# machine, since every flow shares the daemon's ports and the compositor. Every flow is in
+# exactly one half, which is asserted below so a flow added to FLOWS cannot fall through.
+PARTS = {
+    "servers": ["remote_transfers", "side_by_side", "drag_between_panes", "quick_look", "dbus_activation", "mirror_sftp", "smb"],
+}
+PARTS["local"] = [f for f in FLOWS if f not in PARTS["servers"]]
+assert sorted(PARTS["servers"] + PARTS["local"]) == sorted(FLOWS) and len(set(FLOWS)) == len(FLOWS), "every flow in exactly one part"
 
 
 class Ctx:
@@ -67,7 +78,14 @@ def have(capability, args):
 def main():
     args = sys.argv[1:]
     sock_path, out_dir = args[0], args[1]
-    wanted = [args[i + 1] for i, a in enumerate(args) if a == "--flow"] or FLOWS
+    wanted = [args[i + 1] for i, a in enumerate(args) if a == "--flow"]
+    part = next((args[i + 1] for i, a in enumerate(args) if a == "--part"), os.environ.get("KIKI_E2E_PART", ""))
+    if part:
+        if part not in PARTS:
+            print(f"no such part {part!r}: one of {', '.join(sorted(PARTS))}")
+            return 2
+        wanted = wanted or PARTS[part]
+    wanted = wanted or FLOWS
     home = os.environ["HOME_FIXTURE"]
     os.makedirs(out_dir, exist_ok=True)
 

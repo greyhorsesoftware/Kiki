@@ -315,6 +315,8 @@ impl Listing {
             self.git_status();
         }
         self.repo_rows(None);
+        // Too much changed to say what by name: the index re-lists the folder once, as this did.
+        crate::index::patch_dir(&self.path);
     }
 
     /// In-place patch from inotify (plan 01): added names are appended and stated, removed names
@@ -332,6 +334,8 @@ impl Listing {
             }
         }
         let mut to_stat = Vec::new();
+        // What the index is told: the names that really arrived, with the kind the stat found.
+        let mut arrived: Vec<(Vec<u8>, crate::vfs::EntryType)> = Vec::new();
         for name in added {
             if inner.pool.find(name).is_some() {
                 continue;
@@ -340,6 +344,7 @@ impl Listing {
                 Ok((_, t)) => t,
                 Err(_) => continue, // vanished again
             };
+            arrived.push((name.clone(), kind));
             let idx = inner.pool.push(name, kind);
             added_idx.push(idx);
             inner.meta.push(None);
@@ -433,6 +438,8 @@ impl Listing {
         if !added.is_empty() {
             self.repo_rows(Some(added.to_vec()));
         }
-        crate::index::patch_dir(&self.path);
+        // And Search everywhere knows it the moment the window does: the names, not a re-list
+        // (docs/0.5.0/06-index-live.md).
+        crate::index::patch_names(&self.path, &arrived, removed);
     }
 }

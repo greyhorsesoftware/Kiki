@@ -103,7 +103,7 @@ Semantics: `Window` is answered immediately with whatever is known; missing `met
 | Request | Fields | Reply |
 |---|---|---|
 | `Search` | `lid`, `scope: "everywhere" \| "location"`, `uri` (for `location`), `query`, `mode: "substring" \| "prefix" \| "fuzzy"` | `{ n, capped: bool, indexAge: u64 }`; results are a listing under `lid` (rows carry `parent: Uri`), followed by `Count`/`Reset` |
-| `IndexStatus` | | `{ entries, dirs, roots: [Uri], builtAt: u64, refreshing: bool }` |
+| `IndexStatus` | | `{ entries, bytes, roots: [Uri], builtAt: u64, refreshing: bool, live: u64 }` — `live` is what watched folders have put in since the last refresh or build (0.5.0: the index keeps up with what is on screen) |
 | `IndexRebuild` | | `{}` |
 | `IndexRoots` | | `{ roots: [Uri] }` |
 | `SetIndexRoots` | `roots` | `{}` |

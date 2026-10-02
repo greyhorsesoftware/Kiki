@@ -52,7 +52,7 @@ fn open_window_and_stats() {
     assert!(!cached);
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 7, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 7, tx: tx.into(), first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     let w = l.window(1, 7, 0, 10, None);
     assert_eq!(w.u64_field("n"), Some(51));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
@@ -81,7 +81,7 @@ fn open_window_and_stats() {
     assert_eq!(l.filter(""), 51);
     // sort by size descending waits for enrichment then resets
     let (tx2, rx2) = mpsc::channel();
-    l.sort(SortRole::Size, false, Some((tx2, 99)));
+    l.sort(SortRole::Size, false, Some((tx2.into(), 99)));
     let reply = rx2.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(reply.u64_field("id"), Some(99));
     let w = l.window(1, 7, 0, 3, None);
@@ -98,7 +98,7 @@ fn rescan_keeps_meta_for_unchanged() {
     let (l, _) = open(&uri).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 2, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
+    l.subscribe(Subscriber { client: 2, lid: 1, tx: tx.into(), first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     l.enrich(None);
     let deadline = Instant::now() + Duration::from_secs(5);
     while l.inner.lock().unwrap().meta.iter().any(Option::is_none) {
@@ -192,11 +192,11 @@ fn the_view_sorts_filters_and_seeks() {
     assert_eq!(l.filter("txt"), 2);
     assert_eq!(names(&l), vec!["apple.txt", "cherry.txt"]);
     let (tx, rx) = mpsc::channel();
-    l.sort(SortRole::Size, false, Some((tx, 5)));
+    l.sort(SortRole::Size, false, Some((tx.into(), 5)));
     let _ = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(names(&l), vec!["apple.txt", "cherry.txt"], "300 bytes before 100");
     let (tx, rx) = mpsc::channel();
-    l.sort(SortRole::Size, true, Some((tx, 6)));
+    l.sort(SortRole::Size, true, Some((tx.into(), 6)));
     let _ = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(names(&l), vec!["cherry.txt", "apple.txt"]);
 
@@ -206,7 +206,7 @@ fn the_view_sorts_filters_and_seeks() {
 
     // Sorting by kind groups the two text files together.
     let (tx, rx) = mpsc::channel();
-    l.sort(SortRole::Kind, true, Some((tx, 7)));
+    l.sort(SortRole::Kind, true, Some((tx.into(), 7)));
     let _ = rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let k = names(&l);
     assert_eq!(k[0], "Zed");
@@ -237,7 +237,7 @@ fn the_view_sorts_by_access_time() {
     let names = |l: &Arc<Listing>| -> Vec<String> { l.window(1, 1, 0, 50, None).get("rows").unwrap().as_arr().unwrap().iter().map(|r| r.str_field("name").unwrap_or("").to_string()).collect() };
     let sorted = |l: &Arc<Listing>, role: SortRole, asc: bool| {
         let (tx, rx) = mpsc::channel();
-        l.sort(role, asc, Some((tx, 1)));
+        l.sort(role, asc, Some((tx.into(), 1)));
         rx.recv_timeout(Duration::from_secs(5)).expect("the sort is answered once every row has metadata");
         names(l)
     };
@@ -292,7 +292,7 @@ fn windows_are_clamped_not_refused() {
 
     // A subscriber that leaves stops being sent to.
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 9, lid: 3, tx, first: 0, count: 5, view_first: 0, view_count: 5, initial: 0 });
+    l.subscribe(Subscriber { client: 9, lid: 3, tx: tx.into(), first: 0, count: 5, view_first: 0, view_count: 5, initial: 0 });
     l.unsubscribe(9, 3);
     l.filter("file1");
     assert!(drain(&rx).is_empty(), "no events after unsubscribing");
@@ -360,7 +360,7 @@ fn a_row_skipped_by_its_stat_job_can_still_be_enriched() {
         assert!(rows.iter().all(|&i| !inner.queued[i as usize]), "skipped means no longer queued");
     }
     let (tx, rx) = mpsc::channel();
-    l.sort(SortRole::Size, false, Some((tx, 9)));
+    l.sort(SortRole::Size, false, Some((tx.into(), 9)));
     assert!(rx.recv_timeout(Duration::from_secs(20)).is_ok(), "the sort is answered once everything is enriched");
     assert!(l.inner.lock().unwrap().meta.iter().all(Option::is_some));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -425,7 +425,7 @@ fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
     l.rescan();
     // Somebody has to be looking at the row, or the job is dropped before it is ever started.
     let (tx, _rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 100, view_first: 0, view_count: 100, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 100, view_first: 0, view_count: 100, initial: 0 });
     // Not a picture, so the job fails and records "none" — which is all this needs: where it lands.
     l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(old_idx, crate::kinds::Kind::Image, 1, "file7.txt");
@@ -453,7 +453,7 @@ fn a_small_change_is_spliced_not_reset() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 3, lid: 9, tx, first: 0, count: 50, view_first: 0, view_count: 50, initial: 0 });
+    l.subscribe(Subscriber { client: 3, lid: 9, tx: tx.into(), first: 0, count: 50, view_first: 0, view_count: 50, initial: 0 });
     let before = l.window(3, 9, 0, 50, None).u64_field("gen").unwrap();
     let _ = drain(&rx);
 
@@ -506,7 +506,7 @@ fn a_thumbnail_nobody_is_looking_at_any_more_is_dropped_unstarted() {
 
     // A window that does not reach this row — the scroll has gone past it.
     let (tx, _rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 2, view_first: 0, view_count: 2, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 2, view_first: 0, view_count: 2, initial: 0 });
     l.inner.lock().unwrap().deco.set_thumb(b"file7.txt", deco::Thumb::Asked);
     l.submit_thumb(idx, crate::kinds::Kind::Image, 1, "file7.txt");
 
@@ -687,7 +687,7 @@ fn pushing_a_row_that_a_rescan_has_taken_away_is_not_a_crash() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 10, view_first: 0, view_count: 10, initial: 0 });
     l.push_rows(&[0, 9999, 1]);
     // The rows that are still there are sent; the one that is not is passed over.
     let sent: Vec<Value> = drain(&rx).into_iter().filter(|e| e.str_field("event") == Some("Rows")).collect();
@@ -825,7 +825,7 @@ fn the_scan_ends_with_the_first_screenful_on_its_reset_stated() {
     // added after it has ended is told nothing — which is the race this test must not have.
     let l = stub_listing(StubDir { n: 30, stat_ms: 0, fails: false });
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
     let l2 = Arc::clone(&l);
     thread::spawn(move || l2.scan()).join().unwrap();
     let r = reset_from(&rx);
@@ -843,7 +843,7 @@ fn a_window_once_asked_is_what_a_later_reset_carries() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
     let _ = l.window(1, 1, 20, 5, None);
     let _ = drain(&rx);
     l.sort(SortRole::Name, false, None);
@@ -864,7 +864,7 @@ fn a_subscriber_that_wants_nothing_unasked_gets_a_bare_reset() {
     let (l, _) = open(&Uri::from_path(&dir)).unwrap();
     assert!(wait_scan(&l, Duration::from_secs(5)));
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 0 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 0 });
     l.sort(SortRole::Kind, true, None);
     let r = reset_from(&rx);
     assert!(r.get("rows").is_none() && r.get("first").is_none(), "{r:?}");
@@ -875,7 +875,7 @@ fn a_subscriber_that_wants_nothing_unasked_gets_a_bare_reset() {
 fn an_empty_folder_says_so_with_an_empty_list() {
     let l = stub_listing(StubDir { n: 0, stat_ms: 0, fails: false });
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 10 });
     let l2 = Arc::clone(&l);
     thread::spawn(move || l2.scan()).join().unwrap();
     let r = reset_from(&rx);
@@ -887,7 +887,7 @@ fn an_empty_folder_says_so_with_an_empty_list() {
 fn a_sort_asked_during_the_scan_is_noted_and_not_announced() {
     let l = stub_listing(StubDir { n: 20, stat_ms: 0, fails: false });
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
     // The order the window states on every open, before the scan has run: no `Reset` for it.
     assert_eq!(l.sort(SortRole::Name, true, None), 0);
     assert!(drain(&rx).is_empty(), "a sort of a folder still listing says nothing");
@@ -902,7 +902,7 @@ fn a_sort_asked_during_the_scan_is_noted_and_not_announced() {
 fn a_scan_that_failed_carries_no_rows() {
     let l = stub_listing(StubDir { n: 0, stat_ms: 0, fails: true });
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 5 });
     let l2 = Arc::clone(&l);
     thread::spawn(move || l2.scan()).join().unwrap();
     let r = reset_from(&rx);
@@ -917,7 +917,7 @@ fn a_scan_that_failed_carries_no_rows() {
 fn the_stat_before_the_reset_gives_up_within_its_bound() {
     let l = stub_listing(StubDir { n: 60, stat_ms: 4, fails: false });
     let (tx, rx) = mpsc::channel();
-    l.subscribe(Subscriber { client: 1, lid: 1, tx, first: 0, count: 0, view_first: 0, view_count: 0, initial: 60 });
+    l.subscribe(Subscriber { client: 1, lid: 1, tx: tx.into(), first: 0, count: 0, view_first: 0, view_count: 0, initial: 60 });
     let started = Instant::now();
     let l2 = Arc::clone(&l);
     thread::spawn(move || l2.scan()).join().unwrap();

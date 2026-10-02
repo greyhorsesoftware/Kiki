@@ -206,6 +206,33 @@ mod tests {
         assert!(r.next().unwrap().is_none());
     }
 
+    /// The size bounds are checked on the prefix, before a byte of payload is read or a
+    /// buffer sized for it: a peer that announces a frame one byte over the limit — five
+    /// bytes to send — is refused with the bound's own words and nothing allocated. The text
+    /// framing has the same line: a line that has grown past the bound with no newline in it
+    /// is refused rather than grown further (docs/0.5.0/03-fuzz-json.md).
+    #[test]
+    fn a_frame_one_byte_over_its_bound_is_refused_on_the_prefix() {
+        for (kind, limit) in [(0u8, MAX_JSON_FRAME), (1u8, MAX_BINARY_FRAME)] {
+            let mut src = ((limit + 1) as u32).to_le_bytes().to_vec();
+            src.push(kind);
+            src.extend_from_slice(b"{}"); // far short of what was announced: never asked for
+            let mut r = Reader::new(&src[..]);
+            let e = r.next().expect_err("over the bound");
+            assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(e.to_string(), "frame too large");
+            // Exactly the bound is still a frame — truncated here, which is a different word.
+            let mut src = (limit as u32).to_le_bytes().to_vec();
+            src.push(kind);
+            src.extend_from_slice(b"{}");
+            let e = Reader::new(&src[..]).next().expect_err("announced more than was sent");
+            assert_eq!(e.kind(), io::ErrorKind::UnexpectedEof);
+        }
+        let long = vec![b'{'; MAX_JSON_FRAME + 1];
+        let e = Reader::new(&long[..]).next().expect_err("a line past the bound with no end");
+        assert_eq!(e.to_string(), "line too long");
+    }
+
     #[test]
     fn text_round_trip() {
         let src = b"{\"id\":1,\"type\":\"Ping\"}\n\n{\"id\":2,\"type\":\"Version\"}\n";

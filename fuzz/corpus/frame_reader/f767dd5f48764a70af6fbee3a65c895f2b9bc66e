@@ -1,0 +1,1 @@
+{"id":3,"type":"AddLocation","name":"ab","plugin":"sftp","remoteUri":"sftpsp","lteUri":"sfp","typlocalUri":"","config":{"host":"253.0%.0.1","ort":"22"}}

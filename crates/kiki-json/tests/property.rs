@@ -138,22 +138,28 @@ fn settles(v: &Value, from: &str) {
     panic!("{from:?} never settles: {text}");
 }
 
-/// The three values the writer deliberately does not keep the type of. They are here so that
-/// changing any of them is a decision somebody makes, not a round trip that quietly stops holding.
+/// What the writer does not keep the type of — one thing, since 2026-10-02: a non-negative
+/// `Int`. It is digits on the wire, and digits read back as `Uint`, which is inherent to having
+/// the two types at all and harmless, since the parser never makes a non-negative `Int` and
+/// every reader in kiki takes a number however it is spelled (`bench::as_f64`,
+/// `mirror::Spec::from_json`). The other two this test used to pin — a whole-valued float
+/// written without its point, and negative zero taking two trips to settle — were the fuzzer's
+/// first finds (docs/0.5.0/03-fuzz-json.md) and are kept now: the round-trip invariant the
+/// fuzz target asserts is the stronger promise, and nothing depended on the weaker one. It is
+/// here so that changing it again is a decision somebody makes, not a round trip that quietly
+/// stops holding.
 #[test]
 fn what_the_writer_does_not_promise_to_keep() {
-    // A non-negative `Int` is digits on the wire, and digits read back as `Uint`.
     assert_eq!(parse(to_string(&Value::Int(5)).as_bytes()).unwrap(), Value::Uint(5));
     assert_eq!(parse(to_string(&Value::Int(-5)).as_bytes()).unwrap(), Value::Int(-5), "a negative one keeps its type");
-    // A float that happens to be whole is written without a point, and reads back as an integer.
-    assert_eq!(parse(to_string(&Value::Float(3.0)).as_bytes()).unwrap(), Value::Uint(3));
+    // A float that happens to be whole keeps its point, and reads back as the float it was.
+    assert_eq!(parse(to_string(&Value::Float(3.0)).as_bytes()).unwrap(), Value::Float(3.0));
     assert_eq!(parse(to_string(&Value::Float(3.5)).as_bytes()).unwrap(), Value::Float(3.5));
-    // Negative zero is the one that takes two trips to settle; every reader in kiki takes a
-    // number however it is spelled (`bench::as_f64`, `mirror::Spec::from_json`).
-    assert_eq!(parse(to_string(&Value::Float(-0.0)).as_bytes()).unwrap(), Value::Int(0));
+    // Negative zero is written `-0.0`, which reads back as itself in one trip.
+    assert_eq!(to_string(&Value::Float(-0.0)), "-0.0");
     settles(&Value::Float(-0.0), "-0.0");
     // JSON has no NaN and no infinity: they go out as null rather than as something no reader
-    // on the other end could take.
+    // on the other end could take — and the parser makes neither, refusing `1e400` outright.
     for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(to_string(&Value::Float(x)), "null");
     }

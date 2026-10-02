@@ -284,9 +284,30 @@ fn main() {
                 }
                 ok(id, Value::obj().done())
             }
+            // A plugin that will not leave when asked, for the test of what the host does then
+            // (`KIKI_STUB_IGNORE_SHUTDOWN=1`): the word is read and nothing is done about it.
+            "Shutdown" if std::env::var("KIKI_STUB_IGNORE_SHUTDOWN").as_deref() == Ok("1") => continue,
             "Shutdown" => {
                 send(&out, &ok(id, Value::obj().done()));
                 return;
+            }
+            // A request that never ends but is never idle either, for the test of the host's
+            // ceiling (`KIKI_STUB_DRIP_MS=<ms>`): a Scan that sends an empty chunk every so many
+            // milliseconds from a thread of its own, for ever, until it is cancelled.
+            "Scan" if std::env::var("KIKI_STUB_DRIP_MS").is_ok() => {
+                let ms: u64 = std::env::var("KIKI_STUB_DRIP_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(100);
+                let (out, scanning) = (Arc::clone(&out), Arc::clone(&scanning));
+                let flag = Arc::new(AtomicBool::new(false));
+                scanning.lock().unwrap().insert(id, Arc::clone(&flag));
+                std::thread::spawn(move || {
+                    while !flag.load(Ordering::Relaxed) {
+                        send(&out, &Value::obj().u("id", id).v("entries", Value::Arr(Vec::new())).done());
+                        std::thread::sleep(std::time::Duration::from_millis(ms));
+                    }
+                    scanning.lock().unwrap().remove(&id);
+                    send(&out, &err(id, "Cancelled", "cancelled"));
+                });
+                continue;
             }
             // A tree too big to answer in one breath, for the tests that cancel a compare:
             // `KIKI_STUB_BIG_SCAN=<entries>` makes a recursive Scan stream that many synthetic

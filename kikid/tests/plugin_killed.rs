@@ -57,7 +57,7 @@ fn a_plugin_killed_mid_read_fails_the_job_and_the_next_request_gets_a_new_one() 
     assert!(doomed.alive());
 
     let (tx, _rx) = mpsc::channel();
-    let id = jobs::submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str("stub://lab/slow.bin".into())])).s("dest", Uri::from_path(&dst).to_string()).done(), Some(tx)).unwrap();
+    let id = jobs::submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str("stub://lab/slow.bin".into())])).s("dest", Uri::from_path(&dst).to_string()).done(), Some(tx.into())).unwrap();
 
     // Bytes are landing in the part file: the `Read` is in flight, and some of it has arrived.
     let part = dst.join("slow.bin.kiki-part");

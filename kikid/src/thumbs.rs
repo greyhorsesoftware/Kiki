@@ -62,15 +62,19 @@ pub fn lookup(uri: &Uri, size: Size, mtime_ms: u64) -> Option<PathBuf> {
     Some(p)
 }
 
-/// How long a failure stands before the file is tried again. A marker used to stand for ever
-/// (while the file's mtime was unchanged), and the decoders cannot tell a bad file from a bad
-/// moment — ffmpeg or pdftoppm not answering under load, a decode starved of memory — so one
-/// bad hour marked hundreds of good files as never-to-be-thumbnailed: 892 markers on one day
-/// on the owner's machine, and "the gallery sometimes loses its thumbnails" (2026-09-28). A day
-/// is long enough that a truly bad file is not retried on every scroll, and short enough that
-/// a photograph is back tomorrow. `KIKI_THUMB_FAIL_TTL_S` for the tests.
+/// How long a fail marker stands. A marker used to stand for ever: a thumbnail that failed
+/// once was never tried again (while the file's mtime was unchanged), and the decoders cannot
+/// tell a bad file from a bad moment — ffmpeg or pdftoppm not answering under load, a decode
+/// starved of memory — so one bad hour marked hundreds of good files as never-to-be-thumbnailed:
+/// 892 markers on one day on the owner's machine, and "the gallery sometimes loses its
+/// thumbnails" (2026-09-28). A day is long enough that a truly bad file is not retried on every
+/// scroll, and short enough that a photograph is back tomorrow — and it is the user's to
+/// change: `thumbnails.retryAfterS` in `settings.toml` (owner, 2026-09-28: "why a day?"; plan
+/// 0.5.0/09), read on every look so an edit needs no restart. `KIKI_THUMB_FAIL_TTL_S` outranks
+/// it, for the tests.
 fn fail_ttl() -> std::time::Duration {
-    std::time::Duration::from_secs(std::env::var("KIKI_THUMB_FAIL_TTL_S").ok().and_then(|v| v.parse().ok()).unwrap_or(24 * 60 * 60))
+    let secs = std::env::var("KIKI_THUMB_FAIL_TTL_S").ok().and_then(|v| v.parse().ok()).or_else(|| crate::config::settings().get("thumbnails").and_then(|t| t.u64_field("retryAfterS"))).unwrap_or(24 * 60 * 60);
+    std::time::Duration::from_secs(secs)
 }
 
 /// Whether a recent failure stands for this file: the marker names the same mtime and is
@@ -243,6 +247,26 @@ mod tests {
         assert!(!failed(&uri, 7000), "an old marker is not a verdict");
         std::env::remove_var("KIKI_THUMB_FAIL_TTL_S");
         std::env::remove_var("KIKI_THUMB_DIR");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// The length is the user's: `thumbnails.retryAfterS` in settings.toml, read without a
+    /// restart, and the environment outranks it only for the tests.
+    #[test]
+    fn the_marker_s_length_is_a_setting() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("kiki-thumb-ttl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("config")).unwrap();
+        std::env::set_var("KIKI_CONFIG_DIR", d.join("config"));
+        std::env::remove_var("KIKI_THUMB_FAIL_TTL_S");
+        assert_eq!(fail_ttl().as_secs(), 24 * 60 * 60, "a day, unless told otherwise");
+        fs::write(d.join("config/settings.toml"), "[thumbnails]\nretryAfterS = 600\n").unwrap();
+        assert_eq!(fail_ttl().as_secs(), 600, "the setting, read on every look");
+        std::env::set_var("KIKI_THUMB_FAIL_TTL_S", "5");
+        assert_eq!(fail_ttl().as_secs(), 5, "the environment outranks it");
+        std::env::remove_var("KIKI_THUMB_FAIL_TTL_S");
+        std::env::remove_var("KIKI_CONFIG_DIR");
         let _ = fs::remove_dir_all(&d);
     }
 

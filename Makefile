@@ -11,7 +11,7 @@ CARGO ?= cargo
 QS ?= qs
 ROOT := $(shell pwd)
 
-.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history open-perf memory-floor coverage run daemon shell dev-clean fmt lint clean
+.PHONY: all build test clippy test-rust test-qml test-e2e scroll-perf scroll-history open-perf memory-floor fuzz coverage run daemon shell dev-clean fmt lint clean
 
 all: build
 
@@ -61,6 +61,13 @@ scroll-perf: build
 
 scroll-history:
 	@tests/e2e/scroll_history.py
+
+## The JSON reader and the frame reader under libFuzzer for a minute each (docs/0.5.0/03-fuzz-json.md).
+## Nightly and cargo-fuzz: `rustup toolchain install nightly && cargo install cargo-fuzz`. A crash
+## is written under fuzz/artifacts/; `cargo +nightly fuzz tmin <target> <artifact>` shrinks it.
+fuzz:
+	cd fuzz && $(CARGO) +nightly fuzz run json_reader -- -max_total_time=60 -max_len=65536
+	cd fuzz && $(CARGO) +nightly fuzz run frame_reader -- -max_total_time=60 -max_len=65536
 
 # Opening a folder, timed (docs/0.5.0/10-faster-listings.md); records to bench/open-history.jsonl.
 open-perf: build

@@ -10,3 +10,8 @@ WindowCache 1.0 WindowCache.qml
 Selection 1.0 Selection.qml
 Pane 1.0 Pane.qml
 Shell 1.0 Shell.qml
+ShellIpc 1.0 ShellIpc.qml
+ShellKeys 1.0 ShellKeys.qml
+ShellMenus 1.0 ShellMenus.qml
+ShellDrag 1.0 ShellDrag.qml
+ShellChooser 1.0 ShellChooser.qml

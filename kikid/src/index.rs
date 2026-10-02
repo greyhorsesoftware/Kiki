@@ -7,8 +7,9 @@ use crate::string_pool::sort_key;
 use crate::vfs::uri::Uri;
 use crate::vfs::EntryType;
 use std::collections::HashMap;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
@@ -188,7 +189,6 @@ impl Index {
         }
         let mut p = PathBuf::new();
         for part in parts.iter().rev() {
-            use std::os::unix::ffi::OsStrExt;
             p.push(std::ffi::OsStr::from_bytes(part));
         }
         p
@@ -215,7 +215,6 @@ pub fn default_excludes() -> Vec<String> {
 
 pub fn build(roots: &[PathBuf], excludes: &[String], cancel: &AtomicBool) -> Index {
     let mut ix = Index { roots: roots.to_vec(), built_at: crate::ops::unix_now(), ..Default::default() };
-    use std::os::unix::ffi::OsStrExt;
     for root in roots {
         let ri = ix.push(root.as_os_str().as_bytes(), Kind::Folder, 0, true);
         let mut stack: Vec<(u32, PathBuf)> = vec![(ri, root.clone())];
@@ -234,7 +233,6 @@ pub fn build(roots: &[PathBuf], excludes: &[String], cancel: &AtomicBool) -> Ind
 impl Index {
     /// Appends the children of `dir` under `parent`; returns the subdirectories (entry, path).
     fn list_dir(&mut self, parent: u32, dir: &Path, excludes: &[String]) -> Vec<(u32, PathBuf)> {
-        use std::os::unix::ffi::OsStrExt;
         let mut subdirs = Vec::new();
         let Ok(rd) = std::fs::read_dir(dir) else { return subdirs };
         if let Ok(md) = std::fs::symlink_metadata(dir) {
@@ -276,7 +274,6 @@ impl Index {
         let rel = path.strip_prefix(root).ok()?;
         let mut cur = root_entry;
         for comp in rel.components() {
-            use std::os::unix::ffi::OsStrExt;
             let want = comp.as_os_str().as_bytes();
             cur = (0..self.len() as u32).find(|&i| !self.removed[i as usize] && !self.is_root[i as usize] && self.parents[i as usize] == cur && self.name(i) == want)?;
         }
@@ -292,16 +289,7 @@ impl Index {
         let old: Vec<u32> = self.children(dir_entry);
         let old_names: std::collections::HashSet<Vec<u8>> = old.iter().map(|&i| self.name(i).to_vec()).collect();
         // Remove children that no longer exist; keep the rest (and their subtrees).
-        let present: std::collections::HashSet<Vec<u8>> = std::fs::read_dir(dir)
-            .map(|rd| {
-                rd.flatten()
-                    .map(|e| {
-                        use std::os::unix::ffi::OsStrExt;
-                        e.file_name().as_bytes().to_vec()
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let present: std::collections::HashSet<Vec<u8>> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.file_name().as_bytes().to_vec()).collect()).unwrap_or_default();
         for &i in &old {
             if !present.contains(self.name(i)) {
                 self.remove_subtree(i);
@@ -311,7 +299,6 @@ impl Index {
         let Ok(rd) = std::fs::read_dir(dir) else { return };
         let mut stack = Vec::new();
         for e in rd.flatten() {
-            use std::os::unix::ffi::OsStrExt;
             let nb = e.file_name().as_bytes().to_vec();
             if old_names.contains(&nb) || excludes.iter().any(|x| x.as_bytes() == nb.as_slice()) {
                 continue;
@@ -456,11 +443,22 @@ struct Service {
     index: RwLock<Index>,
     building: AtomicBool,
     last_refresh: Mutex<Instant>,
+    /// Entries a watched folder put in since the last refresh or build (`IndexStatus.live`).
+    live: AtomicU64,
+    patches: AtomicU64,
+    relists: AtomicU64,
 }
 
 fn service() -> &'static Service {
     static S: OnceLock<Service> = OnceLock::new();
-    S.get_or_init(|| Service { index: RwLock::new(Index::default()), building: AtomicBool::new(false), last_refresh: Mutex::new(Instant::now()) })
+    S.get_or_init(|| Service {
+        index: RwLock::new(Index::default()),
+        building: AtomicBool::new(false),
+        last_refresh: Mutex::new(Instant::now()),
+        live: AtomicU64::new(0),
+        patches: AtomicU64::new(0),
+        relists: AtomicU64::new(0),
+    })
 }
 
 /// Runs `f` against the current index under a read lock.
@@ -468,7 +466,8 @@ pub fn with_index<R>(f: impl FnOnce(&Index) -> R) -> R {
     f(&service().index.read().unwrap())
 }
 
-/// A watched directory changed (plan 12): re-list just that directory in the index.
+/// A watched directory changed too much to say how (a rescan): re-list just that directory in
+/// the index — one `read_dir` and a diff by name, whatever the number of events.
 pub fn patch_dir(dir: &Path) {
     let mut ix = service().index.write().unwrap();
     if ix.is_empty() {
@@ -477,39 +476,128 @@ pub fn patch_dir(dir: &Path) {
     let Some(entry) = ix.find_dir(dir) else { return };
     let ex = excludes();
     ix.relist(entry, dir, &ex);
+    service().relists.fetch_add(1, Ordering::Relaxed);
 }
 
-/// The periodic walk: stat every indexed directory and re-list those whose mtime changed.
+/// What a watched folder's patch found, handed on so Search everywhere knows it the moment the
+/// window does (docs/0.5.0/06-index-live.md): `added` are appended under the folder's entry —
+/// the listing has already stat'ed each, so the kind comes with the name — and `removed` are
+/// tombstoned with their subtrees. A folder that arrives is listed one level, its own
+/// subfolders put down as known-but-stale (mtime nought) for the refresh to walk: a tree moved
+/// in is not crawled on the watcher's thread. A folder the index does not have — outside the
+/// roots, or excluded — is nothing to it. One lookup per batch, not per name: the watcher has
+/// already coalesced fifty milliseconds of events into the one call.
+pub fn patch_names(dir: &Path, added: &[(Vec<u8>, EntryType)], removed: &[Vec<u8>]) {
+    if added.is_empty() && removed.is_empty() {
+        return;
+    }
+    let s = service();
+    let mut ix = s.index.write().unwrap();
+    if ix.is_empty() {
+        return;
+    }
+    let Some(entry) = ix.find_dir(dir) else { return };
+    let ex = excludes();
+    let mut live: HashMap<Vec<u8>, u32> = ix.children(entry).into_iter().map(|i| (ix.name(i).to_vec(), i)).collect();
+    for name in removed {
+        if let Some(i) = live.remove(name) {
+            ix.remove_subtree(i);
+        }
+    }
+    let mut pushed = 0u64;
+    for (name, t) in added {
+        if live.contains_key(name) || ex.iter().any(|x| x.as_bytes() == name.as_slice()) {
+            continue;
+        }
+        let i = ix.push(name, Kind::guess(*t, name), entry, false);
+        live.insert(name.clone(), i);
+        pushed += 1;
+        if *t == EntryType::Dir {
+            let sub = dir.join(std::ffi::OsStr::from_bytes(name));
+            for (child, _) in ix.list_dir(i, &sub, &ex) {
+                ix.dir_mtime.insert(child, 0);
+            }
+            pushed += ix.children(i).len() as u64;
+        }
+    }
+    if let Some(mt) = dir_mtime_of(dir) {
+        ix.dir_mtime.insert(entry, mt);
+    }
+    s.live.fetch_add(pushed, Ordering::Relaxed);
+    s.patches.fetch_add(1, Ordering::Relaxed);
+}
+
+fn dir_mtime_of(dir: &Path) -> Option<u64> {
+    let md = std::fs::symlink_metadata(dir).ok()?;
+    Some(md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0))
+}
+
+impl Index {
+    /// The directories whose mtime has moved since they were listed: one `stat` each, nothing
+    /// read. A folder's mtime changes on any name added, removed or renamed in it, and not
+    /// otherwise, so this is the whole of what a refresh has to look at.
+    pub fn stale_dirs(&self) -> Vec<(u32, PathBuf)> {
+        let mut changed = Vec::new();
+        for (&e, &mt) in &self.dir_mtime {
+            if self.removed[e as usize] {
+                continue;
+            }
+            let p = self.path(e);
+            if let Some(now) = dir_mtime_of(&p) {
+                if now != mt {
+                    changed.push((e, p));
+                }
+            }
+        }
+        changed
+    }
+
+    /// Re-lists what `stale_dirs` found.
+    pub fn relist_dirs(&mut self, changed: Vec<(u32, PathBuf)>, excludes: &[String]) {
+        for (e, p) in changed {
+            if (e as usize) < self.len() && !self.removed[e as usize] {
+                self.relist(e, &p, excludes);
+            }
+        }
+    }
+
+    /// The refresh, on one index: the stat pass and the re-listing of what moved. The service
+    /// does the two halves under different locks (`refresh_walk`); the bench does them here.
+    pub fn refresh(&mut self, excludes: &[String]) -> usize {
+        let changed = self.stale_dirs();
+        let n = changed.len();
+        self.relist_dirs(changed, excludes);
+        n
+    }
+}
+
+/// The periodic walk: stat every indexed directory and re-list those whose mtime changed. The
+/// stats run under the read lock, so a search goes on being answered while two thousand
+/// folders are asked the time; the write lock is taken only for what moved.
 pub fn refresh_walk() {
     let s = service();
     if s.building.swap(true, Ordering::AcqRel) {
         return;
     }
     let ex = excludes();
-    let dirs: Vec<(u32, PathBuf, u64)> = {
-        let ix = s.index.read().unwrap();
-        ix.dir_mtime.iter().map(|(&e, &mt)| (e, ix.path(e), mt)).collect()
-    };
-    let mut changed = Vec::new();
-    for (e, p, mt) in dirs {
-        if let Ok(md) = std::fs::symlink_metadata(&p) {
-            let now = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0);
-            if now != mt {
-                changed.push((e, p));
-            }
-        }
-    }
+    let changed = s.index.read().unwrap().stale_dirs();
     if !changed.is_empty() {
-        let mut ix = s.index.write().unwrap();
-        for (e, p) in changed {
-            if (e as usize) < ix.len() && !ix.removed[e as usize] {
-                ix.relist(e, &p, &ex);
-            }
-        }
+        let n = changed.len() as u64;
+        s.index.write().unwrap().relist_dirs(changed, &ex);
+        s.relists.fetch_add(n, Ordering::Relaxed);
     }
     let _ = s.index.read().unwrap().save(&index_path());
     *s.last_refresh.lock().unwrap() = Instant::now();
+    s.live.store(0, Ordering::Relaxed);
     s.building.store(false, Ordering::Release);
+}
+
+/// How many times the index was patched by name (one per watcher batch) and re-listed a folder
+/// (a rescan, or a refresh that found it moved) since the daemon started. For tests of the
+/// bound on the work a burst costs; nothing else reads them.
+pub fn work() -> (u64, u64) {
+    let s = service();
+    (s.patches.load(Ordering::Relaxed), s.relists.load(Ordering::Relaxed))
 }
 
 /// Startup (plan 12): load the saved index when its roots still match, then bring it up to date
@@ -568,6 +656,7 @@ pub fn rebuild_async() {
             let _ = ix.save(&index_path());
             *service().index.write().unwrap() = ix;
             *service().last_refresh.lock().unwrap() = Instant::now();
+            service().live.store(0, Ordering::Relaxed);
             service().building.store(false, Ordering::Release);
         })
         .expect("spawn index");
@@ -593,6 +682,7 @@ pub fn status_json() -> Value {
         .v("roots", Value::Arr(ix.roots.iter().map(|r| Value::Str(Uri::from_path(r).to_string())).collect()))
         .u("builtAt", ix.built_at)
         .b("refreshing", service().building.load(Ordering::Relaxed))
+        .u("live", service().live.load(Ordering::Relaxed))
         .done()
 }
 

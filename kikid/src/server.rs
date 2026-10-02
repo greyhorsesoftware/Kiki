@@ -12,15 +12,205 @@ use crate::listing::Listing;
 use crate::proto::{self, Frame, Framing, Reader, Request};
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
-use std::sync::Arc;
+use std::sync::mpsc::{SendError, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 static NEXT_CLIENT: AtomicU64 = AtomicU64::new(1);
+
+// ---------------------------------------------------------------- the way out to a client
+
+/// How many frames a connection may have waiting to be written before the daemon stops keeping
+/// them. A window reads its socket every frame; this is minutes of events for one that has
+/// stopped (docs/0.5.0/02-daemon-bounds.md).
+pub const QUEUE_BOUND: usize = 4096;
+/// How long a frame that must arrive waits for room before the connection is given up on.
+const ROOM_WAIT: Duration = Duration::from_secs(1);
+
+/// What everything in the daemon holds on a connection to write by — a listing's subscriber, a
+/// job's owner, a handler answering late. It looks like the `Sender` it replaced and is sent to
+/// the same way, and inside it is the bound the audit found missing: a client that stops
+/// reading used to grow the heap with every event the daemon produced, for as long as the
+/// socket stayed open. Now the queue holds `QUEUE_BOUND` frames. When it is full, a frame a
+/// later one supersedes — a job's progress, a scan's growing count, an enrich's tally — pushes
+/// the oldest such frame out and is counted; a frame that must arrive — a reply, a job's end,
+/// a `Reset`, rows — waits a second for room and, finding none, closes the connection: a
+/// window that far behind has to come back anyway, and coming back resubscribes
+/// (`Daemon.qml`, `reconnected`). The count of what was dropped is said once, when the
+/// connection ends.
+#[derive(Clone)]
+pub struct ClientTx(Arc<TxInner>);
+
+enum TxInner {
+    /// A connection: the queue its writer thread drains, and the stream to shut when the queue
+    /// has nowhere to put something that must arrive.
+    Socket { id: u64, q: Mutex<Queue>, cv: Condvar, stream: UnixStream },
+    /// A test's or the bench's channel: everything through, nothing bounded.
+    Plain(Sender<Value>),
+}
+
+struct Queue {
+    items: VecDeque<Value>,
+    /// No more is taken; the writer drains what is here and shuts the stream.
+    closed: bool,
+    dropped: u64,
+}
+
+/// A frame a later frame of the same kind replaces, so losing it loses nothing.
+fn superseded(v: &Value) -> bool {
+    match v.str_field("event") {
+        Some("Progress") => true,
+        Some("Count") => v.get("done").and_then(Value::as_bool) != Some(true),
+        Some("JobEvent") => matches!(v.get("job").and_then(|j| j.str_field("state")), Some("running") | Some("queued")),
+        _ => false,
+    }
+}
+
+impl From<Sender<Value>> for ClientTx {
+    fn from(tx: Sender<Value>) -> ClientTx {
+        ClientTx(Arc::new(TxInner::Plain(tx)))
+    }
+}
+
+impl ClientTx {
+    /// A connection's: the writer thread is started here and ends when the queue is closed and
+    /// drained, or the stream will not take what it has.
+    pub(crate) fn socket(id: u64, stream: UnixStream, framing: Framing) -> ClientTx {
+        let writer = stream.try_clone().expect("clone for the writer");
+        let tx = ClientTx(Arc::new(TxInner::Socket { id, q: Mutex::new(Queue { items: VecDeque::new(), closed: false, dropped: 0 }), cv: Condvar::new(), stream }));
+        let me = tx.clone();
+        thread::Builder::new().name(format!("writer-{id}")).spawn(move || me.drain(writer, framing)).expect("spawn writer");
+        tx
+    }
+
+    fn drain(&self, mut writer: UnixStream, framing: Framing) {
+        let TxInner::Socket { q, cv, stream, .. } = &*self.0 else { return };
+        loop {
+            let v = {
+                let mut q = q.lock().unwrap();
+                loop {
+                    if let Some(v) = q.items.pop_front() {
+                        // Room was made: a sender waiting for it may go on.
+                        cv.notify_all();
+                        break v;
+                    }
+                    if q.closed {
+                        // Everything written: the other end may now see the end of it.
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        return;
+                    }
+                    q = cv.wait(q).unwrap();
+                }
+            };
+            if proto::write_json(&mut writer, framing, &v).is_err() || writer.flush().is_err() {
+                self.shut("the socket would not take a frame");
+                return;
+            }
+        }
+    }
+
+    /// Give up on the connection now: nothing more is queued, what is queued is dropped, and
+    /// the stream is shut so the reading side ends as well.
+    fn shut(&self, why: &str) {
+        let TxInner::Socket { id, q, cv, stream } = &*self.0 else { return };
+        let mut g = q.lock().unwrap();
+        if !g.closed {
+            g.closed = true;
+            g.items.clear();
+            self.say_dropped(*id, g.dropped);
+            eprintln!("client {id}: closed, {why}");
+        }
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        cv.notify_all();
+    }
+
+    /// The connection has ended on the reading side: the writer finishes what it has and goes.
+    pub(crate) fn close(&self) {
+        let TxInner::Socket { id, q, cv, .. } = &*self.0 else { return };
+        let mut g = q.lock().unwrap();
+        if !g.closed {
+            g.closed = true;
+            self.say_dropped(*id, g.dropped);
+        }
+        cv.notify_all();
+    }
+
+    fn say_dropped(&self, id: u64, dropped: u64) {
+        if dropped > 0 {
+            eprintln!("client {id}: {dropped} progress frames were dropped unread (the window was not reading its socket)");
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        match &*self.0 {
+            TxInner::Socket { q, .. } => !q.lock().unwrap().closed,
+            TxInner::Plain(tx) => tx.send(Value::Null).is_ok(),
+        }
+    }
+
+    /// How many frames were dropped unread so far.
+    pub fn dropped(&self) -> u64 {
+        match &*self.0 {
+            TxInner::Socket { q, .. } => q.lock().unwrap().dropped,
+            TxInner::Plain(_) => 0,
+        }
+    }
+
+    /// How many frames are waiting to be written.
+    pub fn queued(&self) -> usize {
+        match &*self.0 {
+            TxInner::Socket { q, .. } => q.lock().unwrap().items.len(),
+            TxInner::Plain(_) => 0,
+        }
+    }
+
+    /// `Err` means the connection is gone and the frame with it, the way a `Sender` says it.
+    pub fn send(&self, v: Value) -> Result<(), SendError<Value>> {
+        let (q, cv) = match &*self.0 {
+            TxInner::Plain(tx) => return tx.send(v),
+            TxInner::Socket { q, cv, .. } => (q, cv),
+        };
+        let mut g = q.lock().unwrap();
+        if g.closed {
+            return Err(SendError(v));
+        }
+        if g.items.len() >= QUEUE_BOUND {
+            // Room is made by losing the oldest frame a later one makes good, whatever is being
+            // sent; a frame of that kind with nothing older to lose is itself the one lost.
+            if let Some(i) = g.items.iter().position(superseded) {
+                g.items.remove(i);
+                g.dropped += 1;
+            } else if superseded(&v) {
+                g.dropped += 1;
+                return Ok(());
+            } else {
+                // Full of frames that must arrive and nobody reading: a second's grace, then
+                // the connection is given up rather than the daemon's memory.
+                let deadline = Instant::now() + ROOM_WAIT;
+                while g.items.len() >= QUEUE_BOUND && !g.closed {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    g = cv.wait_timeout(g, left).unwrap().0;
+                }
+                if g.closed || g.items.len() >= QUEUE_BOUND {
+                    drop(g);
+                    self.shut("it had not read its socket in a second with the queue full");
+                    return Err(SendError(v));
+                }
+            }
+        }
+        g.items.push_back(v);
+        cv.notify_all();
+        Ok(())
+    }
+}
 
 pub fn serve(listener: UnixListener) -> std::io::Result<()> {
     for stream in listener.incoming() {
@@ -38,7 +228,7 @@ pub fn serve(listener: UnixListener) -> std::io::Result<()> {
 /// One connection, and everything it holds: what the handlers see as `Cx`.
 pub struct Client {
     pub(crate) id: u64,
-    pub(crate) tx: Sender<Value>,
+    pub(crate) tx: ClientTx,
     /// A kiki window, by its own Hello: its jobs stop when the last one has gone.
     pub(crate) shell: bool,
     pub(crate) listings: HashMap<u64, Arc<Listing>>,
@@ -75,21 +265,7 @@ impl Client {
             }
         };
         let framing = reader.framing().unwrap_or(Framing::Binary);
-        let (tx, rx) = mpsc::channel::<Value>();
-        let mut writer = stream;
-        thread::Builder::new()
-            .name(format!("writer-{id}"))
-            .spawn(move || {
-                while let Ok(v) = rx.recv() {
-                    if proto::write_json(&mut writer, framing, &v).is_err() {
-                        break;
-                    }
-                    if writer.flush().is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("spawn writer");
+        let tx = ClientTx::socket(id, stream, framing);
         let mut client = Client { id, tx, shell: false, listings: HashMap::new(), plans: HashMap::new(), searches: HashMap::new(), trees: HashMap::new(), req_id: 0 };
         // Counted from the first frame to the last: the daemon is the window's engine and leaves
         // a moment after the last one (docs/0.3.0/01-daemon-on-demand.md).
@@ -105,6 +281,9 @@ impl Client {
                 }
             }
         }
+        // The writer finishes what it has and goes; whoever else holds this connection (a job
+        // it started, the jobs' subscriber list) finds it closed on their next send.
+        client.tx.close();
         for (lid, l) in client.listings.drain() {
             l.unsubscribe(id, lid);
         }
@@ -262,4 +441,81 @@ thread_local! {
 pub(crate) fn vfs_err(e: VfsError) -> (&'static str, String) {
     SAID.with(|s| *s.borrow_mut() = e.said_json());
     (e.code(), e.message())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    fn progress() -> Value {
+        proto::event("JobEvent").v("job", Value::obj().u("id", 1).s("state", "running").done()).done()
+    }
+    fn ended(n: u64) -> Value {
+        proto::event("JobEvent").v("job", Value::obj().u("id", n).s("state", "done").done()).done()
+    }
+
+    /// Everything the other end was sent, as lines, until it is closed.
+    fn read_all(mut s: UnixStream) -> String {
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 65536];
+        loop {
+            match s.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(e) => panic!("the stream was not closed: {e}"),
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    #[test]
+    fn a_client_that_never_reads_is_bounded_and_then_let_go() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let tx = ClientTx::socket(7, a, Framing::Text);
+        // Ten thousand progress frames into a socket nobody reads: the kernel takes a few
+        // thousand bytes' worth, the queue its bound, and the rest is dropped — the heap does
+        // not grow with them.
+        for _ in 0..10_000 {
+            tx.send(progress()).unwrap();
+        }
+        assert!(tx.queued() <= QUEUE_BOUND, "the queue is bounded: {}", tx.queued());
+        assert!(tx.dropped() > 0, "what did not fit was dropped, not kept");
+        assert!(tx.is_open());
+        // Frames that must arrive push the progress out first: every one of them is taken,
+        // until the queue holds nothing but frames that must arrive.
+        for n in 1..=QUEUE_BOUND as u64 {
+            tx.send(ended(n)).unwrap();
+        }
+        assert!(tx.is_open());
+        // One more finds no room within a second: the connection is given up, not the memory.
+        let t = Instant::now();
+        assert!(tx.send(ended(0)).is_err());
+        assert!(t.elapsed() < Duration::from_secs(3), "gave up in about a second, not more: {:?}", t.elapsed());
+        assert!(!tx.is_open());
+        assert!(tx.send(progress()).is_err(), "nothing more is taken");
+        // And the other end sees the end of the stream, not a hang.
+        let got = read_all(b);
+        assert!(got.contains("JobEvent"), "what the kernel had taken was delivered first");
+    }
+
+    #[test]
+    fn a_slow_reader_gets_every_frame_that_matters() {
+        let (a, b) = UnixStream::pair().unwrap();
+        let tx = ClientTx::socket(8, a, Framing::Text);
+        // Far more than the bound, with twenty ends among the progress, nobody reading yet.
+        for n in 1..=20 {
+            for _ in 0..300 {
+                tx.send(progress()).unwrap();
+            }
+            tx.send(ended(n)).unwrap();
+        }
+        assert!(tx.queued() <= QUEUE_BOUND);
+        tx.close();
+        let got = read_all(b);
+        let ends: Vec<u64> = got.lines().filter(|l| l.contains("\"done\"")).filter_map(|l| crate::json::parse(l.as_bytes()).ok()).filter_map(|v| v.get("job").and_then(|j| j.u64_field("id"))).collect();
+        assert_eq!(ends, (1..=20).collect::<Vec<u64>>(), "every end arrived, in order; only progress was dropped");
+        assert!(tx.dropped() > 0);
+    }
 }

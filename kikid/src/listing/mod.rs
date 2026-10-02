@@ -2,6 +2,7 @@
 
 use crate::json::{Obj, Value};
 use crate::proto;
+use crate::server::ClientTx;
 use crate::string_pool::StringPool;
 use crate::vfs::local::{self, DirHandle};
 use crate::vfs::uri::Uri;
@@ -54,7 +55,7 @@ impl SortRole {
 pub struct Subscriber {
     pub client: u64,
     pub lid: u64,
-    pub tx: Sender<Value>,
+    pub tx: ClientTx,
     /// The rows this connection holds: the viewport plus the look-ahead it scrolls into.
     pub first: u32,
     pub count: u32,
@@ -144,7 +145,7 @@ struct Inner {
 struct Enrich {
     total: u32,
     done: u32,
-    waiters: Vec<(Sender<Value>, u64)>,
+    waiters: Vec<(ClientTx, u64)>,
 }
 
 pub struct Listing {

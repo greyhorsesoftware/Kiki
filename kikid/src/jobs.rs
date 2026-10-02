@@ -4,6 +4,7 @@
 use crate::json::Value;
 use crate::ops::{self, Progress};
 use crate::proto;
+use crate::server::ClientTx;
 use crate::vfs::uri::Uri;
 use crate::vfs::VfsError;
 use std::collections::VecDeque;
@@ -46,7 +47,7 @@ pub struct Job {
     pub op: Value,
     pub kind: String,
     pub title: String,
-    pub client: Option<Sender<Value>>,
+    pub client: Option<ClientTx>,
     /// Asked for from a kiki window, and so stopped when the last window has gone (`shell_went`).
     /// A script's jobs, the portal's and a test's are nobody's to stop but their own.
     shell: AtomicBool,
@@ -150,7 +151,7 @@ struct Queue {
     jobs: Vec<Arc<Job>>,
     pending: VecDeque<Arc<Job>>,
     running: usize,
-    subscribers: Vec<Sender<Value>>,
+    subscribers: Vec<ClientTx>,
     journal: Vec<Value>, // entries: { job, title, inverse: Op, redo: Op }
     redo: Vec<Value>,
     next_id: u64,
@@ -185,14 +186,15 @@ fn save_journal(j: &[Value]) {
     let _ = std::fs::write(d.join("journal.json"), crate::json::to_string(&Value::Arr(j.to_vec())));
 }
 
-pub fn subscribe(tx: Sender<Value>) {
+pub fn subscribe(tx: ClientTx) {
     queue().lock().unwrap().subscribers.push(tx);
 }
 
-pub fn unsubscribe(tx: &Sender<Value>) {
-    // Senders are compared by channel identity through a probe send failure; keep it simple: drop closed ones.
+pub fn unsubscribe(tx: &ClientTx) {
+    // Connections are not compared: the ones that have closed are let go, which is what an
+    // unsubscribe is for. (This used to send a `null` frame down every live connection as a probe.)
     let _ = tx;
-    queue().lock().unwrap().subscribers.retain(|s| s.send(Value::Null).is_ok());
+    queue().lock().unwrap().subscribers.retain(ClientTx::is_open);
 }
 
 pub fn broadcast(v: Value) {
@@ -202,7 +204,7 @@ pub fn broadcast(v: Value) {
 
 // ---------------------------------------------------------------- submit
 
-pub fn submit(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
+pub fn submit(op: Value, client: Option<ClientTx>) -> Result<u64, (&'static str, String)> {
     let kind = op.str_field("op").ok_or(("Protocol", "missing op".to_string()))?.to_string();
     // An op may name itself ("Save notes.txt back to homelab"); most are named for what they do.
     let title = op.str_field("title").map(str::to_string).unwrap_or_else(|| title_for(&op));
@@ -708,7 +710,7 @@ pub fn dismiss(only: Option<u64>) -> u64 {
     gone.len() as u64
 }
 
-pub fn undo(client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
+pub fn undo(client: Option<ClientTx>) -> Result<u64, (&'static str, String)> {
     let entry = {
         let mut q = queue().lock().unwrap();
         let e = q.journal.pop().ok_or(("NotFound", "nothing to undo".to_string()))?;
@@ -720,7 +722,7 @@ pub fn undo(client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)
     submit_unjournaled(inverse, client)
 }
 
-pub fn redo(client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
+pub fn redo(client: Option<ClientTx>) -> Result<u64, (&'static str, String)> {
     let entry = {
         let mut q = queue().lock().unwrap();
         q.redo.pop().ok_or(("NotFound", "nothing to redo".to_string()))?
@@ -730,7 +732,7 @@ pub fn redo(client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)
 }
 
 /// Runs an op without adding it to the journal (used for undo replays).
-fn submit_unjournaled(op: Value, client: Option<Sender<Value>>) -> Result<u64, (&'static str, String)> {
+fn submit_unjournaled(op: Value, client: Option<ClientTx>) -> Result<u64, (&'static str, String)> {
     let mut op = op;
     if let Value::Obj(m) = &mut op {
         m.insert("_unjournaled".into(), Value::Bool(true));
@@ -1301,25 +1303,27 @@ mod tests {
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
         std::fs::write(d.join("x.txt"), b"x").unwrap();
         let (tx, rx) = mpsc::channel();
-        subscribe(tx.clone());
-        let id = submit(Value::obj().s("op", "trash").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("x.txt")).to_string())])).done(), Some(tx.clone())).unwrap();
+        subscribe(tx.clone().into());
+        let id = submit(Value::obj().s("op", "trash").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("x.txt")).to_string())])).done(), Some(tx.clone().into())).unwrap();
         assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("x.txt").exists());
         let events: Vec<Value> = rx.try_iter().collect();
         assert!(events.iter().any(|e| e.str_field("event") == Some("Toast")));
-        let uid = undo(Some(tx.clone())).unwrap();
+        let uid = undo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(d.join("x.txt").exists());
-        let rid = redo(Some(tx.clone())).unwrap();
+        let rid = redo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(rid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("x.txt").exists());
         // copy with a collision answered keepBoth
         std::fs::write(d.join("a.txt"), b"a").unwrap();
         std::fs::create_dir_all(d.join("dst")).unwrap();
         std::fs::write(d.join("dst/a.txt"), b"old").unwrap();
-        let cid =
-            submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("a.txt")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone()))
-                .unwrap();
+        let cid = submit(
+            Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("a.txt")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(),
+            Some(tx.clone().into()),
+        )
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
@@ -1332,7 +1336,7 @@ mod tests {
         }
         assert_eq!(wait(cid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(std::fs::read(d.join("dst/a (2).txt")).unwrap(), b"a");
-        let uid = undo(Some(tx)).unwrap();
+        let uid = undo(Some(tx.into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("dst/a (2).txt").exists());
         std::env::remove_var("KIKI_TRASH_DIR");
@@ -1355,19 +1359,19 @@ mod tests {
         let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
 
         std::fs::write(d.join("real.txt"), b"real").unwrap();
-        let id = submit(Value::obj().s("op", "trash").v("items", list(&["real.txt", "never-was.txt"])).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "trash").v("items", list(&["real.txt", "never-was.txt"])).done(), Some(tx.clone().into())).unwrap();
         assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(_))), "the second item is not there");
         assert!(!d.join("real.txt").exists(), "but the first went to the trash");
-        let uid = undo(Some(tx.clone())).unwrap();
+        let uid = undo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(std::fs::read(d.join("real.txt")).unwrap(), b"real", "and undo brings it back");
 
-        let id = submit(Value::obj().s("op", "copy").v("items", list(&["real.txt", "never-was.txt"])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "copy").v("items", list(&["real.txt", "never-was.txt"])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone().into())).unwrap();
         assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(_))));
         assert!(d.join("dst/real.txt").exists(), "the first item was copied");
         // The inverse names the second item too — it was about to be made — and its not being
         // there is not an error.
-        let uid = undo(Some(tx)).unwrap();
+        let uid = undo(Some(tx.into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("dst/real.txt").exists(), "undo removes what the failed copy left");
         assert!(d.join("real.txt").exists(), "and not the original");
@@ -1431,8 +1435,9 @@ mod tests {
             std::fs::write(d.join(name), vec![b'x'; size]).unwrap();
         }
         let (tx, rx) = mpsc::channel();
-        subscribe(tx.clone());
-        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx)).unwrap();
+        subscribe(tx.clone().into());
+        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.into()))
+            .unwrap();
         assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
         let events: Vec<Value> = rx.try_iter().filter(|e| e.str_field("event") == Some("JobEvent")).filter_map(|e| e.get("job").cloned()).filter(|j| j.u64_field("id") == Some(id)).collect();
         let last = events.last().unwrap();
@@ -1448,7 +1453,7 @@ mod tests {
 
         // Forgetting: a finished job goes, and everybody is told which.
         let (tx2, rx2) = mpsc::channel();
-        subscribe(tx2);
+        subscribe(tx2.into());
         assert_eq!(dismiss(Some(id)), 1);
         assert!(list().as_arr().unwrap().iter().all(|j| j.u64_field("id") != Some(id)));
         let cleared = rx2.try_iter().find(|e| e.str_field("event") == Some("JobsCleared")).expect("JobsCleared");
@@ -1477,8 +1482,11 @@ mod tests {
             return; // running as root: nothing is unreadable
         }
         let (tx, _rx) = mpsc::channel();
-        let id = submit(Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(), Some(tx.clone()))
-            .unwrap();
+        let id = submit(
+            Value::obj().s("op", "copy").v("items", Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())])).s("dest", Uri::from_path(&d.join("dst")).to_string()).done(),
+            Some(tx.clone().into()),
+        )
+        .unwrap();
         let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
         assert!(why.starts_with("1 of 3 could not be copied: locked.txt"), "{why}");
         // The failure carries its number and params for the window to say in its own language.
@@ -1491,7 +1499,7 @@ mod tests {
         assert_eq!(p.str_field("more"), Some("0"));
         assert!(d.join("dst/site/a.txt").exists() && d.join("dst/site/img/z.bin").exists(), "the others arrived, the one after it included");
         assert!(!d.join("dst/site/locked.txt").exists());
-        let uid = undo(Some(tx)).unwrap();
+        let uid = undo(Some(tx.into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert!(!d.join("dst/site").exists(), "and undo takes back what did arrive");
         std::fs::set_permissions(d.join("site/locked.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
@@ -1535,10 +1543,10 @@ mod tests {
         let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
         let modes = || files.map(|n| mode_of(&d.join(n)));
         let (tx, rx) = mpsc::channel();
-        subscribe(tx.clone());
+        subscribe(tx.clone().into());
 
         // Group write on: the mask names one bit, `bits` sets it.
-        let id = submit(Value::obj().s("op", "chmod").v("items", list(&files)).u("mask", 0o010).u("bits", 0o010).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&files)).u("mask", 0o010).u("bits", 0o010).b("recursive", false).done(), Some(tx.clone().into())).unwrap();
         assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), [0o654, 0o755, 0o610], "the one bit moved and nothing else did");
         let events: Vec<Value> = rx.try_iter().filter(|e| e.str_field("event") == Some("JobEvent")).filter_map(|e| e.get("job").cloned()).filter(|j| j.u64_field("id") == Some(id)).collect();
@@ -1553,25 +1561,25 @@ mod tests {
         let listed: Vec<(String, u64)> = inv.get("list").unwrap().as_arr().unwrap().iter().map(|e| (e.as_arr().unwrap()[0].as_str().unwrap().to_string(), e.as_arr().unwrap()[1].as_u64().unwrap())).collect();
         assert_eq!(listed, vec![(Uri::from_path(&d.join("a.txt")).to_string(), 0o644), (Uri::from_path(&d.join("c.key")).to_string(), 0o600)]);
 
-        let uid = undo(Some(tx.clone())).unwrap();
+        let uid = undo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), was, "one undo puts all three back");
-        let rid = redo(Some(tx.clone())).unwrap();
+        let rid = redo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(rid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), [0o654, 0o755, 0o610], "and redo sets them again");
-        let uid = undo(Some(tx.clone())).unwrap();
+        let uid = undo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), was);
 
         // The older form, one file and a whole mode, is a mask of everything.
-        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mode", 0o600).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mode", 0o600).b("recursive", false).done(), Some(tx.clone().into())).unwrap();
         assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), [0o600, 0o755, 0o600]);
-        let uid = undo(Some(tx.clone())).unwrap();
+        let uid = undo(Some(tx.clone().into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!(modes(), was);
         // Half of the pair is a request that cannot mean anything.
-        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mask", 0o010).b("recursive", false).done(), Some(tx)).unwrap();
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt"])).u("mask", 0o010).b("recursive", false).done(), Some(tx.into())).unwrap();
         assert!(matches!(wait(id, Duration::from_secs(5)), Some(State::Failed(m)) if m == "mask and bits go together"));
         assert_eq!(modes(), was);
 
@@ -1594,8 +1602,8 @@ mod tests {
         }
         let list = |names: &[&str]| Value::Arr(names.iter().map(|n| Value::Str(Uri::from_path(&d.join(n)).to_string())).collect());
         let (tx, rx) = mpsc::channel();
-        subscribe(tx.clone());
-        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt", "never-was.txt", "c.txt"])).u("mask", 0o022).u("bits", 0o022).b("recursive", false).done(), Some(tx.clone())).unwrap();
+        subscribe(tx.clone().into());
+        let id = submit(Value::obj().s("op", "chmod").v("items", list(&["a.txt", "never-was.txt", "c.txt"])).u("mask", 0o022).u("bits", 0o022).b("recursive", false).done(), Some(tx.clone().into())).unwrap();
         let Some(State::Failed(why)) = wait(id, Duration::from_secs(5)) else { panic!("it should fail") };
         assert_eq!(why, "1 of 3 could not be changed: never-was.txt (NotFound)");
         assert_eq!((mode_of(&d.join("a.txt")), mode_of(&d.join("c.txt"))), (0o666, 0o666), "the others changed, the one after it included");
@@ -1608,7 +1616,7 @@ mod tests {
         let log = crate::joblog::read_job(id, 0).expect("the job has a log");
         let logged = |t: &str| log.get("lines").unwrap().as_arr().unwrap().iter().any(|l| l.str_field("level") == Some("error") && l.str_field("text").is_some_and(|x| x.ends_with(t)));
         assert!(logged("never-was.txt: NotFound"), "the log names the path");
-        let uid = undo(Some(tx)).unwrap();
+        let uid = undo(Some(tx.into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!((mode_of(&d.join("a.txt")), mode_of(&d.join("c.txt"))), (0o644, 0o644), "and undo puts back the two that changed");
         std::env::remove_var("KIKI_STATE_DIR");
@@ -1629,12 +1637,12 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let site = Value::Arr(vec![Value::Str(Uri::from_path(&d.join("site")).to_string())]);
         // Take "other" away entirely.
-        let id = submit(Value::obj().s("op", "chmod").v("items", site).u("mask", 0o007).u("bits", 0).b("recursive", true).done(), Some(tx.clone())).unwrap();
+        let id = submit(Value::obj().s("op", "chmod").v("items", site).u("mask", 0o007).u("bits", 0).b("recursive", true).done(), Some(tx.clone().into())).unwrap();
         assert_eq!(wait(id, Duration::from_secs(5)), Some(State::Done));
         assert_eq!((mode_of(&d.join("site")), mode_of(&d.join("site/index.html"))), (0o750, 0o640));
         let inv = last_inverse();
         assert_eq!(inv.get("list").unwrap().as_arr().unwrap().len(), 2, "the folder and the file in it");
-        let uid = undo(Some(tx)).unwrap();
+        let uid = undo(Some(tx.into())).unwrap();
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!((mode_of(&d.join("site")), mode_of(&d.join("site/index.html"))), (0o755, 0o644));
         std::env::remove_var("KIKI_STATE_DIR");

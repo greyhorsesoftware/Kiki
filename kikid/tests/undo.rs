@@ -141,7 +141,7 @@ fn every_local_op_can_be_taken_back_and_put_back() {
 
     let (tx, _rx) = mpsc::channel();
     let submit = |op: Value, what: &str| {
-        let id = jobs::submit(op, Some(tx.clone())).unwrap_or_else(|e| panic!("{what}: {} {}", e.0, e.1));
+        let id = jobs::submit(op, Some(tx.clone().into())).unwrap_or_else(|e| panic!("{what}: {} {}", e.0, e.1));
         done(id, what);
     };
 
@@ -171,16 +171,16 @@ fn every_local_op_can_be_taken_back_and_put_back() {
         let after = tree(&work);
         assert_ne!(after, before, "{what} changed nothing: there is nothing to undo");
 
-        let u = jobs::undo(Some(tx.clone())).unwrap_or_else(|e| panic!("{what}: undo refused: {} {}", e.0, e.1));
+        let u = jobs::undo(Some(tx.clone().into())).unwrap_or_else(|e| panic!("{what}: undo refused: {} {}", e.0, e.1));
         done(u, &format!("the undo of {what}"));
         compare(&format!("{what}, undone"), &tree(&work), &before, &before);
 
-        let r = jobs::redo(Some(tx.clone())).unwrap_or_else(|e| panic!("{what}: redo refused: {} {}", e.0, e.1));
+        let r = jobs::redo(Some(tx.clone().into())).unwrap_or_else(|e| panic!("{what}: redo refused: {} {}", e.0, e.1));
         done(r, &format!("the redo of {what}"));
         check();
         compare(&format!("{what}, redone"), &tree(&work), &after, &before);
 
-        let u = jobs::undo(Some(tx.clone())).unwrap_or_else(|e| panic!("{what}: the second undo was refused: {} {}", e.0, e.1));
+        let u = jobs::undo(Some(tx.clone().into())).unwrap_or_else(|e| panic!("{what}: the second undo was refused: {} {}", e.0, e.1));
         done(u, &format!("the second undo of {what}"));
         compare(&format!("{what}, taken back again"), &tree(&work), &before, &before);
     };
@@ -257,14 +257,14 @@ fn every_local_op_can_be_taken_back_and_put_back() {
     // are taken away below runs against the developer's own home — its failure was being written
     // into the real `~/.local/state/kiki/failed-jobs.log`, and the trash it looked in was the
     // real one.
-    while let Ok(id) = jobs::undo(Some(tx.clone())) {
+    while let Ok(id) = jobs::undo(Some(tx.clone().into())) {
         let start = Instant::now();
         while matches!(job_json(id).str_field("state"), Some("running") | Some("queued")) {
             assert!(start.elapsed() < PATIENCE, "an undo at the end of the journal never finished");
             std::thread::sleep(Duration::from_millis(2));
         }
     }
-    let e = jobs::undo(Some(tx.clone())).unwrap_err();
+    let e = jobs::undo(Some(tx.clone().into())).unwrap_err();
     assert_eq!(e.0, "NotFound");
     assert_eq!(e.1, "nothing to undo");
 

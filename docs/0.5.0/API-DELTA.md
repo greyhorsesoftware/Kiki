@@ -32,4 +32,23 @@ here is kept as an alias. The full tables are in `docs/0.1.0/API-DAEMON.md`.
   devices are different places, and the drop is a copy with a + rather than a move the daemon
   would do as a copy and a delete.
 
+## The daemon's bounds (`02-daemon-bounds.md`)
+
+- **Error 1273** — "gave up after an hour: it was still not finished": a plugin request that
+  ran past `REQUEST_CEILING` (an hour, moving or not — `REQUEST_TIMEOUT` is the patience
+  between frames and goes on being that), or a `bsdtar` that did. The three catalogs have it.
+- **A window that stops reading its socket is let go.** The daemon keeps at most 4 096 frames
+  for a connection; past that, a frame a later one supersedes (`Progress`, a `Count` still
+  growing, a `JobEvent` still running) is dropped oldest-first to make room, and a frame that
+  must arrive that finds no room within a second closes the connection. A window reads every
+  frame and never sees this; one that has stopped reconnects (`Daemon.qml`) and resubscribes.
+  `kikid.log` says how many frames were dropped, once, when the connection ends.
+
+## The index keeps up (`06-index-live.md`)
+
+- **`IndexStatus`** gains `live: u64` — entries a watched folder's changes put into the index
+  since the last refresh or build. Nothing else on the wire: a file made in a folder a window
+  is showing is in `Search` (scope `everywhere`) within a second, where before it waited for
+  the ten-minute walk.
+
 Nothing was removed.

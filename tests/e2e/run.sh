@@ -5,6 +5,7 @@
 #
 #   tests/e2e/run.sh                 every flow
 #   tests/e2e/run.sh --flow trash    one of them
+#   tests/e2e/run.sh --part servers  one half: the flows that start a real server (or --part local)
 #   tests/e2e/run.sh --flow gallery_perf   a thousand photographs, timed (not in the default run)
 #   KIKI_E2E_KEEP=1 tests/e2e/run.sh keep the fixture home for inspection
 set -euo pipefail
