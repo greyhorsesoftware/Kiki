@@ -139,10 +139,10 @@ pub fn forget() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn theme_tree() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("kiki-icons-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+    fn theme_tree() -> Scratch {
+        let root = Scratch::new("icons");
         // a theme with one icon at two sizes, inheriting from a base theme
         for (theme, dir, name) in [
             ("Test", "48x48/mimetypes", "text-x-generic"),
@@ -198,7 +198,6 @@ mod tests {
         assert!(lookup("Test", "lonely", 32).is_some());
         assert!(lookup("Test", "nothing-has-this", 32).is_none());
 
-        let _ = std::fs::remove_dir_all(&root);
         forget();
     }
 

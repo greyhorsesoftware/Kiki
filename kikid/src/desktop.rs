@@ -424,10 +424,10 @@ fn open_local(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn fixture() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-desktop-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn fixture() -> Scratch {
+        let d = Scratch::new("desktop");
         std::fs::create_dir_all(d.join("user")).unwrap();
         std::fs::create_dir_all(d.join("sys")).unwrap();
         std::fs::write(d.join("sys/mimeinfo.cache"), "[MIME Cache]\ntext/plain=nvim.desktop;code.desktop;\nimage/png=imv.desktop;gimp.desktop;\ntext/markdown=obsidian.desktop;\n").unwrap();
@@ -461,7 +461,6 @@ mod tests {
         assert_eq!(png, vec!["imv"]);
         assert!(apps_for("application/x-unknown").is_empty());
         std::env::remove_var("KIKI_APP_DIRS");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
@@ -483,7 +482,6 @@ mod tests {
         // Nothing opens both a text file and a picture.
         assert!(names(&apps_json_for(&[PathBuf::from("/x/a.txt"), PathBuf::from("/x/b.png")])).is_empty());
         std::env::remove_var("KIKI_APP_DIRS");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

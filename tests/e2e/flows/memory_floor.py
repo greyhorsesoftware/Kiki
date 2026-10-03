@@ -17,7 +17,7 @@ the plan's: thirty seconds after leaving, the window within 15 MB of fresh for t
 that file; a run prints how it differs from the last one on the same machine.
 """
 import json, os, time
-from harness import wait_for
+from harness import wait_for, drop_fixture
 from flows.open_perf import flat, git, machine
 from flows import gallery_perf
 
@@ -120,66 +120,71 @@ def run(ctx):
     flat(local5k, 5_000)
     if not c.check(f"the gallery fixture has {gallery_perf.N} photographs", gallery_perf.build_fixture(), pics):
         return
-    empty = os.path.join(ctx.base, "empty"); os.makedirs(empty, exist_ok=True)
-    away = "file://" + empty
+    try:
+        empty = os.path.join(ctx.base, "empty"); os.makedirs(empty, exist_ok=True)
+        away = "file://" + empty
 
-    def opened(uri, view):
-        # The view after the open, not before: opening applies the folder's remembered view.
-        sh.call("open", uri)
-        wait_for(lambda: (lambda s: s if s.get("uri") == uri and s.get("done") else None)(sh.state()), timeout=60, interval=0.05)
-        sh.call("setView", view)
-        wait_for(lambda: (lambda s: s if s.get("view") == view else None)(sh.state()), timeout=10)
+        def opened(uri, view):
+            # The view after the open, not before: opening applies the folder's remembered view.
+            sh.call("open", uri)
+            wait_for(lambda: (lambda s: s if s.get("uri") == uri and s.get("done") else None)(sh.state()), timeout=60, interval=0.05)
+            sh.call("setView", view)
+            wait_for(lambda: (lambda s: s if s.get("view") == view else None)(sh.state()), timeout=10)
 
-    def leave():
-        sh.call("setView", "list")
-        sh.call("open", away)
-        wait_for(lambda: (lambda s: s if s.get("uri") == away and s.get("done") else None)(sh.state()), timeout=30)
+        def leave():
+            sh.call("setView", "list")
+            sh.call("open", away)
+            wait_for(lambda: (lambda s: s if s.get("uri") == away and s.get("done") else None)(sh.state()), timeout=30)
 
-    results = {}
+        results = {}
 
-    def note(step):
-        results[step] = measure() | {"view": sh.state().get("view", "")}
-        print(f"      {step:16} window {results[step]['shellMb']:5d} MB   kikid {results[step]['kikidMb']:4d} MB   ({results[step]['view']})")
+        def note(step):
+            results[step] = measure() | {"view": sh.state().get("view", "")}
+            print(f"      {step:16} window {results[step]['shellMb']:5d} MB   kikid {results[step]['kikidMb']:4d} MB   ({results[step]['view']})")
 
-    sh.call("dismiss")
-    sh.call("split", "off")
-    sh.call("inspector", "off")
-    leave()
-    # A window just started is still letting go of what starting cost it (under cage it read
-    # 477 MB at two seconds and 422 at forty): "fresh" is the window once that has passed.
-    time.sleep(SETTLE)
-    note("fresh")
-
-    for step, view, uri, hold in (("list1k", "list", "file://" + local1k, 3), ("icon1k", "icon", "file://" + pics, 12),
-                                  ("gallery1k", "gallery", "file://" + pics, 2), ("list5k", "list", "file://" + local5k, 3)):
-        before = measure()["shellMb"]
-        opened(uri, view)
-        if view == "gallery":
-            # Step through a few pictures: the gallery decodes what it shows and its neighbours.
-            for _ in range(10):
-                sh.call("gallery", "next"); time.sleep(0.5)
-            try:
-                print(f"      ... the gallery decoded {json.loads(sh.call('galleryStats') or '{}').get('decodes', '?')} pictures")
-            except json.JSONDecodeError:
-                pass
-        time.sleep(hold)         # thumbnails and pictures land asynchronously; let them
-        note(step)
+        sh.call("dismiss")
+        sh.call("split", "off")
+        sh.call("inspector", "off")
         leave()
-        time.sleep(5)
-        note(step + "-left5s")
-        time.sleep(max(0, SETTLE - 5))
-        note(step + "-left")
-        results[step + "-left"]["keptMb"] = results[step + "-left"]["shellMb"] - before
+        # A window just started is still letting go of what starting cost it (under cage it read
+        # 477 MB at two seconds and 422 at forty): "fresh" is the window once that has passed.
+        time.sleep(SETTLE)
+        note("fresh")
 
-    # What each folder left behind, against what the window was before it: the sequence makes
-    # "against fresh" the sum of everything before, which says nothing about the one folder.
-    fresh = results["fresh"]["shellMb"]
-    # The gallery's bar is what it measured plus the spread between runs (27–32 MB kept, ±5;
-    # docs/0.5.0/05-window-memory.md): the number is watched for growing, not fought.
-    for step, bar in (("list1k", 15), ("icon1k", 30), ("gallery1k", 40), ("list5k", 15)):
-        kept = results[step + "-left"]["keptMb"]
-        c.check(f"{step}: {SETTLE}s after leaving, the window kept at most {bar} MB of it", kept <= bar, f"{kept:+d} MB")
-    last = results["list5k-left"]["shellMb"]
-    print(f"      the floor: {fresh} MB fresh, {last} MB after the four folders ({last - fresh:+d})")
-    results["floorMb"] = {"shellMb": last - fresh, "kikidMb": results["list5k-left"]["kikidMb"], "view": ""}
-    record(results)
+        for step, view, uri, hold in (("list1k", "list", "file://" + local1k, 3), ("icon1k", "icon", "file://" + pics, 12),
+                                      ("gallery1k", "gallery", "file://" + pics, 2), ("list5k", "list", "file://" + local5k, 3)):
+            before = measure()["shellMb"]
+            opened(uri, view)
+            if view == "gallery":
+                # Step through a few pictures: the gallery decodes what it shows and its neighbours.
+                for _ in range(10):
+                    sh.call("gallery", "next"); time.sleep(0.5)
+                try:
+                    print(f"      ... the gallery decoded {json.loads(sh.call('galleryStats') or '{}').get('decodes', '?')} pictures")
+                except json.JSONDecodeError:
+                    pass
+            time.sleep(hold)         # thumbnails and pictures land asynchronously; let them
+            note(step)
+            leave()
+            time.sleep(5)
+            note(step + "-left5s")
+            time.sleep(max(0, SETTLE - 5))
+            note(step + "-left")
+            results[step + "-left"]["keptMb"] = results[step + "-left"]["shellMb"] - before
+
+        # What each folder left behind, against what the window was before it: the sequence makes
+        # "against fresh" the sum of everything before, which says nothing about the one folder.
+        fresh = results["fresh"]["shellMb"]
+        # The gallery's bar is what it measured plus the spread between runs (27–32 MB kept, ±5;
+        # docs/0.5.0/05-window-memory.md): the number is watched for growing, not fought.
+        for step, bar in (("list1k", 15), ("icon1k", 30), ("gallery1k", 40), ("list5k", 15)):
+            kept = results[step + "-left"]["keptMb"]
+            c.check(f"{step}: {SETTLE}s after leaving, the window kept at most {bar} MB of it", kept <= bar, f"{kept:+d} MB")
+        last = results["list5k-left"]["shellMb"]
+        print(f"      the floor: {fresh} MB fresh, {last} MB after the four folders ({last - fresh:+d})")
+        results["floorMb"] = {"shellMb": last - fresh, "kikidMb": results["list5k-left"]["kikidMb"], "view": ""}
+        record(results)
+    finally:
+        drop_fixture(local1k)
+        drop_fixture(local5k)
+        drop_fixture(pics)

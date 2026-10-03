@@ -18,8 +18,9 @@
 
 use kikid::json::Value;
 use kikid::listing::{self, Subscriber};
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -28,10 +29,9 @@ const BUDGET: Duration = Duration::from_millis(100);
 /// How long a change may take before the watch is simply not working.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-fn setup(tag: &str) -> PathBuf {
+fn setup(tag: &str) -> Scratch {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new(tag);
     std::fs::create_dir_all(&dir).unwrap();
     // Nothing of the developer's: the settings the listing reads, the access log a row is looked
     // up in, the thumbnail cache a picture would be written to.
@@ -218,6 +218,4 @@ fn a_watched_folder_tells_every_window_what_changed_and_gives_its_watch_up_last(
     std::fs::write(home.join("after-return.txt"), b"live").unwrap();
     let (ev, _) = until(&rx_c, at, "a Splice for the folder that came back", |v| is("Splice")(v) && named(v).contains(&"after-return.txt".to_string()));
     assert_eq!(ev.get("ops").unwrap().as_arr().unwrap().len(), 1);
-
-    std::fs::remove_dir_all(&dir).unwrap();
 }

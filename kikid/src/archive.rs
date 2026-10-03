@@ -253,11 +253,11 @@ pub fn members_json(archive: &Path) -> Result<crate::json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn compress_list_extract_round_trip() {
-        let d = std::env::temp_dir().join(format!("kiki-archive-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("archive");
         std::fs::create_dir_all(d.join("src/sub")).unwrap();
         std::fs::write(d.join("src/a.txt"), b"hello").unwrap();
         std::fs::write(d.join("src/sub/b c.txt"), b"world!").unwrap();
@@ -273,12 +273,10 @@ mod tests {
         assert_eq!(format_from_name("x.tar.zst"), Some("tar.zst"));
         assert_eq!(format_from_name("x.ZIP"), Some("zip"));
         assert_eq!(format_from_name("x.txt"), None);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-archive-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn scratch(tag: &str) -> Scratch {
+        let d = Scratch::new(&format!("archive-{tag}"));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -303,7 +301,6 @@ mod tests {
         assert_eq!(std::fs::read(out.join("site.v2/docs/c.txt")).unwrap(), b"c");
         assert_eq!(std::fs::read_dir(&out).unwrap().count(), 1, "nothing loose beside the folder");
         only_staging_left_is_none(&out);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// The hazard this replaced: extraction merged into a folder that was already there, and undo
@@ -325,7 +322,6 @@ mod tests {
         std::fs::remove_dir_all(&made).unwrap();
         assert_eq!(std::fs::read(d.join("src/mine.txt")).unwrap(), b"mine", "what was there before is untouched");
         only_staging_left_is_none(&d);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
@@ -343,7 +339,6 @@ mod tests {
         assert!(matches!(r, Err(VfsError::Unsafe(_))), "a typed refusal");
         assert_eq!(r.unwrap_err().code(), "Unsafe");
         assert!(!out.exists(), "and nothing was created, not even the destination");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

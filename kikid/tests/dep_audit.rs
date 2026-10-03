@@ -6,6 +6,7 @@
 //! puts the package back. On a developer's machine, where all three are present, each says so
 //! and passes — an assertion made against a machine that has the thing would prove nothing.
 
+use kikid::scratch::Scratch;
 use std::path::Path;
 use std::time::Duration;
 
@@ -29,8 +30,7 @@ fn without_git_a_repository_is_a_plain_folder() {
         return;
     }
     assert!(!on_path("git"), "this audit is for a machine without git");
-    let dir = std::env::temp_dir().join(format!("kiki-audit-git-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("audit-git");
     std::fs::create_dir_all(dir.join(".git")).unwrap();
     std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
     std::fs::write(dir.join("README"), "x").unwrap();
@@ -39,7 +39,6 @@ fn without_git_a_repository_is_a_plain_folder() {
     // And the folder still lists.
     let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert!(names.iter().any(|n| n == "README"));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Without a Secret Service, saving a password says one numbered sentence and nothing else

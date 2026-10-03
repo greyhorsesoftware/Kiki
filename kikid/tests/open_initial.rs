@@ -8,6 +8,7 @@
 //! - `initial: 0`, or none: nothing rides along, as before.
 
 use kikid::json::Value;
+use kikid::scratch::Scratch;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -127,8 +128,7 @@ fn stated(rows: &[Value]) -> usize {
 
 #[test]
 fn the_first_screenful_comes_with_the_open() {
-    let sandbox = std::env::temp_dir().join(format!("kiki-open-initial-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&sandbox);
+    let sandbox = Scratch::new("open-initial");
     let folder = sandbox.join("folder");
     std::fs::create_dir_all(folder.join("a folder")).unwrap();
     // Enough that the scan cannot be over before `Open` has answered: a folder of forty is
@@ -197,6 +197,4 @@ fn the_first_screenful_comes_with_the_open() {
     let _ = c.ask("Sort", Value::obj().u("lid", 3).s("role", "kind").s("order", "asc").done());
     let reset = c.event("Reset", 3);
     assert!(reset.get("rows").is_none(), "{reset:?}");
-
-    let _ = std::fs::remove_dir_all(&sandbox);
 }

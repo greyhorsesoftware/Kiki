@@ -119,10 +119,10 @@ pub fn claim(path: &Path) -> Claim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-lifetime-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn dir(tag: &str) -> Scratch {
+        let d = Scratch::new(&format!("lifetime-{tag}"));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -143,7 +143,6 @@ mod tests {
         assert!(matches!(claim(&path), Claim::Taken));
         assert!(path.exists(), "a live socket is never unlinked");
         drop(l);
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

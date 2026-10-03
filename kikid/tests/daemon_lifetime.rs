@@ -3,9 +3,10 @@
 //! leaves a moment after the last window has gone. A real `kikid` proves each of the three —
 //! a grace of a few hundred milliseconds rather than the ten seconds a person would wait for.
 
+use kikid::scratch::Scratch;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -55,9 +56,8 @@ impl Daemon {
     }
 }
 
-fn sandbox(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("kiki-lifetime-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+fn sandbox(tag: &str) -> Scratch {
+    let d = Scratch::new(&format!("lifetime-{tag}"));
     std::fs::create_dir_all(&d).unwrap();
     d
 }

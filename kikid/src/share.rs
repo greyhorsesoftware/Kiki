@@ -148,15 +148,8 @@ pub fn run(job: &crate::jobs::Job, id: &str, uris: &[Uri], target: Option<&str>,
     let accepts_folders = d.get("accepts").and_then(|a| a.get("folders")).and_then(Value::as_bool).unwrap_or(false);
     // Removed when this function returns, however it returns: a cancel, a fetch that fails and a
     // folder that will not zip all leave early, and each used to leave the fetched files behind.
-    struct Scratch(std::path::PathBuf);
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let tmp = Scratch(std::env::temp_dir().join(format!("kiki-share-{}", job.id)));
-    std::fs::create_dir_all(&tmp.0)?;
-    let tmp = &tmp.0;
+    let tmp = crate::scratch::Scratch::named(&format!("share-{}", job.id));
+    let tmp = tmp.path();
     let mut files: Vec<String> = Vec::new();
     for (n, u) in uris.iter().enumerate() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {

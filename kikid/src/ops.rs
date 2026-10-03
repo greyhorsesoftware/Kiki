@@ -450,9 +450,10 @@ pub type Cancel = Arc<AtomicBool>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn temp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-ops-{}-{name}", std::process::id()));
+    fn temp(name: &str) -> Scratch {
+        let d = Scratch::new(&format!("ops-{name}"));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

@@ -351,31 +351,27 @@ mod tests {
     #[test]
     fn substitutes_and_quotes() {
         let tool = presets().into_iter().find(|t| t.str_field("id") == Some("aider")).unwrap();
-        let d = std::env::temp_dir().join(format!("kiki-openin-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let d = crate::scratch::Scratch::new("openin");
         std::fs::write(d.join("it's a file.txt"), b"x").unwrap();
         let uris = vec![Uri::from_path(&d.join("it's a file.txt"))];
         let p = prepare(&tool, &uris, Some(7), "aider {files} --line {line} {dir}").unwrap();
         assert!(p.command.starts_with("aider '"));
         assert!(p.command.contains("it'\\''s a file.txt"));
         assert!(p.command.contains("--line 7"));
-        assert_eq!(p.cwd, d);
+        assert_eq!(p.cwd, d.to_path_buf());
         assert!(p.env.iter().any(|(k, v)| k == "KIKI_SELECTION" && v.ends_with("file.txt")));
         // a folder-only tool refuses a file when it uses {file}
         let term = presets().into_iter().find(|t| t.str_field("id") == Some("terminal")).unwrap();
         assert!(prepare(&term, &uris, None, "$SHELL").is_ok());
         assert!(prepare(&Value::obj().s("id", "x").s("accepts", "folder").done(), &uris, None, "x {file}").is_err());
         assert!(list_json().as_arr().unwrap().iter().any(|t| t.str_field("id") == Some("system")));
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// The fallback when there is no runtime directory: ours, 0700, and nothing else will do.
     #[test]
     fn the_socket_directory_is_private_or_refused() {
         use std::os::unix::fs::PermissionsExt;
-        let base = std::env::temp_dir().join(format!("kiki-sockdir-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
+        let base = crate::scratch::Scratch::new("sockdir");
 
         let fresh = base.join("fresh");
         assert_eq!(private_dir(&fresh).unwrap(), fresh);
@@ -392,7 +388,5 @@ mod tests {
         let link = base.join("link");
         std::os::unix::fs::symlink(&fresh, &link).unwrap();
         assert!(private_dir(&link).is_err(), "a symlink is not a directory of ours");
-
-        std::fs::remove_dir_all(&base).unwrap();
     }
 }

@@ -606,144 +606,146 @@ def run(ctx):
         sh.keys(("ctrl", "i"))
         expect("info panel closed", lambda s: s.get("inspector") is False)
 
-    desk = Desktop()
-    rec = Recorder(out)
-    sh.call("dismiss")
-    sh.open("file://" + home)
-    if DESKTOP:
-        desk.enter()
-    if pointer:
-        pointer.warp(24, 560)        # out of the way until it is wanted (see park)
-    beat(0.5)
-    rec.start(desk.monitor)
-
-    def park():
+    try:
+        desk = Desktop()
+        rec = Recorder(out)
+        sh.call("dismiss")
+        sh.open("file://" + home)
+        if DESKTOP:
+            desk.enter()
         if pointer:
-            pointer.warp(24, 560)      # the sidebar's empty lower half: nothing there to light up
+            pointer.warp(24, 560)        # out of the way until it is wanted (see park)
+        beat(0.5)
+        rec.start(desk.monitor)
 
-    # -------------------------------------------------------------- the home, three ways
-    rec.say("Your home folder, in the list view")
-    beat(2.5)
-    rec.say("The same folder as icons")
-    view("icon")
-    beat(2.5)
-    rec.say("Columns: click into a project, one folder at a time")
-    view("columns")
-    beat(1.2)
-    # Walk into the project a click at a time — Projects, kiki, src — each opening a column.
-    projects = "file://" + os.path.join(home, "Projects")
-    click_row(0, 4, projects)
-    beat(1.2)
-    click_row(1, 1, projects + "/kiki")
-    beat(1.2)
-    click_row(2, 1, projects + "/kiki/src")
-    beat(1.0)
-    if pointer and pointer.click_name("colrow-3-1", timeout=4):
-        sh.wait_state(lambda s: any(u.endswith("/listing.rs") for u in s.get("selection", [])), 3)
-    else:
-        sh.select("listing.rs")
-    # A file in the columns puts its preview and its details in the last column — the info
-    # panel itself is a list-and-icons thing (Ctrl+I is off in the columns, by design).
-    rec.say("A file fills the last column with its preview and details")
-    beat(3.5)
-    park()
+        def park():
+            if pointer:
+                pointer.warp(24, 560)      # the sidebar's empty lower half: nothing there to light up
 
-    # ------------------------------------------------------ the info panel on a document
-    rec.say("The info panel, Ctrl+I, on a document")
-    view("list")
-    sh.open("file://" + os.path.join(home, "Documents"))
-    beat(0.8)
-    sh.select("Quarterly report.md")
-    beat(0.6)
-    info_panel(3.0)
-    beat(0.5)
+        # -------------------------------------------------------------- the home, three ways
+        rec.say("Your home folder, in the list view")
+        beat(2.5)
+        rec.say("The same folder as icons")
+        view("icon")
+        beat(2.5)
+        rec.say("Columns: click into a project, one folder at a time")
+        view("columns")
+        beat(1.2)
+        # Walk into the project a click at a time — Projects, kiki, src — each opening a column.
+        projects = "file://" + os.path.join(home, "Projects")
+        click_row(0, 4, projects)
+        beat(1.2)
+        click_row(1, 1, projects + "/kiki")
+        beat(1.2)
+        click_row(2, 1, projects + "/kiki/src")
+        beat(1.0)
+        if pointer and pointer.click_name("colrow-3-1", timeout=4):
+            sh.wait_state(lambda s: any(u.endswith("/listing.rs") for u in s.get("selection", [])), 3)
+        else:
+            sh.select("listing.rs")
+        # A file in the columns puts its preview and its details in the last column — the info
+        # panel itself is a list-and-icons thing (Ctrl+I is off in the columns, by design).
+        rec.say("A file fills the last column with its preview and details")
+        beat(3.5)
+        park()
 
-    # ---------------------------------------------------------------------- the gallery
-    rec.say("A folder of pictures, in the gallery")
-    park()
-    sh.open("file://" + pics)
-    beat(1.2)
-    view("gallery")
-    beat(2.5)
-    print("  gallery:", sh.call("galleryStats"))
-    for _ in range(6):
-        sh.call("gallery", "next")
-        beat(0.9)
-    beat(1.0)
-    view("list")
-    sh.open("file://" + home)
-    beat(1.0)
+        # ------------------------------------------------------ the info panel on a document
+        rec.say("The info panel, Ctrl+I, on a document")
+        view("list")
+        sh.open("file://" + os.path.join(home, "Documents"))
+        beat(0.8)
+        sh.select("Quarterly report.md")
+        beat(0.6)
+        info_panel(3.0)
+        beat(0.5)
 
-    # ------------------------------------------------------------ a remote, side by side
-    rec.say("Side by side, with an SFTP server on the right")
-    sh.call("sideBySide", "toggle")
-    expect("side by side", lambda s: s.get("split") is True)
-    beat(0.8)
-    sh.call("focusPane", "right")
-    sh.open(remote_uri)
-    beat(2.5)
-    sh.call("focusPane", "left")
-    sh.select("Documents")
-    beat(1.0)
-    rec.say("Copy a folder across to the server")
-    sh.call("transfer", "copy")
+        # ---------------------------------------------------------------------- the gallery
+        rec.say("A folder of pictures, in the gallery")
+        park()
+        sh.open("file://" + pics)
+        beat(1.2)
+        view("gallery")
+        beat(2.5)
+        print("  gallery:", sh.call("galleryStats"))
+        for _ in range(6):
+            sh.call("gallery", "next")
+            beat(0.9)
+        beat(1.0)
+        view("list")
+        sh.open("file://" + home)
+        beat(1.0)
 
-    def copied():
-        try:
-            jobs = json.loads(sh.call("activity") or "[]")
-        except json.JSONDecodeError:
-            return None
-        return (jobs and all(j.get("state") in ("done", "failed", "cancelled") for j in jobs)) or None
-    wait_for(copied, timeout=60)
-    c.check("Documents was copied to the server", os.path.isdir(os.path.join(remote_root, "Documents")), os.listdir(remote_root))
-    beat(2.0)
-    # Look at what landed: the folder on the server, then inside it. (This also outlasts the
-    # copy's toast, eight seconds, which would otherwise sit over the mirror's footer.)
-    sh.call("focusPane", "right")
-    sh.open(remote_uri + "/Documents")
-    beat(2.0)
-    sh.open(remote_uri + "/Documents/Receipts")
-    beat(2.0)
-    sh.open(remote_uri)
-    beat(1.5)
+        # ------------------------------------------------------------ a remote, side by side
+        rec.say("Side by side, with an SFTP server on the right")
+        sh.call("sideBySide", "toggle")
+        expect("side by side", lambda s: s.get("split") is True)
+        beat(0.8)
+        sh.call("focusPane", "right")
+        sh.open(remote_uri)
+        beat(2.5)
+        sh.call("focusPane", "left")
+        sh.select("Documents")
+        beat(1.0)
+        rec.say("Copy a folder across to the server")
+        sh.call("transfer", "copy")
 
-    # ------------------------------------------------- work on a file, then mirror it across
-    # Something has changed since the copy: a note edited, a new file beside it. The mirror's
-    # review says so — one changed, one new, the rest unchanged — and then it is run.
-    rec.say("Edit a note and add a file, then mirror the folder")
-    docs = os.path.join(home, "Documents")
-    with open(os.path.join(docs, "Notes.txt"), "a") as f:
-        f.write("book the ferry\n")
-    with open(os.path.join(docs, "Invoice 0042.md"), "w") as f:
-        f.write("# Invoice 0042\n\nDesign work, September: 12 h\n")
-    sh.call("focusPane", "left")
-    sh.open("file://" + docs)
-    sh.call("focusPane", "right")
-    sh.open(remote_uri + "/Documents")
-    beat(1.5)
-    sh.keys(("ctrl", "m"))
-    wait_for(lambda: (json.loads(sh.call("mirror", "state") or "{}").get("open") or None), timeout=10)
-    beat(2.0)
-    sh.call("mirror", "preflight")
-    wait_for(lambda: (json.loads(sh.call("mirror", "state") or "{}").get("screen") == "review") or None, timeout=30)
-    rec.say("The review: one changed, one new, the rest untouched")
-    beat(4.0)
-    rec.say("Mirror it")
-    sh.call("mirror", "run")
-    wait_for(lambda: ((json.loads(sh.call("mirror", "state") or "{}").get("run") or {}).get("state") in ("done", "failed") or None), timeout=60)
-    c.check("the mirror brought the new file across", os.path.isfile(os.path.join(remote_root, "Documents", "Invoice 0042.md")), os.listdir(os.path.join(remote_root, "Documents")))
-    beat(3.5)
-    sh.call("mirror", "close")
-    beat(0.8)
-    rec.say("kiki, for Omarchy")
-    sh.call("sideBySide", "toggle")
-    expect("one pane again", lambda s: s.get("split") is False)
-    sh.open("file://" + home)
-    beat(2.0)
+        def copied():
+            try:
+                jobs = json.loads(sh.call("activity") or "[]")
+            except json.JSONDecodeError:
+                return None
+            return (jobs and all(j.get("state") in ("done", "failed", "cancelled") for j in jobs)) or None
+        wait_for(copied, timeout=60)
+        c.check("Documents was copied to the server", os.path.isdir(os.path.join(remote_root, "Documents")), os.listdir(remote_root))
+        beat(2.0)
+        # Look at what landed: the folder on the server, then inside it. (This also outlasts the
+        # copy's toast, eight seconds, which would otherwise sit over the mirror's footer.)
+        sh.call("focusPane", "right")
+        sh.open(remote_uri + "/Documents")
+        beat(2.0)
+        sh.open(remote_uri + "/Documents/Receipts")
+        beat(2.0)
+        sh.open(remote_uri)
+        beat(1.5)
 
-    ok = rec.finish()
-    if DESKTOP:
-        desk.leave()
-    shutil.rmtree(remote_root, ignore_errors=True)
+        # ------------------------------------------------- work on a file, then mirror it across
+        # Something has changed since the copy: a note edited, a new file beside it. The mirror's
+        # review says so — one changed, one new, the rest unchanged — and then it is run.
+        rec.say("Edit a note and add a file, then mirror the folder")
+        docs = os.path.join(home, "Documents")
+        with open(os.path.join(docs, "Notes.txt"), "a") as f:
+            f.write("book the ferry\n")
+        with open(os.path.join(docs, "Invoice 0042.md"), "w") as f:
+            f.write("# Invoice 0042\n\nDesign work, September: 12 h\n")
+        sh.call("focusPane", "left")
+        sh.open("file://" + docs)
+        sh.call("focusPane", "right")
+        sh.open(remote_uri + "/Documents")
+        beat(1.5)
+        sh.keys(("ctrl", "m"))
+        wait_for(lambda: (json.loads(sh.call("mirror", "state") or "{}").get("open") or None), timeout=10)
+        beat(2.0)
+        sh.call("mirror", "preflight")
+        wait_for(lambda: (json.loads(sh.call("mirror", "state") or "{}").get("screen") == "review") or None, timeout=30)
+        rec.say("The review: one changed, one new, the rest untouched")
+        beat(4.0)
+        rec.say("Mirror it")
+        sh.call("mirror", "run")
+        wait_for(lambda: ((json.loads(sh.call("mirror", "state") or "{}").get("run") or {}).get("state") in ("done", "failed") or None), timeout=60)
+        c.check("the mirror brought the new file across", os.path.isfile(os.path.join(remote_root, "Documents", "Invoice 0042.md")), os.listdir(os.path.join(remote_root, "Documents")))
+        beat(3.5)
+        sh.call("mirror", "close")
+        beat(0.8)
+        rec.say("kiki, for Omarchy")
+        sh.call("sideBySide", "toggle")
+        expect("one pane again", lambda s: s.get("split") is False)
+        sh.open("file://" + home)
+        beat(2.0)
+
+        ok = rec.finish()
+        if DESKTOP:
+            desk.leave()
+    finally:
+        shutil.rmtree(remote_root, ignore_errors=True)
     c.check("the video was written", ok and os.path.getsize(rec.out) > 100_000, rec.out)
     print(f"  video: {rec.out}")

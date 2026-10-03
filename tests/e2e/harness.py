@@ -279,6 +279,19 @@ class Pointer:
 
 # ---------------------------------------------------------------------------- trees
 
+
+def drop_fixture(path):
+    """A perf flow's fixture, removed when the flow ends — however it ends — and the folder it sat
+    in (`/tmp/kiki-perf`) when nothing else is left there (owner, 2026-10-02: tests clean up after
+    themselves; `/tmp` is where throwaway gigabytes belong, and a flow rebuilds what it needs)."""
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
+    try:
+        os.rmdir(os.path.dirname(path.rstrip("/")))
+    except OSError:
+        pass
+
+
 def make_tree(root, spec):
     """Build a fixture. A dict is a folder, a string is a file's contents, an int is that many
     bytes of filler."""

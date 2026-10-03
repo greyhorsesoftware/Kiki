@@ -2,11 +2,11 @@
 
 use crate::listing::deco;
 use crate::listing::*;
+use crate::scratch::Scratch;
 use std::time::Duration;
 
-fn temp_tree(n: usize) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("kiki-listing-{}-{}", std::process::id(), n));
-    let _ = std::fs::remove_dir_all(&dir);
+fn temp_tree(n: usize) -> Scratch {
+    let dir = Scratch::new(&format!("listing-{}", n));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     for i in 0..n {
         std::fs::write(dir.join(format!("file{i}.txt")), vec![b'x'; i % 7]).unwrap();
@@ -19,8 +19,7 @@ fn temp_tree(n: usize) -> PathBuf {
 /// nothing at all) for ever.
 #[test]
 fn a_recreated_folder_is_listed_afresh() {
-    let dir = std::env::temp_dir().join(format!("kiki-recreate-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("recreate");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("before.txt"), b"before").unwrap();
     let uri = Uri::from_path(&dir);
@@ -29,6 +28,7 @@ fn a_recreated_folder_is_listed_afresh() {
     assert!(wait_scan(&l, Duration::from_secs(5)));
     assert_eq!(l.window(1, 1, 0, 10, None).u64_field("n"), Some(1));
 
+    // Gone and back under the same name: the point of the test, not its cleanup.
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("after-one.txt"), b"1").unwrap();
@@ -41,7 +41,6 @@ fn a_recreated_folder_is_listed_afresh() {
     assert_eq!(w.u64_field("n"), Some(2));
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows[0].str_field("name"), Some("after-one.txt"));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -88,7 +87,6 @@ fn open_window_and_stats() {
     let rows = w.get("rows").unwrap().as_arr().unwrap();
     assert_eq!(rows[0].str_field("name"), Some("sub"));
     assert_eq!(rows[1].get("meta").unwrap().u64_field("size"), Some(6));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -120,14 +118,12 @@ fn rescan_keeps_meta_for_unchanged() {
     let carried = reset.get("rows").unwrap().as_arr().unwrap();
     let kept = carried.iter().find(|r| r.str_field("name") == Some("file1.txt")).unwrap();
     assert!(kept.get("meta").unwrap() != &Value::Null, "the rows the Reset carried kept their metadata across the rescan");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn dot_files_hidden_until_asked() {
     let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-hidden-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("hidden");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), b"a").unwrap();
     std::fs::write(dir.join(".secret"), b"s").unwrap();
@@ -149,7 +145,6 @@ fn dot_files_hidden_until_asked() {
     assert_eq!(l.seek("a", Some(0)), Some(1));
     assert_eq!(l.seek("a", Some(1)), Some(0), "wraps");
     assert_eq!(l.seek("zz", None), None);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 // ------------------------------------------------------------ the view
@@ -158,8 +153,7 @@ fn dot_files_hidden_until_asked() {
 /// renumbers it. These are the operations every keystroke in the window goes through.
 #[test]
 fn the_view_sorts_filters_and_seeks() {
-    let dir = std::env::temp_dir().join(format!("kiki-view-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("view");
     std::fs::create_dir_all(dir.join("Zed")).unwrap();
     std::fs::write(dir.join("apple.txt"), vec![b'x'; 300]).unwrap();
     std::fs::write(dir.join("Banana.md"), vec![b'x'; 10]).unwrap();
@@ -211,8 +205,6 @@ fn the_view_sorts_filters_and_seeks() {
     let k = names(&l);
     assert_eq!(k[0], "Zed");
     assert!(k.contains(&"apple.txt".to_string()) && k.len() == 4);
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Plan 22's Accessed column: the atime sort. It reads a field nothing else does, so it is the
@@ -221,8 +213,7 @@ fn the_view_sorts_filters_and_seeks() {
 /// the other.
 #[test]
 fn the_view_sorts_by_access_time() {
-    let dir = std::env::temp_dir().join(format!("kiki-atime-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("atime");
     std::fs::create_dir_all(dir.join("Zed")).unwrap();
     // (name, accessed, modified) — in seconds since the epoch, a few years apart so no
     // filesystem's granularity can blur them.
@@ -258,7 +249,6 @@ fn the_view_sorts_by_access_time() {
     }
     assert_eq!(SortRole::parse("atime"), Some(SortRole::Atime), "and the client can ask for it by name");
     assert_eq!(SortRole::parse("accessed"), None);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Sets a file's access and modification times, which is the only way to have an atime a test can
@@ -296,8 +286,6 @@ fn windows_are_clamped_not_refused() {
     l.unsubscribe(9, 3);
     l.filter("file1");
     assert!(drain(&rx).is_empty(), "no events after unsubscribing");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Opening something that is not a directory reports it rather than hanging.
@@ -308,7 +296,6 @@ fn opening_what_is_not_a_folder_is_an_error() {
     let e = open(&Uri::from_path(&f));
     assert!(e.is_err(), "a file is not a listing");
     assert!(open(&Uri::from_path(&dir.join("no-such-folder"))).is_err());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// `mark_stale` and `gone` are what the watcher calls when a folder changes underneath a
@@ -331,7 +318,6 @@ fn cache_invalidation_is_safe_for_paths_nobody_has_open() {
     gone(&unknown);
     forget(&Uri::from_path(&unknown));
     assert!(find(&unknown).is_none());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A row that leaves every window before its stat job runs is skipped by that job — and used to
@@ -363,7 +349,6 @@ fn a_row_skipped_by_its_stat_job_can_still_be_enriched() {
     l.sort(SortRole::Size, false, Some((tx.into(), 9)));
     assert!(rx.recv_timeout(Duration::from_secs(20)).is_ok(), "the sort is answered once everything is enriched");
     assert!(l.inner.lock().unwrap().meta.iter().all(Option::is_some));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A rescan deals the pool's indexes again. What is known about a name has to cross it by name:
@@ -408,7 +393,6 @@ fn a_rescan_keeps_the_thumbnails_it_had() {
     assert_eq!(thumb("file4.txt"), Value::Null, "one that could not be made shows nothing");
     assert_eq!(thumb("file5.txt"), Value::Null, "and nobody else was given one");
     assert_eq!(thumb("aaa.txt"), Value::Null);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A thumbnail asked for before a rescan and finished after it belongs to the name it was asked
@@ -442,7 +426,6 @@ fn a_thumbnail_that_lands_after_a_rescan_lands_on_its_own_file() {
         assert!(Instant::now() < deadline, "the thumbnail job never answered");
         thread::sleep(Duration::from_millis(5));
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// One file arriving or leaving is told as what happened (`Splice`), not as "forget everything
@@ -490,7 +473,6 @@ fn a_small_change_is_spliced_not_reset() {
     l.patch(&[b"file9.txt".to_vec()], &[], &[]);
     let events = drain(&rx);
     assert!(events.iter().any(|e| e.str_field("event") == Some("Reset") && e.u64_field("gen").is_some()), "{events:?}");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Scrolling a long folder asks about every row it goes past. By the time a worker reaches one,
@@ -529,7 +511,6 @@ fn a_thumbnail_nobody_is_looking_at_any_more_is_dropped_unstarted() {
         inner.meta[idx as usize].as_ref().map(|m| m.mtime_ms).unwrap_or(0)
     };
     assert!(l.inner.lock().unwrap().deco.wants_thumb(b"file7.txt", mtime));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 // ---------------------------------------------------------------- repository-root rows (plan 15)
@@ -590,8 +571,7 @@ fn a_folder_of_projects_gives_every_project_its_branch_and_its_state() {
     if !crate::openin::on_path("git") {
         return;
     }
-    let base = std::env::temp_dir().join(format!("kiki-capsule-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = Scratch::new("capsule");
     std::fs::create_dir_all(base.join("plain")).unwrap();
     make_repo(&base.join("clean-one"), "main");
     make_repo(&base.join("dirty-one"), "release/2");
@@ -625,7 +605,6 @@ fn a_folder_of_projects_gives_every_project_its_branch_and_its_state() {
     assert_eq!(row_named(&rows, "clean-one").get("git").unwrap().str_field("branch"), Some(&hash[..8]));
 
     forget(&Uri::from_path(&base));
-    std::fs::remove_dir_all(&base).unwrap();
 }
 
 /// The one real cost of the capsule is a `git` per project, and it must never be on the way to
@@ -636,8 +615,7 @@ fn a_folder_of_projects_lists_no_slower_than_a_folder_of_folders() {
     if !crate::openin::on_path("git") {
         return;
     }
-    let base = std::env::temp_dir().join(format!("kiki-capsule-cost-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = Scratch::new("capsule-cost");
     std::fs::create_dir_all(&base).unwrap();
     let n = 12;
     for i in 0..n {
@@ -675,7 +653,6 @@ fn a_folder_of_projects_lists_no_slower_than_a_folder_of_folders() {
     // waited for one of them.
     assert!(with < without + Duration::from_millis(60), "listing {n} projects took {with:?} against {without:?} for the same folders without a .git in them: git is on the listing's path");
     forget(&uri);
-    std::fs::remove_dir_all(&base).unwrap();
 }
 
 /// A worker picks its rows with the listing locked and pushes them once it has let go. If the
@@ -693,7 +670,6 @@ fn pushing_a_row_that_a_rescan_has_taken_away_is_not_a_crash() {
     let sent: Vec<Value> = drain(&rx).into_iter().filter(|e| e.str_field("event") == Some("Rows")).collect();
     assert!(!sent.is_empty(), "the rows that do exist are still pushed");
     forget(&Uri::from_path(&dir));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// An edit inside a project moves neither its `HEAD` nor its index, so the stat that stands in
@@ -704,8 +680,7 @@ fn opening_a_folder_of_projects_again_asks_them_again() {
     if !crate::openin::on_path("git") {
         return;
     }
-    let base = std::env::temp_dir().join(format!("kiki-capsule-reopen-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let base = Scratch::new("capsule-reopen");
     std::fs::create_dir_all(&base).unwrap();
     make_repo(&base.join("one"), "main");
     let uri = Uri::from_path(&base);
@@ -720,7 +695,6 @@ fn opening_a_folder_of_projects_again_asks_them_again() {
     assert!(cached, "the same listing, served from memory");
     rows_until(&l2, |rows| row_named(rows, "one").get("git").unwrap().str_field("state") == Some("untracked"));
     forget(&uri);
-    std::fs::remove_dir_all(&base).unwrap();
 }
 
 // A remote row's owner and group are the names the plugin sent, back out as it sent them; a
@@ -855,7 +829,6 @@ fn a_window_once_asked_is_what_a_later_reset_carries() {
     let r = reset_from(&rx);
     assert_eq!(r.u64_field("first"), Some(20));
     assert!(r.get("rows").unwrap().as_arr().unwrap().is_empty(), "a window past the end of a filtered view carries nothing — and says so");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -868,7 +841,6 @@ fn a_subscriber_that_wants_nothing_unasked_gets_a_bare_reset() {
     l.sort(SortRole::Kind, true, None);
     let r = reset_from(&rx);
     assert!(r.get("rows").is_none() && r.get("first").is_none(), "{r:?}");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

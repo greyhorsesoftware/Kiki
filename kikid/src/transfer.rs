@@ -592,6 +592,7 @@ pub fn rename_item(item: &Uri, name: &str) -> Result<Uri, VfsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn a_taken_name_gets_the_number_a_local_copy_would_with_its_extension_kept() {
@@ -601,11 +602,10 @@ mod tests {
         assert_eq!(unique(&t, "index.html"), "index (3).html");
         assert_eq!(unique(&t, ".env"), ".env (2)", "a leading dot is not an extension");
         // The same answer `ops::unique_name` gives on this machine: one choice, one name.
-        let d = std::env::temp_dir().join(format!("kiki-unique-{}", std::process::id()));
+        let d = Scratch::new("unique");
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("a.txt"), b"").unwrap();
         assert_eq!(crate::ops::unique_name(&d, "a.txt"), unique(&HashMap::from([("a.txt".to_string(), (false, Meta::default()))]), "a.txt"));
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

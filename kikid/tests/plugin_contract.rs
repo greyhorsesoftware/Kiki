@@ -5,15 +5,15 @@ use kikid::json::Value;
 use kikid::listing::{self, Subscriber};
 use kikid::locations;
 use kikid::plugin::{self, Msg};
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-fn setup() -> std::path::PathBuf {
+fn setup() -> Scratch {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_kiki-plugin-stub"));
-    let dir = std::env::temp_dir().join(format!("kiki-contract-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("contract");
     std::fs::create_dir_all(dir.join("plugins")).unwrap();
     std::fs::copy(&bin, dir.join("plugins/kiki-plugin-stub")).unwrap();
     std::env::set_var("KIKI_PLUGIN_DIR", dir.join("plugins"));
@@ -185,7 +185,6 @@ fn stub_plugin_end_to_end() {
     mirror_uploads_to_a_location_and_settles(&dir);
     let start = Instant::now();
     assert!(start.elapsed() < Duration::from_secs(5));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A mirror that runs against a plugin, not just the local filesystem: the scan walks the remote

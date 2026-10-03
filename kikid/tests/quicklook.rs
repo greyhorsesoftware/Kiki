@@ -5,6 +5,7 @@ mod common;
 
 use kikid::json::Value;
 use kikid::quicklook;
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use kikid::vfs::VfsError;
 use std::path::{Path, PathBuf};
@@ -14,9 +15,8 @@ fn said(e: VfsError) -> (u16, Value) {
     e.said_json().unwrap_or_else(|| panic!("a numbered error, not {e:?}"))
 }
 
-fn scratch(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("kiki-quicklook-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+fn scratch(tag: &str) -> Scratch {
+    let dir = Scratch::new(&format!("quicklook-{tag}"));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -100,8 +100,6 @@ fn text_is_read_whole_binaries_refused_and_the_cap_said() {
     let text = v.str_field("text").unwrap();
     assert!(text.len() <= quicklook::TEXT_CAP && text.len() > quicklook::TEXT_CAP - 4, "cut at the cap: {}", text.len());
     assert!(!text.contains('\u{FFFD}'), "no broken character at the cut");
-
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A two-page PDF, letter then landscape A5, written by hand with a correct xref so poppler
@@ -150,7 +148,6 @@ fn pdf_pages_are_counted_rendered_once_and_refused_beyond_the_end() {
         assert_eq!(n, 1310);
         let (n, _) = said(quicklook::pdf_page(&uri, 1, 400).unwrap_err());
         assert_eq!(n, 1310);
-        std::fs::remove_dir_all(&dir).unwrap();
         return;
     }
 
@@ -211,7 +208,6 @@ fn pdf_pages_are_counted_rendered_once_and_refused_beyond_the_end() {
         let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("KIKI_THUMB_DIR");
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -267,5 +263,4 @@ fn a_local_file_is_its_path_and_a_remote_one_is_fetched_unwatched_and_dropped() 
     quicklook::drop(&copy).unwrap();
 
     std::env::remove_var("XDG_CACHE_HOME");
-    let _ = std::fs::remove_dir_all(&dir);
 }

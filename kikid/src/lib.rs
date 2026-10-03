@@ -30,6 +30,7 @@ pub mod plugin;
 pub mod preview;
 pub mod proto;
 pub mod quicklook;
+pub mod scratch;
 pub mod server;
 pub mod share;
 pub mod string_pool;

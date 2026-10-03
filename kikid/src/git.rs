@@ -521,6 +521,7 @@ pub fn file_json(path: &Path) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn git(dir: &Path, args: &[&str]) {
         let st = Command::new("git").arg("-C").arg(dir).args(args).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
@@ -536,8 +537,7 @@ mod tests {
         if !crate::openin::on_path("git") {
             return;
         }
-        let d = std::env::temp_dir().join(format!("kiki-git-hostile-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("git-hostile");
         std::fs::create_dir_all(d.join("hooks")).unwrap();
         git(&d, &["init", "-q", "-b", "main"]);
         git(&d, &["config", "user.email", "t@t"]);
@@ -566,7 +566,6 @@ mod tests {
         assert!(!marks.1.exists(), "the post-index-change hook ran: listing a folder executed the repository's hooks");
         // The status itself still worked — the guard must not cost us the overlay.
         assert!(state_for(&d, "a.txt", false).is_some() || repo_root(&d).is_some());
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -574,8 +573,7 @@ mod tests {
         if !crate::openin::on_path("git") {
             return;
         }
-        let d = std::env::temp_dir().join(format!("kiki-git-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("git");
         std::fs::create_dir_all(d.join("sub")).unwrap();
         git(&d, &["init", "-q", "-b", "main"]);
         git(&d, &["config", "user.email", "t@t"]);
@@ -591,7 +589,7 @@ mod tests {
         std::fs::write(d.join("ignored.log"), b"i").unwrap();
         std::fs::write(d.join("staged.txt"), b"s").unwrap();
         git(&d, &["add", "staged.txt"]);
-        assert_eq!(repo_root(&d.join("sub")), Some(d.clone()));
+        assert_eq!(repo_root(&d.join("sub")), Some(d.to_path_buf()));
         assert_eq!(state_for(&d, "tracked.txt", false).unwrap().state, State::Modified);
         assert_eq!(state_for(&d, "new.txt", false).unwrap().state, State::Untracked);
         assert_eq!(state_for(&d, "ignored.log", false).unwrap().state, State::Ignored);
@@ -607,14 +605,10 @@ mod tests {
         assert_eq!(f.get("last").unwrap().str_field("subject"), Some("init"));
         // a bare temp dir is not a repository (or is inside one on some CI images): either answer is valid
         let _ = repo_root(&std::env::temp_dir());
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
-    fn scratch(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-git-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d.canonicalize().unwrap()
+    fn scratch(tag: &str) -> Scratch {
+        Scratch::new(&format!("git-{tag}"))
     }
 
     #[test]
@@ -627,18 +621,16 @@ mod tests {
         assert!(!root_still_good(&None, Instant::now().checked_sub(NO_ROOT_FOR + Duration::from_secs(1)).unwrap()));
         // …and not at all once the folder is rescanned, which creating `.git` in it causes.
         invalidate(&d);
-        assert_eq!(repo_root(&d), Some(d.clone()));
-        std::fs::remove_dir_all(&d).unwrap();
+        assert_eq!(repo_root(&d), Some(d.to_path_buf()));
     }
 
     #[test]
     fn a_repository_that_is_no_longer_one_stops_being_one() {
         let d = scratch("un-init");
         git(&d, &["init", "-q", "-b", "main"]);
-        assert_eq!(repo_root(&d), Some(d.clone()));
+        assert_eq!(repo_root(&d), Some(d.to_path_buf()));
         std::fs::remove_dir_all(d.join(".git")).unwrap();
         assert_eq!(repo_root(&d), None, "a remembered root is only believed while its .git is there");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
@@ -657,7 +649,6 @@ mod tests {
         assert_eq!(state_for(&d.join(format!("d{}", n - 1)), "new.txt", false).map(|e| e.state), Some(State::Untracked));
         assert_eq!(state_for(&d.join("d0"), "new.txt", false).map(|e| e.state), Some(State::Untracked));
         assert!(cached_statuses() <= STATUS_KEEP);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     // ------------------------------------------------ repository-root rows (plan 15)
@@ -816,7 +807,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         git(&d, &["checkout", "-qb", "feature"]);
         assert!(moved(&d), "a checkout moves HEAD");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

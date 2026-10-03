@@ -8,3 +8,5 @@ __pycache__/
 # makepkg's working directories under packaging/: the fakeroot staging tree and the build's target
 packaging/pkg/
 packaging/src/
+# Worktrees made inside the checkout (a tool that bisects or builds beside the tree)
+.worktrees/

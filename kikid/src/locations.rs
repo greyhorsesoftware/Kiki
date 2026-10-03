@@ -554,12 +554,12 @@ mod key_verdict_tests {
 #[cfg(test)]
 mod image_tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn an_image_is_set_and_cleared_in_place() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-locimg-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("locimg");
         std::env::set_var("KIKI_CONFIG_DIR", &dir);
         upsert(Value::obj().s("name", "first").s("plugin", "sftp").done()).unwrap();
         upsert(Value::obj().s("name", "second").s("plugin", "sftp").done()).unwrap();
@@ -575,7 +575,6 @@ mod image_tests {
         assert_eq!(find("first").unwrap().str_field("plugin"), Some("sftp"));
         assert!(set_image("nobody", Some("/x.png")).is_err());
 
-        std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }
 }

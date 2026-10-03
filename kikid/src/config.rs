@@ -404,12 +404,12 @@ pub fn fs_space(path: &str) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn favorites_round_trip_in_temp_config() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-config-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("config");
         std::env::set_var("KIKI_CONFIG_DIR", &dir);
         let defaults = favorites();
         assert!(!defaults.as_arr().unwrap().is_empty());
@@ -422,7 +422,6 @@ mod tests {
         assert_eq!(s.get("view").unwrap().str_field("default"), Some("icon"));
         assert_eq!(s.get("view").unwrap().str_field("sort"), Some("name")); // default kept
         assert!(volumes().as_arr().unwrap().iter().any(|v| v.u64_field("total").unwrap_or(0) > 0));
-        std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }
 
@@ -433,8 +432,7 @@ mod tests {
     #[test]
     fn a_map_setting_can_be_read_back() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-config-map-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("config-map");
         std::env::set_var("KIKI_CONFIG_DIR", &dir);
 
         set_settings(&Value::obj().v("view", Value::obj().s("default", "icon").done()).done()).unwrap();
@@ -461,7 +459,6 @@ mod tests {
         assert_eq!(w.u64_field("mtime"), None);
         assert_eq!(w.u64_field("kind"), Some(90));
 
-        std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }
 
@@ -471,8 +468,7 @@ mod tests {
     #[test]
     fn an_unreadable_file_is_never_overwritten() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-config-broken-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("config-broken");
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("KIKI_CONFIG_DIR", &dir);
 
@@ -490,7 +486,6 @@ mod tests {
         write_named("locations.toml", &Value::obj().v("location", Value::Arr(vec![])).done()).unwrap();
         write_named("favorites.toml", &Value::obj().v("favorite", Value::Arr(vec![])).done()).unwrap();
 
-        std::fs::remove_dir_all(&dir).unwrap();
         std::env::remove_var("KIKI_CONFIG_DIR");
     }
 }
@@ -511,11 +506,11 @@ mod volume_tests {
 
 #[cfg(test)]
 mod view_pref_tests {
+    use crate::scratch::Scratch;
     #[test]
     fn remembers_per_folder_and_caps() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-views-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("views");
         std::env::set_var("KIKI_CONFIG_DIR", &d);
         super::set_view_pref("file:///a", "icon", "mtime", "desc", Some(true)).unwrap();
         super::set_view_pref("file:///b", "columns", "name", "asc", None).unwrap();
@@ -530,7 +525,6 @@ mod view_pref_tests {
         super::clear_view_prefs().unwrap();
         assert!(matches!(super::view_prefs(), crate::json::Value::Obj(m) if m.is_empty()));
         std::env::remove_var("KIKI_CONFIG_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// `view = "mirror"` was written by merely entering the two-pane layout, back when that was a
@@ -538,8 +532,7 @@ mod view_pref_tests {
     #[test]
     fn a_stored_mirror_view_is_cleaned_out_and_the_rest_is_kept() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-views-mirror-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("views-mirror");
         std::env::set_var("KIKI_CONFIG_DIR", &d);
         super::set_view_pref("file:///site", "mirror", "mtime", "desc", Some(true)).unwrap();
         super::set_view_pref("file:///photos", "gallery", "name", "asc", None).unwrap();
@@ -560,15 +553,13 @@ mod view_pref_tests {
         super::view_prefs();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), cleaned);
         std::env::remove_var("KIKI_CONFIG_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Plan 21: at most VIEW_PREFS_CAP folders; the least recently set fall off.
     #[test]
     fn the_cap_drops_the_oldest() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-views-cap-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("views-cap");
         std::env::set_var("KIKI_CONFIG_DIR", &d);
         // Written straight to the file, oldest first: a thousand and five calls to
         // `set_view_pref` would stamp them all with the same second.
@@ -584,7 +575,6 @@ mod view_pref_tests {
         assert!(p.get("file:///f0").is_none() && p.get("file:///f4").is_none(), "the five oldest went");
         assert!(p.get("file:///f5").is_some(), "and no more than that");
         std::env::remove_var("KIKI_CONFIG_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }
 

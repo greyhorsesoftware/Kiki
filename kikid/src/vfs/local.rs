@@ -263,11 +263,11 @@ pub fn group_name(gid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn scans_and_stats_temp_tree() {
-        let dir = std::env::temp_dir().join(format!("kiki-local-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("local");
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("a.txt"), b"hello").unwrap();
         std::fs::write(dir.join("b c.md"), b"# hi").unwrap();
@@ -282,6 +282,5 @@ mod tests {
         assert_eq!(m.size, 5);
         assert_eq!(k, EntryType::File);
         assert!(m.mtime_ms > 0);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

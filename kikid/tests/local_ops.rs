@@ -14,6 +14,7 @@
 
 use kikid::json::Value;
 use kikid::listing::Listing;
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use kikid::{jobs, ops};
 use std::os::unix::fs::PermissionsExt;
@@ -78,8 +79,7 @@ fn meta(p: &Path) -> Value {
 #[test]
 fn make_rename_delete_and_stamp_a_local_file() {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-localops-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("localops");
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", dir.join("config"));
     std::env::set_var("KIKI_STATE_DIR", dir.join("state"));
@@ -217,7 +217,6 @@ fn make_rename_delete_and_stamp_a_local_file() {
     std::env::remove_var("KIKI_DATA_DIR");
     std::env::remove_var("KIKI_STATE_DIR");
     std::env::remove_var("KIKI_CONFIG_DIR");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// `work.join("dest")`, made if it is not there — a copy needs somewhere to land.

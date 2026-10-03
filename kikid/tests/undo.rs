@@ -16,6 +16,7 @@
 use kikid::jobs;
 use kikid::json::Value;
 use kikid::ops;
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -113,8 +114,7 @@ fn items(paths: &[PathBuf]) -> Value {
 #[test]
 fn every_local_op_can_be_taken_back_and_put_back() {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let sandbox = std::env::temp_dir().join(format!("kiki-undo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&sandbox);
+    let sandbox = Scratch::new("undo");
     let work = sandbox.join("work");
     std::fs::create_dir_all(&work).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", sandbox.join("config"));
@@ -272,7 +272,6 @@ fn every_local_op_can_be_taken_back_and_put_back() {
     std::env::remove_var("KIKI_STATE_DIR");
     std::env::remove_var("KIKI_DATA_DIR");
     std::env::remove_var("KIKI_CONFIG_DIR");
-    std::fs::remove_dir_all(&sandbox).unwrap();
 }
 
 // ================================================================ a daemon that was restarted
@@ -386,8 +385,7 @@ impl Daemon {
 #[test]
 fn a_job_can_be_undone_by_the_daemon_that_comes_after() {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let sandbox = std::env::temp_dir().join(format!("kiki-undo-restart-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&sandbox);
+    let sandbox = Scratch::new("undo-restart");
     let work = sandbox.join("work");
     std::fs::create_dir_all(work.join("site")).unwrap();
     std::fs::create_dir_all(sandbox.join("plugins")).unwrap();
@@ -438,5 +436,4 @@ fn a_job_can_be_undone_by_the_daemon_that_comes_after() {
     assert_eq!(err.get("err").unwrap().str_field("code"), Some("NotFound"));
 
     drop(_second);
-    std::fs::remove_dir_all(&sandbox).unwrap();
 }

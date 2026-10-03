@@ -13,6 +13,7 @@ mod common;
 use kikid::json::Value;
 use kikid::locations::{self, Session};
 use kikid::plugin::Msg;
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use kikid::{jobs, json};
 use std::collections::BTreeMap;
@@ -286,8 +287,7 @@ fn a_copy_to_a_server_is_taken_back_exactly_and_only_where_it_is_still_the_copy(
 #[test]
 fn a_copy_to_a_server_can_be_undone_by_the_daemon_that_comes_after() {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let sandbox = std::env::temp_dir().join(format!("kiki-undo-remote-restart-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&sandbox);
+    let sandbox = Scratch::new("undo-remote-restart");
     let work = sandbox.join("work");
     std::fs::create_dir_all(work.join("site")).unwrap();
     std::fs::create_dir_all(sandbox.join("plugins")).unwrap();
@@ -325,7 +325,6 @@ fn a_copy_to_a_server_can_be_undone_by_the_daemon_that_comes_after() {
     assert_eq!(c.error("Undo").str_field("code"), Some("NotFound"), "and that was the only thing on the journal");
 
     drop(_second);
-    std::fs::remove_dir_all(&sandbox).unwrap();
 }
 
 /// A client on the daemon's socket, speaking the text framing (one JSON object per line), as

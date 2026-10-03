@@ -270,12 +270,15 @@ impl Listing {
         let mut old = old;
         let mut pool = StringPool::with_capacity(old.len());
         let mut meta = Vec::with_capacity(old.len());
-        let mut present: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::with_capacity(old.len());
         let result = self.dir.scan(&mut |chunk| {
             for e in chunk {
                 pool.push(e.name.as_bytes(), e.kind);
-                present.insert(e.name.as_bytes().to_vec());
-                meta.push(e.meta.or_else(|| old.remove(e.name.as_bytes()).flatten()));
+                // Taken out whether or not the scan brought its own meta (a server's does): what
+                // is left in `old` afterwards is exactly the names that have gone. A second set of
+                // every present name was kept for that once — two hundred thousand more
+                // allocations, a quarter of a 200 000-entry rescan (plan 07, 2026-10-02).
+                let kept = old.remove(e.name.as_bytes()).flatten();
+                meta.push(e.meta.or(kept));
             }
         });
         let mut inner = self.inner.lock().unwrap();
@@ -284,7 +287,7 @@ impl Listing {
         inner.queued = vec![false; n];
         // Names that have gone take what was known about them; the rest is untouched, so badges
         // and thumbnails are shown as they were while status runs again below.
-        inner.deco.retain_names(&present);
+        inner.deco.forget_names(old.keys());
         inner.git_done = had_git;
         inner.pos = vec![u32::MAX; n];
         inner.pool = pool;

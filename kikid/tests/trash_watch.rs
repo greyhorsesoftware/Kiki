@@ -10,6 +10,7 @@
 
 use kikid::json::Value;
 use kikid::listing::{self, Subscriber};
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -34,8 +35,7 @@ fn until(l: &std::sync::Arc<listing::Listing>, what: &str, want: &[&str]) {
 #[test]
 fn the_trash_view_follows_the_trash() {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-trash-watch-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("trash-watch");
     for (k, d) in [("KIKI_CONFIG_DIR", "config"), ("KIKI_STATE_DIR", "state"), ("KIKI_DATA_DIR", "data"), ("KIKI_THUMB_DIR", "thumbs"), ("KIKI_TRASH_DIR", "trash")] {
         std::env::set_var(k, dir.join(d));
     }
@@ -58,6 +58,4 @@ fn the_trash_view_follows_the_trash() {
     std::fs::remove_file(files.join("new.txt")).unwrap();
     std::fs::remove_file(files.join("old.txt")).unwrap();
     until(&l, "emptied", &[]);
-
-    let _ = std::fs::remove_dir_all(&dir);
 }

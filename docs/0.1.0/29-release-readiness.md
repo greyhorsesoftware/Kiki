@@ -78,6 +78,7 @@ One pass, on Omarchy, before tagging:
 - Give every plan a one-line **Status** under its title, as 17, 22 and 25 already have: *built and tested* / *built, unverified: what is missing* / *not in 0.1.0*. Today "are we done?" cannot be answered from the docs.
 - Commit. The tree is 55 files ahead of the last commit, including the deletion of `kikid/src/listing.rs`. Split it by topic so the history can be read.
 - Then: bump nothing (the workspace is already 0.1.0), write the release notes, `cd packaging && makepkg -f` on a clean checkout, install the package, and run section D against the **installed** kiki rather than the checkout.
+- **Before every tag since 0.5.0** (`docs/0.5.0/07-measure-before-tag.md`): the daemon benchmarks, pinned, against a same-day build of the baseline commit — `taskset -c 0-3 kikid bench run <tree> --json head.json`, the same from a worktree at the baseline's commit, `kikid bench compare base.json head.json` — every flagged line re-paired and given a verdict in the plan; then `make scroll-perf`, `gallery_perf`, and on the desktop `make open-perf` and `make memory-floor`, so the release has the window's numbers beside the daemon's; then the new `head.json` becomes `bench/baseline-linux-x86_64.json`. Fixtures are made under `/tmp/kiki-perf` for the run and removed when it ends, like every test's `kiki-*` folder.
 
 ## H. Large transfers: local → local, remote → local, local → remote
 

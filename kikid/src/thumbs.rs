@@ -197,6 +197,7 @@ pub fn thumbable(kind: Kind) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::scratch::Scratch;
     /// A failure is retried once it is old enough: the marker keeps a bad file from being tried
     /// on every scroll, but a bad moment does not cost the file its thumbnail for ever.
     /// A file that reads but does not decode is marked, and the marker says why.
@@ -205,7 +206,7 @@ mod tests {
         // Both of these set the thumbnail directory for the process: one at a time, or the
         // other's `remove_var` lands between this one's `set_var` and its read.
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-thumb-why-{}", std::process::id()));
+        let d = Scratch::new("thumb-why");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_THUMB_DIR", &d);
@@ -230,7 +231,7 @@ mod tests {
         // Both of these set the thumbnail directory for the process: one at a time, or the
         // other's `remove_var` lands between this one's `set_var` and its read.
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-thumb-fail-{}", std::process::id()));
+        let d = Scratch::new("thumb-fail");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_THUMB_DIR", &d);
@@ -255,7 +256,7 @@ mod tests {
     #[test]
     fn the_marker_s_length_is_a_setting() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-thumb-ttl-{}", std::process::id()));
+        let d = Scratch::new("thumb-ttl");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(d.join("config")).unwrap();
         std::env::set_var("KIKI_CONFIG_DIR", d.join("config"));
@@ -275,7 +276,7 @@ mod tests {
     #[test]
     fn png_round_trip_with_keys() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-thumbs-{}", std::process::id()));
+        let dir = Scratch::new("thumbs");
         let _ = fs::remove_dir_all(&dir);
         std::env::set_var("KIKI_THUMB_DIR", &dir);
         let src = dir.join("src.png");
@@ -310,7 +311,7 @@ mod tests {
     #[test]
     fn a_remote_picture_is_not_thumbnailed_from_a_local_path() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-thumbs-remote-{}", std::process::id()));
+        let dir = Scratch::new("thumbs-remote");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         std::env::set_var("KIKI_THUMB_DIR", dir.join("cache"));

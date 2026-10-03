@@ -1292,12 +1292,12 @@ pub fn wait(id: u64, timeout: Duration) -> Option<State> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn trash_undo_redo_round_trip() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs");
         std::fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_TRASH_DIR", d.join("trash"));
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
@@ -1341,7 +1341,6 @@ mod tests {
         assert!(!d.join("dst/a (2).txt").exists());
         std::env::remove_var("KIKI_TRASH_DIR");
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// A job that stops half way has still changed things, and those are as undoable as if it
@@ -1350,8 +1349,7 @@ mod tests {
     #[test]
     fn a_job_that_fails_half_way_can_still_be_undone() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-partial-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-partial");
         std::fs::create_dir_all(d.join("dst")).unwrap();
         std::env::set_var("KIKI_TRASH_DIR", d.join("trash"));
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
@@ -1378,7 +1376,6 @@ mod tests {
 
         std::env::remove_var("KIKI_TRASH_DIR");
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     // ---------------------------------------------------------------- what the activity view is told
@@ -1426,8 +1423,7 @@ mod tests {
     #[test]
     fn a_folder_copy_reports_files_the_current_one_and_where_it_went() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-view-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-view");
         std::fs::create_dir_all(d.join("site/img")).unwrap();
         std::fs::create_dir_all(d.join("dst")).unwrap();
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
@@ -1460,7 +1456,6 @@ mod tests {
         assert_eq!(cleared.get("jobs").and_then(Value::as_arr).map(|a| a.len()), Some(1));
         assert_eq!(dismiss(Some(id)), 0, "and only once");
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// One file that cannot be read does not stop the rest: they arrive, the job fails at the end
@@ -1469,8 +1464,7 @@ mod tests {
     fn a_copy_carries_on_past_a_file_it_cannot_read() {
         use std::os::unix::fs::PermissionsExt;
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-carry-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-carry");
         std::fs::create_dir_all(d.join("site/img")).unwrap();
         std::fs::create_dir_all(d.join("dst")).unwrap();
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
@@ -1504,7 +1498,6 @@ mod tests {
         assert!(!d.join("dst/site").exists(), "and undo takes back what did arrive");
         std::fs::set_permissions(d.join("site/locked.txt"), std::fs::Permissions::from_mode(0o644)).unwrap();
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     // ---------------------------------------------------------------- chmod over a selection
@@ -1530,8 +1523,7 @@ mod tests {
     #[test]
     fn a_masked_chmod_touches_only_the_named_bits_and_one_undo_puts_them_all_back() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-mask-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-chmod-mask");
         std::fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
         let files = ["a.txt", "b.sh", "c.key"];
@@ -1584,7 +1576,6 @@ mod tests {
         assert_eq!(modes(), was);
 
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// One item that cannot be changed does not stop the rest: the others change, the job fails
@@ -1592,8 +1583,7 @@ mod tests {
     #[test]
     fn a_chmod_carries_on_past_an_item_it_cannot_change() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-carry-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-chmod-carry");
         std::fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
         for name in ["a.txt", "c.txt"] {
@@ -1620,15 +1610,13 @@ mod tests {
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!((mode_of(&d.join("a.txt")), mode_of(&d.join("c.txt"))), (0o644, 0o644), "and undo puts back the two that changed");
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// Recursive: the folder and what is under it change, and the inverse names every path so.
     #[test]
     fn a_recursive_masked_chmod_is_undone_all_the_way_down() {
         let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-jobs-chmod-tree-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("jobs-chmod-tree");
         std::fs::create_dir_all(d.join("site")).unwrap();
         std::env::set_var("KIKI_STATE_DIR", d.join("state"));
         std::fs::write(d.join("site/index.html"), b"x").unwrap();
@@ -1646,6 +1634,5 @@ mod tests {
         assert_eq!(wait(uid, Duration::from_secs(5)), Some(State::Done));
         assert_eq!((mode_of(&d.join("site")), mode_of(&d.join("site/index.html"))), (0o755, 0o644));
         std::env::remove_var("KIKI_STATE_DIR");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 }

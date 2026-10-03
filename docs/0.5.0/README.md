@@ -22,7 +22,9 @@ are in each.
 6. `06-index-live.md` — **the index keeps up**: watched folders feed it as they change, the
    refresh descends only where an mtime moved.
 7. `07-measure-before-tag.md` — **the benchmarks run again** before the tag, on the baseline's
-   machine, with the thumbnail stat per row fixed if it is still 4 ms.
+   machine: one regression found and fixed (a 200 000-entry rescan 139 → 118 ms), the per-row
+   thumbnail stat found not worth a cache, a new baseline, the run on the release checklist.
+   **Built 2026-10-02.**
 8. `08-ci-once.md` — **CI builds once**: one run read with a stopwatch; the tests on the release
    profile under makepkg's own flags, which is what had every push compiling twice; the suite
    in two halves on two machines; the release's empty-version commit message. **Built

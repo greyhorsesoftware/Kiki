@@ -5,12 +5,15 @@
 //! without duplicates, GNU find's exit status 1, pipelined reads, and the write/stat/mkdir/rename/
 //! delete/setmtime/chmod round trip.
 
+#[path = "../../../kikid/src/scratch.rs"]
+mod scratch;
 use kiki_plugin_sdk::json::{self, Value};
 use kiki_plugin_sdk::{read_frame, write_binary, write_json};
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Msg, Session};
 use russh::{Channel, ChannelId, CryptoVec};
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode};
+use scratch::Scratch;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -948,10 +951,11 @@ fn wrong_password_is_an_auth_error_and_validate_checks_fields() {
 // ---------------------------------------------------------------- host keys
 
 /// A known_hosts fixture: `[127.0.0.1]:port <key>`, which is how ssh records a non-22 port.
-fn known_hosts_file(name: &str, port: u16, key: &str) -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!("kiki-known-hosts-{}-{name}", std::process::id()));
+fn known_hosts_file(name: &str, port: u16, key: &str) -> (Scratch, std::path::PathBuf) {
+    let d = Scratch::new(&format!("known-hosts-{name}"));
+    let p = d.join("known_hosts");
     std::fs::write(&p, format!("[127.0.0.1]:{port} {key}\n")).unwrap();
-    p
+    (d, p)
 }
 
 /// ssh already knows this host and this key: that is a verification the user has done once, by
@@ -959,13 +963,12 @@ fn known_hosts_file(name: &str, port: u16, key: &str) -> std::path::PathBuf {
 #[test]
 fn a_host_in_known_hosts_is_accepted_and_reported() {
     let m = start(ExecMode::Refused, ExecFail::None, 0);
-    let kh = known_hosts_file("match", m.port, &m.host_key);
+    let (_kh_dir, kh) = known_hosts_file("match", m.port, &m.host_key);
     let mut p = Plugin::spawn_with(Some(&kh));
     let r = p.connect(m.port, "secret");
     let ok = r.get("ok").unwrap_or_else(|| panic!("connect failed: {}", json::to_string(&r)));
     assert_eq!(ok.get("knownHost").and_then(Value::as_bool), Some(true), "known_hosts vouches for this key");
     assert!(ok.str_field("fingerprint").is_some());
-    let _ = std::fs::remove_file(kh);
 }
 
 /// A host ssh has never seen is connected to, and the key is handed back: kiki asks the user
@@ -985,7 +988,7 @@ fn an_unknown_host_is_reported_for_the_user_to_verify() {
 fn a_key_that_known_hosts_disagrees_with_is_refused() {
     let m = start(ExecMode::Refused, ExecFail::None, 0);
     let other = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap().public_key().to_openssh().unwrap();
-    let kh = known_hosts_file("changed", m.port, &other);
+    let (_kh_dir, kh) = known_hosts_file("changed", m.port, &other);
     let mut p = Plugin::spawn_with(Some(&kh));
     let r = p.connect(m.port, "secret");
     let err = r.get("err").unwrap_or_else(|| panic!("expected a refusal, got {}", json::to_string(&r)));
@@ -993,7 +996,6 @@ fn a_key_that_known_hosts_disagrees_with_is_refused() {
     let msg = err.str_field("message").unwrap_or("");
     assert!(msg.contains("known_hosts"), "{msg}");
     assert!(msg.contains("has changed"), "{msg}");
-    let _ = std::fs::remove_file(kh);
 }
 
 /// Once the user has accepted a key it is pinned in the location, and only that key will do.
@@ -1020,10 +1022,8 @@ fn a_pinned_key_must_match() {
 // ---------------------------------------------------------------- signing in
 
 /// A throwaway ~/.ssh with the named keys in it; returns the directory and each public key.
-fn ssh_dir_with(tag: &str, keys: &[(&str, &str)]) -> Option<(std::path::PathBuf, Vec<String>)> {
-    let d = std::env::temp_dir().join(format!("kiki-sftp-auth-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+fn ssh_dir_with(tag: &str, keys: &[(&str, &str)]) -> Option<(Scratch, Vec<String>)> {
+    let d = Scratch::new(&format!("sftp-auth-{tag}"));
     let mut publics = Vec::new();
     for (name, passphrase) in keys {
         let ok = Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", passphrase, "-C", name, "-f"]).arg(d.join(name)).status().map(|s| s.success()).unwrap_or(false);
@@ -1064,7 +1064,6 @@ fn several_named_keys_are_offered_in_order_until_one_is_taken() {
     let both = format!("{}\n{}", dir.join("id_ed25519").to_string_lossy(), dir.join("other").to_string_lossy());
     let r = connect_with(&mut p, m.port, Some(&both), Value::obj().done());
     assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// No key named is no key offered, though one the server would take is sitting in ~/.ssh: which
@@ -1079,7 +1078,6 @@ fn no_key_named_offers_none_even_when_one_would_work() {
     let r = connect_with(&mut p, m.port, None, Value::obj().done());
     assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("nothing to sign in with"), "{}", json::to_string(&r));
     assert!(OFFERED.lock().unwrap().is_empty(), "no key was named, so none may be offered");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1098,7 +1096,6 @@ fn a_named_key_is_the_only_one_offered() {
     let blob = |k: &str| k.split_whitespace().nth(1).unwrap_or("").to_string();
     let offered: Vec<String> = OFFERED.lock().unwrap().iter().map(|k| blob(k)).collect();
     assert!(offered.contains(&blob(&publics[1])) && !offered.contains(&blob(&publics[0])), "offered {offered:?}");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1114,7 +1111,6 @@ fn an_encrypted_key_needs_its_passphrase_and_says_so() {
     assert!(r.get("err").unwrap().str_field("message").unwrap_or("").contains("locked: wrong passphrase"), "{}", json::to_string(&r));
     let r = connect_with(&mut p, m.port, Some(&locked), Value::obj().s("passphrase", "open sesame").done());
     assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1125,7 +1121,6 @@ fn the_password_signs_in_when_every_key_is_refused() {
     let mut p = plugin_with_ssh_dir(&dir);
     let r = connect_with(&mut p, m.port, Some(&dir.join("id_ed25519").to_string_lossy()), Value::obj().s("password", "secret").done());
     assert!(r.get("ok").is_some(), "{}", json::to_string(&r));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Plenty of servers refuse the `password` method and ask through PAM instead. The same
@@ -1162,7 +1157,6 @@ fn browse_lists_the_keys_for_the_form() {
     let labels: Vec<&str> = options.iter().filter_map(|o| o.str_field("label")).collect();
     assert_eq!(labels, vec!["id_ed25519 · ED25519 · id_ed25519", "work · ED25519 · work · passphrase"]);
     assert_eq!(options[0].str_field("value"), Some(dir.join("id_ed25519").to_string_lossy().as_ref()));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The Password tab: a key the server would take is named too (left over from the other tab),
@@ -1191,7 +1185,6 @@ fn the_password_tab_offers_no_key_and_the_key_tab_sends_no_password() {
     let r = connect(&mut q, m2.port, "key", Value::obj().s("password", "secret").done());
     let err = r.get("err").unwrap_or_else(|| panic!("the Key tab must not fall back to the password: {}", json::to_string(&r)));
     assert!(!err.str_field("message").unwrap_or("").contains("password"), "{}", json::to_string(&r));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A location's name can be given away: remove one and add another under the same name. The

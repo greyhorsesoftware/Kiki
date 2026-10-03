@@ -4,8 +4,8 @@ Not in the default run — the fixture is 100,000 files and the flow takes a min
 
     tests/e2e/run.sh --flow scroll_perf
 
-The fixture is built once by `kikid bench gen flat100k` and kept (KIKI_SCROLL_DIR to put it
-elsewhere). Each view is scrolled twice: at a pace a hand could make (KIKI_SCROLL_SLOW_MS, 20 s
+The fixture is built by `kikid bench gen flat100k` and removed when the flow ends, pass or
+fail (KIKI_SCROLL_DIR to put it elsewhere). Each view is scrolled twice: at a pace a hand could make (KIKI_SCROLL_SLOW_MS, 20 s
 for the whole folder — 5,000 rows a second) and as a fling no hand makes (KIKI_SCROLL_FAST_MS,
 4 s). Every number is printed whether it passes or not. The budgets are wide — the compositor here
 is headless and renders in software, so a frame costs what the machine says it costs — and only
@@ -24,7 +24,7 @@ import shutil
 import subprocess
 import time
 
-from harness import wait_for
+from harness import wait_for, drop_fixture
 
 NEEDS = {"shell"}
 TITLE = "scrolling 100,000 files in each view, timed"
@@ -125,37 +125,40 @@ def run(ctx):
     c, sh = ctx.checks, ctx.shell
     if not c.check(f"the fixture has {N} files", build_fixture(), FIXTURE):
         return
-    uri = "file://" + FIXTURE
-    t0 = time.monotonic()
-    sh.call("open", uri)
-    got = wait_for(lambda: sh.state().get("count") if sh.state().get("uri") == uri and sh.state().get("done") else None,
-                   timeout=60, interval=0.05)
-    print(f"  ... listing {got} rows took {(time.monotonic() - t0) * 1000:.0f}ms")
-    if not c.check(f"the folder lists all {N} files", got is not None and got >= N, got):
-        return
+    try:
+        uri = "file://" + FIXTURE
+        t0 = time.monotonic()
+        sh.call("open", uri)
+        got = wait_for(lambda: sh.state().get("count") if sh.state().get("uri") == uri and sh.state().get("done") else None,
+                       timeout=60, interval=0.05)
+        print(f"  ... listing {got} rows took {(time.monotonic() - t0) * 1000:.0f}ms")
+        if not c.check(f"the folder lists all {N} files", got is not None and got >= N, got):
+            return
 
-    results = {}
-    print(f"  {'view':8} {'pace':>6} {'frames':>7} {'avg':>7} {'p95':>6} {'worst':>6} {'>33ms':>6} {'blank frames':>13} {'settle':>7} {'requests':>9}")
-    for view in ("list", "icon", "columns"):
-        sh.call("setView", view)
-        if wait_for(lambda: sh.state().get("view") == view or None, timeout=10) is None:
-            c.check(f"{view}: the view opens", False, sh.state().get("view"))
-            continue
-        time.sleep(0.5)
-        for label, ms in (("slow", SLOW), ("fast", FAST)):
-            s = scroll(sh, ms)
-            if not c.check(f"{view}, {label}: the scroll finishes", s is not None and "error" not in s, s or stats(sh)):
+        results = {}
+        print(f"  {'view':8} {'pace':>6} {'frames':>7} {'avg':>7} {'p95':>6} {'worst':>6} {'>33ms':>6} {'blank frames':>13} {'settle':>7} {'requests':>9}")
+        for view in ("list", "icon", "columns"):
+            sh.call("setView", view)
+            if wait_for(lambda: sh.state().get("view") == view or None, timeout=10) is None:
+                c.check(f"{view}: the view opens", False, sh.state().get("view"))
                 continue
-            results[f"{view}/{label}"] = {k: s[k] for k in KEPT}
-            blank = 100 * s["blankFrames"] / max(1, s["frames"])
-            print(f"  {view:8} {label:>6} {s['frames']:7d} {s['avgMs']:6.1f}ms {s['p95Ms']:4d}ms {s['worstMs']:4d}ms {s['over33']:6d}"
-                  f" {s['blankFrames']:6d} ({blank:3.0f}%) {s['settleMs']:5d}ms {s['requests']:9d}"
-                  f"   | per answer: wait {s.get('waitMs', 0):5.1f}ms  store {s.get('storeMs', 0):4.1f}ms  bind {s.get('bindMs', 0):5.1f}ms")
-            c.check(f"{view}, {label}: it reached the last row", s["lastRow"] >= s["rows"] - 1, (s["lastRow"], s["rows"]))
-            c.check(f"{view}, {label}: the view fills in within 2s of stopping", s["settleMs"] < 2000, f"{s['settleMs']}ms")
-            c.check(f"{view}, {label}: no frame takes a second", s["worstMs"] < 1000, f"{s['worstMs']}ms")
-            if label == "slow":
-                # At a pace a hand can make, the rows should be there before they are scrolled to.
-                c.check(f"{view}, slow: rows are there when they are scrolled to (under 5% of frames blank)", blank < 5, f"{blank:.1f}%")
-                c.check(f"{view}, slow: the median frame is under 50ms", s["avgMs"] < 50, f"{s['avgMs']}ms")
-    record(results)
+            time.sleep(0.5)
+            for label, ms in (("slow", SLOW), ("fast", FAST)):
+                s = scroll(sh, ms)
+                if not c.check(f"{view}, {label}: the scroll finishes", s is not None and "error" not in s, s or stats(sh)):
+                    continue
+                results[f"{view}/{label}"] = {k: s[k] for k in KEPT}
+                blank = 100 * s["blankFrames"] / max(1, s["frames"])
+                print(f"  {view:8} {label:>6} {s['frames']:7d} {s['avgMs']:6.1f}ms {s['p95Ms']:4d}ms {s['worstMs']:4d}ms {s['over33']:6d}"
+                      f" {s['blankFrames']:6d} ({blank:3.0f}%) {s['settleMs']:5d}ms {s['requests']:9d}"
+                      f"   | per answer: wait {s.get('waitMs', 0):5.1f}ms  store {s.get('storeMs', 0):4.1f}ms  bind {s.get('bindMs', 0):5.1f}ms")
+                c.check(f"{view}, {label}: it reached the last row", s["lastRow"] >= s["rows"] - 1, (s["lastRow"], s["rows"]))
+                c.check(f"{view}, {label}: the view fills in within 2s of stopping", s["settleMs"] < 2000, f"{s['settleMs']}ms")
+                c.check(f"{view}, {label}: no frame takes a second", s["worstMs"] < 1000, f"{s['worstMs']}ms")
+                if label == "slow":
+                    # At a pace a hand can make, the rows should be there before they are scrolled to.
+                    c.check(f"{view}, slow: rows are there when they are scrolled to (under 5% of frames blank)", blank < 5, f"{blank:.1f}%")
+                    c.check(f"{view}, slow: the median frame is under 50ms", s["avgMs"] < 50, f"{s['avgMs']}ms")
+        record(results)
+    finally:
+        drop_fixture(FIXTURE)

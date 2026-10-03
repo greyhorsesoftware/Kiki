@@ -948,9 +948,16 @@ fn main() {
     }
 }
 
+// The daemon's scratch-folder guard, by path: this crate does not link the daemon, and a test
+// that leaves `kiki-*` folders in the temp dir is the thing the guard exists to end.
+#[cfg(test)]
+#[path = "../../../kikid/src/scratch.rs"]
+mod scratch;
+
 #[cfg(test)]
 mod key_tests {
     use super::*;
+    use crate::scratch::Scratch;
     use std::process::Command;
 
     /// `KIKI_SSH_DIR` and `HOME` are process-wide: one test at a time.
@@ -960,11 +967,8 @@ mod key_tests {
         Command::new("ssh-keygen").args(["-q", "-t", kind, "-N", passphrase, "-C", comment, "-f"]).arg(dir.join(name)).status().map(|s| s.success()).unwrap_or(false)
     }
 
-    fn temp_ssh_dir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-sftp-keys-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn temp_ssh_dir(tag: &str) -> Scratch {
+        Scratch::new(&format!("sftp-keys-{tag}"))
     }
 
     #[test]
@@ -992,7 +996,6 @@ mod key_tests {
         assert!(found[2].encrypted, "a key with a passphrase says so");
         assert_eq!(found[2].label(), "work-laptop · ED25519 · work · passphrase");
         assert_eq!(found[1].label(), "id_rsa · RSA");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -1020,7 +1023,6 @@ mod key_tests {
             assert!(keys_to_try("").is_empty());
             std::env::remove_var("KIKI_SSH_DIR");
         }
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

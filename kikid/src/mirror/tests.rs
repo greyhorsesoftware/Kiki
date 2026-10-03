@@ -1,6 +1,7 @@
 //! The mirror's tests: filters, detectors, the pure diff, the guards and a real run.
 
 use super::*;
+use crate::scratch::Scratch;
 
 fn e(rel: &str, is_dir: bool, size: u64, mtime: u64) -> (String, Entry) {
     (rel.to_string(), Entry { path: 0, is_dir, size, mtime_ms: mtime, digest: None })
@@ -78,8 +79,7 @@ fn window_and_offset() {
 #[test]
 fn local_end_to_end_is_idempotent() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let d = std::env::temp_dir().join(format!("kiki-mirror-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror");
     // A run writes the audit log, and without this it wrote it in the developer's own
     // `~/.local/state/kiki` — two thousand lines of `mirror-delete keep.txt` by the time it was seen.
     std::env::set_var("KIKI_STATE_DIR", d.join("state"));
@@ -128,7 +128,6 @@ fn local_end_to_end_is_idempotent() {
     assert!(!d.join("r/keep.txt").exists());
     let text = report(&s, &plan4.lock().unwrap());
     assert!(text.contains("Delete/Extra | keep.txt"));
-    std::fs::remove_dir_all(&d).unwrap();
 }
 
 // ---------------------------------------------------------------- filters
@@ -149,8 +148,7 @@ fn filter_rules_match_by_kind() {
 #[test]
 fn filters_come_from_the_config_file_or_the_defaults() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-mirror-filters-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("mirror-filters");
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", &dir);
 
@@ -173,7 +171,6 @@ fn filters_come_from_the_config_file_or_the_defaults() {
     std::fs::write(dir.join("filters.toml"), "[[rule]]\nkind = \"endsWith\"\n\n[[rule]]\nvalue = \"x\"\n").unwrap();
     assert!(load_filters().is_empty());
 
-    std::fs::remove_dir_all(&dir).unwrap();
     std::env::remove_var("KIKI_CONFIG_DIR");
 }
 
@@ -205,8 +202,7 @@ fn a_skipped_subtree_is_counted_once_however_it_was_scanned() {
 #[test]
 fn the_rules_round_trip_and_no_rules_is_not_the_same_as_the_defaults() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-mirror-rules-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("mirror-rules");
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", &dir);
     let file = dir.join("filters.toml");
@@ -249,7 +245,6 @@ fn the_rules_round_trip_and_no_rules_is_not_the_same_as_the_defaults() {
     assert_eq!(filters(), (default_rules(), true));
     restore_default_filters().unwrap();
 
-    std::fs::remove_dir_all(&dir).unwrap();
     std::env::remove_var("KIKI_CONFIG_DIR");
 }
 
@@ -258,8 +253,7 @@ fn the_rules_round_trip_and_no_rules_is_not_the_same_as_the_defaults() {
 #[test]
 fn a_rule_that_could_never_match_is_refused_by_name() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-mirror-badrules-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new("mirror-badrules");
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", &dir);
     let rule = |kind: &str, value: &str| Value::obj().s("kind", kind).s("value", value).done();
@@ -281,7 +275,6 @@ fn a_rule_that_could_never_match_is_refused_by_name() {
     assert_eq!(check_rules(&[rule("matches", ".git"), Value::obj().s("kind", "contains").done()]).unwrap_err(), "rule 2: value must not be empty");
     assert_eq!(std::fs::read_to_string(dir.join("filters.toml")).unwrap(), before, "a refused save leaves the file alone");
 
-    std::fs::remove_dir_all(&dir).unwrap();
     std::env::remove_var("KIKI_CONFIG_DIR");
 }
 
@@ -293,8 +286,7 @@ fn a_rule_that_could_never_match_is_refused_by_name() {
 #[test]
 fn the_default_rules_skip_the_eight_names_and_mirror_the_rest() {
     let cancel = AtomicBool::new(false);
-    let d = std::env::temp_dir().join(format!("kiki-mirror-hidden-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-hidden");
     for dir in [".git/refs", ".idea", ".vscode", "node_modules/left-pad", "__pycache__", ".well-known/acme-challenge", "src"] {
         std::fs::create_dir_all(d.join(dir)).unwrap();
     }
@@ -333,8 +325,6 @@ fn the_default_rules_skip_the_eight_names_and_mirror_the_rest() {
     let mut got2: Vec<&str> = map2.iter().map(|(rel, _)| rel).collect();
     got2.sort();
     assert_eq!(got2, ["src", "src/main.rs", "visible.txt"]);
-
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 /// The guard that matters on the destination: a name the rules skip is not an "extra", so it is
@@ -342,8 +332,7 @@ fn the_default_rules_skip_the_eight_names_and_mirror_the_rest() {
 #[test]
 fn a_filtered_name_on_the_destination_is_never_an_extra() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let d = std::env::temp_dir().join(format!("kiki-mirror-extra-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-extra");
     std::env::set_var("KIKI_CONFIG_DIR", d.join("config"));
     std::fs::create_dir_all(d.join("config")).unwrap();
     std::fs::create_dir_all(d.join("r/node_modules")).unwrap();
@@ -369,7 +358,6 @@ fn a_filtered_name_on_the_destination_is_never_an_extra() {
     assert_eq!(plan.delete_count(), 3);
 
     std::env::remove_var("KIKI_CONFIG_DIR");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 // ---------------------------------------------------------------- detectors
@@ -455,8 +443,7 @@ fn the_clock_offset_is_the_median_of_matching_pairs() {
 #[test]
 fn a_manual_clock_offset_is_used_as_given_and_auto_measures_the_same_one() {
     const HOUR: i64 = 3_600_000;
-    let d = std::env::temp_dir().join(format!("kiki-mirror-offset-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-offset");
     std::fs::create_dir_all(d.join("m")).unwrap();
     std::fs::create_dir_all(d.join("r")).unwrap();
     // The same four files on both sides, byte for byte: only the clocks disagree.
@@ -506,8 +493,6 @@ fn a_manual_clock_offset_is_used_as_given_and_auto_measures_the_same_one() {
     s.clock_offset_auto = true;
     assert_eq!(copies(&mut s), 0);
     assert_eq!(s.clock_offset_ms, -3 * HOUR);
-
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -600,8 +585,7 @@ fn the_guards_refuse_before_anything_is_deleted() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let cancel = AtomicBool::new(false);
     let ctx = ExecCtx { cancel: &cancel, workers: 1, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
-    let d = std::env::temp_dir().join(format!("kiki-mirror-guards-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-guards");
     std::env::set_var("KIKI_STATE_DIR", d.join("state")); // the audit log: see above
     std::fs::create_dir_all(d.join("r")).unwrap();
     for n in ["one", "two", "three", "four"] {
@@ -650,8 +634,6 @@ fn the_guards_refuse_before_anything_is_deleted() {
     plan.actions
         .push(Action { rel: "/etc/passwd".into(), kind: ActionKind::Delete, reason: Reason::Extra, master: None, replica: None, bytes: 0, checked: true, state: State::Pending, progress: 0, error: None });
     assert!(execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("an absolute path is refused").message().contains("outside the replica root"));
-
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 // ---------------------------------------------------------------- scanning
@@ -659,8 +641,7 @@ fn the_guards_refuse_before_anything_is_deleted() {
 #[test]
 fn a_local_scan_walks_into_folders_and_skips_what_the_filters_name() {
     let cancel = AtomicBool::new(false);
-    let d = std::env::temp_dir().join(format!("kiki-mirror-scan-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-scan");
     std::fs::create_dir_all(d.join("sub/deeper")).unwrap();
     std::fs::create_dir_all(d.join(".git")).unwrap();
     std::fs::write(d.join("a.txt"), b"aaa").unwrap();
@@ -688,8 +669,6 @@ fn a_local_scan_walks_into_folders_and_skips_what_the_filters_name() {
     let stop = AtomicBool::new(true);
     let mut n = 0;
     assert!(scan_side(&side, &[], &mut n, &stop).is_err());
-
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 // ---------------------------------------------------------------- report
@@ -751,8 +730,7 @@ fn a_folder_is_not_mirrored_into_itself() {
 #[test]
 fn a_big_local_compare_stops_where_it_was_cancelled() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let d = std::env::temp_dir().join(format!("kiki-mirror-cancel-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-cancel");
     std::env::set_var("KIKI_STATE_DIR", d.join("state"));
     let entries: u64 = 10_000;
     for dir in 0..100 {
@@ -785,7 +763,6 @@ fn a_big_local_compare_stops_where_it_was_cancelled() {
     assert!(at.elapsed() < std::time::Duration::from_millis(500), "it took {:?} to stop", at.elapsed());
     let stopped_at = seen.load(Ordering::Relaxed);
     assert!(stopped_at < entries / 4, "it walked on to {stopped_at} of {entries} entries after being cancelled");
-    std::fs::remove_dir_all(&d).unwrap();
 }
 
 /// The Digest detector hashes whole files on the local side. A cancel is looked at INSIDE each
@@ -793,11 +770,10 @@ fn a_big_local_compare_stops_where_it_was_cancelled() {
 /// one being hashed was done.
 #[test]
 fn a_cancelled_compare_gives_up_on_the_file_it_is_hashing() {
-    let d = std::env::temp_dir().join(format!("kiki-mirror-digest-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("mirror-digest");
     std::fs::create_dir_all(&d).unwrap();
     std::fs::write(d.join("a.bin"), vec![b'a'; 4096]).unwrap();
-    let side = Side::Local(d.clone());
+    let side = Side::Local(d.to_path_buf());
     // The other side is a backend that hands out content hashes (an object store's ETag).
     let other: SideMap = [("a.bin".to_string(), Entry { path: 0, is_dir: false, size: 4096, mtime_ms: 0, digest: Some(crate::md5::hex(&vec![b'a'; 4096])) })].into_iter().collect();
 
@@ -811,15 +787,13 @@ fn a_cancelled_compare_gives_up_on_the_file_it_is_hashing() {
     cancel.store(true, Ordering::Relaxed);
     scan::fill_local_digests(&side, &mut mine, &other, &cancel);
     assert_eq!(mine.get("a.bin").unwrap().digest, None, "a cancelled compare hashes nothing");
-    std::fs::remove_dir_all(&d).unwrap();
 }
 
 /// The audit log is let grow to `AUDIT_CAP` lines and then loses its oldest half, newest intact.
 #[test]
 fn the_audit_log_is_compacted_past_its_cap() {
     let _guard = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let d = std::env::temp_dir().join(format!("kiki-audit-cap-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
+    let d = Scratch::new("audit-cap");
     std::env::set_var("KIKI_STATE_DIR", d.join("state"));
     let p = d.join("state/audit.log");
     for i in 0..=super::execute::AUDIT_CAP {
@@ -833,5 +807,4 @@ fn the_audit_log_is_compacted_past_its_cap() {
     assert!(!p.with_extension("log.tmp").exists(), "the file it was written through is gone");
     super::execute::audit("one more");
     assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), super::execute::AUDIT_CAP / 2 + 1, "appended to again after");
-    let _ = std::fs::remove_dir_all(&d);
 }

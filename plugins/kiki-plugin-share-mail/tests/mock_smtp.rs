@@ -1,9 +1,12 @@
 //! Drives the mail plugin binary in SMTP mode against an in-process mock SMTP server: implicit
 //! TLS with a pinned self-signed certificate, STARTTLS, AUTH PLAIN, and the message's MIME.
 
+#[path = "../../../kikid/src/scratch.rs"]
+mod scratch;
 use kiki_plugin_sdk::json::{self, Value};
 use kiki_plugin_sdk::{read_frame, write_json};
 use rustls::pki_types::pem::PemObject;
+use scratch::Scratch;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
@@ -146,7 +149,7 @@ fn start(implicit: bool) -> (u16, mpsc::Receiver<Received>) {
 }
 
 fn share(port: u16, security: &str, fingerprint: &str, password: &str) -> Value {
-    let dir = std::env::temp_dir().join(format!("kiki-mail-{}-{port}", std::process::id()));
+    let dir = Scratch::new(&format!("mail-{port}"));
     std::fs::create_dir_all(&dir).unwrap();
     let f = dir.join("my report.txt");
     std::fs::write(&f, b"line one\n.dot line\n").unwrap();
@@ -173,7 +176,6 @@ fn share(port: u16, security: &str, fingerprint: &str, password: &str) -> Value 
     }
     let _ = write_json(&mut stdin, &Value::obj().u("id", 2).s("type", "Shutdown").done());
     let _ = child.wait();
-    let _ = std::fs::remove_dir_all(&dir);
     reply
 }
 

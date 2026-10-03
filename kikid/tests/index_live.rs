@@ -12,6 +12,7 @@
 use kikid::index::{self, Mode};
 use kikid::json::Value;
 use kikid::listing::{self, Subscriber};
+use kikid::scratch::Scratch;
 use kikid::vfs::uri::Uri;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -20,10 +21,9 @@ use std::time::{Duration, Instant};
 /// The plan's bound: what the watch sees is searchable within a second.
 const WITHIN: Duration = Duration::from_secs(1);
 
-fn setup(tag: &str) -> PathBuf {
+fn setup(tag: &str) -> Scratch {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = std::env::temp_dir().join(format!("kiki-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new(tag);
     std::fs::create_dir_all(dir.join("home")).unwrap();
     std::env::set_var("KIKI_CONFIG_DIR", dir.join("config"));
     std::env::set_var("KIKI_STATE_DIR", dir.join("state"));
@@ -104,5 +104,4 @@ fn a_watched_folder_feeds_the_index_as_it_changes() {
     assert!(patches - patches0 <= 20 && relists - relists0 <= 1, "a burst is a few batches, not a lookup per name: {} patches, {} re-lists", patches - patches0, relists - relists0);
 
     drop(l);
-    let _ = std::fs::remove_dir_all(&dir);
 }

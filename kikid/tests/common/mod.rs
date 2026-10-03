@@ -9,6 +9,7 @@
 // Each test binary uses the part of this it needs; the rest is not dead, only unwanted there.
 #![allow(dead_code)]
 
+use kikid::scratch::Scratch;
 use std::path::{Path, PathBuf};
 
 /// The fake `secret-tool`'s record of what it was asked to do, one call per line.
@@ -17,12 +18,11 @@ pub fn secret_log(dir: &Path) -> String {
 }
 
 /// Sets `KIKI_PLUGIN_DIR`, `KIKI_CONFIG_DIR` and `KIKI_SECRET_TOOL` and returns the temporary
-/// directory they are under; the caller removes it.
-pub fn setup(tag: &str) -> PathBuf {
+/// scratch directory they are under, which goes when the caller drops it.
+pub fn setup(tag: &str) -> Scratch {
     let _guard = kikid::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bin = PathBuf::from(env!("CARGO_BIN_EXE_kiki-plugin-stub"));
-    let dir = std::env::temp_dir().join(format!("kiki-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = Scratch::new(tag);
     std::fs::create_dir_all(dir.join("plugins")).unwrap();
     std::fs::copy(&bin, dir.join("plugins/kiki-plugin-stub")).unwrap();
     std::env::set_var("KIKI_PLUGIN_DIR", dir.join("plugins"));

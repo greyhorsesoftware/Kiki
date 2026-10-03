@@ -238,6 +238,32 @@ pub(crate) fn restart_for_test() {
     sup().strikes.lock().unwrap().clear();
 }
 
+/// Waits until every thumbnail asked for so far has been dealt with: one job per worker that
+/// does nothing but wait at a barrier for the others, so none can take it before the real work
+/// in front of it is done. Only a test wants this — one whose scratch folder is the cache, and
+/// which found a fail marker written into it by a worker that was still going after the folder
+/// had been removed (2026-10-02).
+#[cfg(test)]
+pub(crate) fn settle_for_test() {
+    let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2).clamp(1, 4);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(n + 1));
+    for _ in 0..n {
+        let b = std::sync::Arc::clone(&barrier);
+        let _ = workers().send(Job {
+            uri: Uri::from_path(std::path::Path::new("/")),
+            kind: Kind::Image,
+            mtime_ms: 0,
+            size: Size::Normal,
+            wanted: Some(Box::new(move || {
+                b.wait();
+                false
+            })),
+            done: Box::new(|_| {}),
+        });
+    }
+    barrier.wait();
+}
+
 /// Ask for a thumbnail. A cache hit is answered here and now; anything else goes to the child.
 pub fn submit(job: Job) {
     if let Some(p) = thumbs::lookup(&job.uri, job.size, job.mtime_ms) {
@@ -276,6 +302,7 @@ pub fn blocking(uri: &Uri, kind: Kind, size: Size, mtime_ms: u64) -> Option<Path
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
     use std::sync::mpsc::RecvTimeoutError;
 
     /// A stand-in thumbnailer: speaks the framing, and misbehaves to order. Written in Python and
@@ -342,8 +369,7 @@ while True:
     #[test]
     fn a_file_that_kills_the_decoder_costs_only_itself() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-thumber-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("thumber");
         std::fs::create_dir_all(&dir).unwrap();
         let count = dir.join("deaths");
         let bin = fake(&dir, "die", &count);
@@ -365,7 +391,6 @@ while True:
         assert!(after.recv_timeout(Duration::from_secs(25)).unwrap().is_some(), "the next file is thumbnailed as if nothing happened");
 
         std::env::remove_var("KIKI_THUMBER");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A decoder that never returns holds a worker for ever. It is killed and the file is given up
@@ -376,8 +401,7 @@ while True:
     #[ignore = "waits out the 20s watchdog twice; run with --ignored"]
     fn a_decoder_that_hangs_is_killed() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = std::env::temp_dir().join(format!("kiki-thumber-hang-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("thumber-hang");
         std::fs::create_dir_all(&dir).unwrap();
         let bin = fake(&dir, "hang", &dir.join("deaths"));
         std::env::set_var("KIKI_THUMBER", &bin);
@@ -385,7 +409,6 @@ while True:
         let r = ask("file:///tmp/poison-hangs.jpg");
         assert_eq!(r.recv_timeout(STUCK * 3 + Duration::from_secs(20)), Ok(None));
         std::env::remove_var("KIKI_THUMBER");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// No thumbnailer installed is a packaging fault, not a reason for every picture in the

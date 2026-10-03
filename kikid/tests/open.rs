@@ -7,11 +7,12 @@
 mod common;
 
 use kikid::handlers::open::open_request;
+use kikid::scratch::Scratch;
 use std::path::PathBuf;
 
 /// A folder with a file in it, and a script standing in for every application: it writes what it
 /// was asked to open, which is how `default` is seen to have opened the right thing.
-fn fixture(tag: &str) -> (PathBuf, PathBuf) {
+fn fixture(tag: &str) -> (Scratch, PathBuf) {
     let d = common::setup(tag);
     std::fs::write(d.join("note.txt"), "hello").unwrap();
     let log = d.join("opened.log");
@@ -63,7 +64,6 @@ fn default_opens_a_local_file_with_its_application_and_refuses_a_servers_file() 
 
     // Nothing at all is a protocol error, not a launch of nothing.
     assert_eq!(open_request(&[], "default", None, None).unwrap_err().0, "Protocol");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -77,7 +77,6 @@ fn app_launches_the_chosen_entry_and_refuses_a_servers_file_first() {
     let (code, msg) = open_request(&[file_uri(&note), "stub://lab/x.png".into()], "app:imv.desktop", None, None).unwrap_err();
     assert_eq!(code, "Io");
     assert!(msg.contains("Quick Look"), "one server's file among local ones refuses the lot: {msg}");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -93,7 +92,6 @@ fn tool_answers_as_open_in_did_and_refuses_a_servers_file_before_looking_the_too
     let (code, msg) = open_request(&["stub://lab/a.rs".into()], "tool:nothing", None, None).unwrap_err();
     assert_eq!(code, "Io", "a number, not the tool's `Invalid`: {msg}");
     assert!(msg.contains("Quick Look"), "{msg}");
-    let _ = std::fs::remove_dir_all(&d);
 }
 
 #[test]
@@ -125,5 +123,4 @@ fn terminal_and_ai_open_in_a_folder_and_keep_their_own_words_for_a_server() {
     // And a `with` nobody knows is a protocol error, not a silent nothing.
     assert_eq!(open_request(&[file_uri(&d)], "elsewhere", None, None).unwrap_err().0, "Protocol");
     std::env::remove_var("TERMINAL");
-    let _ = std::fs::remove_dir_all(&d);
 }

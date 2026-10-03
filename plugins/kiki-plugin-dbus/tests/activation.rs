@@ -8,6 +8,9 @@
 //! package that owns it system-wide), and the window is a script that records what it was asked
 //! and answers as the shell's IPC does.
 
+#[path = "../../../kikid/src/scratch.rs"]
+mod scratch;
+use scratch::Scratch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -23,11 +26,8 @@ fn tools() -> bool {
     ["dbus-run-session", "busctl"].iter().all(|t| Command::new("which").arg(t).output().map(|o| o.status.success()).unwrap_or(false))
 }
 
-fn sandbox(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("kiki-dbus-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    d
+fn sandbox(tag: &str) -> Scratch {
+    Scratch::new(&format!("dbus-{tag}"))
 }
 
 fn script(path: &Path, body: &str) {
@@ -49,7 +49,7 @@ fn service(dir: &Path, name: &str, wrapper: &Path) {
 /// Everything the listener needs to stand up on a private bus: the stub window, the wrapper the
 /// bus activates, and the log the window writes.
 struct Fixture {
-    dir: PathBuf,
+    dir: Scratch,
     log: PathBuf,
 }
 
@@ -128,9 +128,7 @@ impl Fixture {
 }
 
 impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
+    fn drop(&mut self) {}
 }
 
 #[test]

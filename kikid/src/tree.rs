@@ -267,11 +267,11 @@ pub fn arrange(windows: &[Value], left_width: u32) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn tree_expand_filter_reveal() {
-        let d = std::env::temp_dir().join(format!("kiki-tree-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("tree");
         std::fs::create_dir_all(d.join("src/vfs")).unwrap();
         std::fs::create_dir_all(d.join("docs")).unwrap();
         std::fs::write(d.join("src/main.rs"), b"").unwrap();
@@ -291,7 +291,6 @@ mod tests {
         t.set_filter("");
         t.expand(1, false).unwrap();
         assert_eq!(t.visible.len(), 3);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// Project mode puts three windows side by side, and has to know which is which.

@@ -601,10 +601,10 @@ fn result_json(part: &str, r: Result<String, String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
-    fn scratch() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kiki-integrate-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+    fn scratch() -> Scratch {
+        let d = Scratch::new("integrate");
         std::fs::create_dir_all(&d).unwrap();
         std::env::set_var("KIKI_INTEGRATE_HOME", &d);
         std::env::set_var("KIKI_INTEGRATE_NO_EXEC", "1");

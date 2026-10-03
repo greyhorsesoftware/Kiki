@@ -284,6 +284,27 @@ impl Index {
         (0..self.len() as u32).filter(|&i| !self.removed[i as usize] && !self.is_root[i as usize] && self.parents[i as usize] == parent).collect()
     }
 
+    /// What a listing's rescan costs the index — one `relist` of the folder — for the bench
+    /// (`index_patch_ms`): the price of `patch_dir`, measured apart from the rescan it rides on.
+    pub(crate) fn relist_path(&mut self, dir: &Path) -> bool {
+        let Some(entry) = self.find_dir(dir) else { return false };
+        if self.unmoved(entry, dir) {
+            return false;
+        }
+        self.relist(entry, dir, &[]);
+        true
+    }
+
+    /// Whether a folder's mtime is the one the index saw: the refresh's own test, since a
+    /// folder's mtime moves on any name added, removed or renamed in it. Unknown mtimes (a
+    /// folder the index has no time for, or one it cannot stat now) count as moved.
+    fn unmoved(&self, entry: u32, dir: &Path) -> bool {
+        match (self.dir_mtime.get(&entry), dir_mtime_of(dir)) {
+            (Some(&seen), Some(now)) => seen == now,
+            _ => false,
+        }
+    }
+
     /// Re-lists one directory: its direct children are replaced; new subdirectories are crawled.
     fn relist(&mut self, dir_entry: u32, dir: &Path, excludes: &[String]) {
         let old: Vec<u32> = self.children(dir_entry);
@@ -474,6 +495,13 @@ pub fn patch_dir(dir: &Path) {
         return;
     }
     let Some(entry) = ix.find_dir(dir) else { return };
+    // The refresh's rule, applied here too: a folder's mtime moves on any name added, removed
+    // or renamed in it, so one that has not moved has nothing for the index — and a re-list of
+    // a 200 000-entry folder walks the whole index to find that out (plan 07, 2026-10-02: a
+    // rescan that changed no name cost the index 25 ms it did not need to spend).
+    if ix.unmoved(entry, dir) {
+        return;
+    }
     let ex = excludes();
     ix.relist(entry, dir, &ex);
     service().relists.fetch_add(1, Ordering::Relaxed);
@@ -706,14 +734,14 @@ pub fn hit_row(ix: &Index, h: &Hit) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     /// Two bugs in one place: the scan stopped at the first 40,000 matches and ranked only those,
     /// so the best hit could be one it never reached; and exactly MAX_RESULTS matches was reported
     /// as "there are more".
     #[test]
     fn every_match_is_ranked_and_capped_means_more_than_fit() {
-        let d = std::env::temp_dir().join(format!("kiki-index-many-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("index-many");
         std::fs::create_dir_all(d.join("aaa/bulk")).unwrap();
         std::fs::create_dir_all(d.join("zzz")).unwrap();
         // Enough to overflow what is returned. (The old cut-off was four times that; a fixture that
@@ -727,7 +755,7 @@ mod tests {
         for i in 0..MAX_RESULTS {
             std::fs::write(d.join(format!("aaa/tenk{i}")), b"").unwrap();
         }
-        let ix = build(std::slice::from_ref(&d), &default_excludes(), &AtomicBool::new(false));
+        let ix = build(&[d.to_path_buf()], &default_excludes(), &AtomicBool::new(false));
         let (hits, capped) = query(&ix, "report", Mode::Substring);
         assert_eq!(hits.len(), MAX_RESULTS);
         assert!(capped, "there were more matches than are returned");
@@ -735,20 +763,18 @@ mod tests {
         let (hits, capped) = query(&ix, "tenk", Mode::Substring);
         assert_eq!(hits.len(), MAX_RESULTS);
         assert!(!capped, "exactly as many as fit is not 'more'");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]
     fn builds_and_queries() {
-        let d = std::env::temp_dir().join(format!("kiki-index-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("index");
         std::fs::create_dir_all(d.join("Projects/omarchy/src")).unwrap();
         std::fs::create_dir_all(d.join("node_modules/x")).unwrap();
         std::fs::write(d.join("omarchy-cheatsheet.pdf"), b"").unwrap();
         std::fs::write(d.join("Projects/omarchy/src/main.rs"), b"").unwrap();
         std::fs::write(d.join("Projects/notes-omarchy.md"), b"").unwrap();
         std::fs::write(d.join("node_modules/x/omarchy.js"), b"").unwrap();
-        let ix = build(std::slice::from_ref(&d), &default_excludes(), &AtomicBool::new(false));
+        let ix = build(&[d.to_path_buf()], &default_excludes(), &AtomicBool::new(false));
         let (hits, capped) = query(&ix, "omarchy", Mode::Substring);
         assert!(!capped);
         let names: Vec<String> = hits.iter().map(|h| String::from_utf8_lossy(ix.name(h.entry)).into_owned()).collect();
@@ -778,6 +804,5 @@ mod tests {
         assert_eq!(query(&back, "main.rs", Mode::Prefix).0.len(), 0);
         assert_eq!(back.dir_mtime.len(), ix.dir_mtime.len());
         assert!(Index::load(&d.join("nope.bin")).is_none());
-        std::fs::remove_dir_all(&d).unwrap();
     }
 }

@@ -332,6 +332,7 @@ pub fn rename(authority: &str, name: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     fn usb(root: &Path, id: &str, attrs: &[(&str, &str)], interfaces: &[(&str, &[(&str, &str)])]) {
         let d = root.join(id);
@@ -353,8 +354,7 @@ mod tests {
 
     #[test]
     fn classifies_camera_phone_and_iphone_and_ignores_the_rest() {
-        let root = std::env::temp_dir().join(format!("kiki-sysfs-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = Scratch::new("sysfs");
         usb(
             &root,
             "1-2",
@@ -392,7 +392,6 @@ mod tests {
         assert_eq!(only_mtp, vec!["mtp"]);
         assert!(openable(devs, |_| false).is_empty());
         assert!(!KINDS.iter().any(|k| crate::plugin::ships(k)), "0.1.0 ships no device kind (plan 31); update this when one does");
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

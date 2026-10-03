@@ -53,14 +53,14 @@ pub fn clear() {
 
 #[cfg(test)]
 mod tests {
+    use crate::scratch::Scratch;
     /// `KIKI_CACHE_DIR` moves the copies with the rest of the cache: what `make run` sets so a
     /// checkout never writes into the installed kiki's folders.
     #[test]
     fn the_copies_follow_the_cache_directory() {
-        let d = std::env::temp_dir().join(format!("kiki-fetched-{}", std::process::id()));
+        let d = Scratch::new("fetched");
         std::env::set_var("KIKI_CACHE_DIR", &d);
         assert_eq!(super::cache_dir().unwrap(), d.join("open"));
         std::env::remove_var("KIKI_CACHE_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }

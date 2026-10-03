@@ -358,10 +358,16 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
     let relisted = ix.refresh(&[]);
     put(&mut m, "index_refresh_ms", ms(t.elapsed()));
     put(&mut m, "index_refresh_relisted", relisted as f64);
+    // What a rescan hands the index: one re-list of the folder (`patch_dir`). Timed on its own
+    // because it rides inside `rescan_ms`, where it is a quarter of a 200 000-entry rescan
+    // (plan 07, 2026-10-02) — the `children()` walk over the whole index per call, not the read.
+    let t = Instant::now();
+    ix.relist_path(dir);
+    put(&mut m, "index_patch_ms", ms(t.elapsed()));
     // mirror scan + diff against an empty replica (local ↔ local)
-    let replica = std::env::temp_dir().join(format!("kiki-bench-replica-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&replica);
-    std::fs::create_dir_all(&replica).unwrap();
+    // Scratch for the rest of the run goes with its guard, however the run ends (a bench is a
+    // run, not a test, and left `kiki-bench-*` behind it when it was interrupted).
+    let replica = crate::scratch::Scratch::new("bench-replica");
     if let Ok(mut spec) = crate::mirror::Spec::from_json(&Value::obj().s("master", uri.to_string()).s("replica", Uri::from_path(&replica).to_string()).s("direction", "upload").done()) {
         let t = Instant::now();
         if let Ok(plan) = crate::mirror::scan(&mut spec, &AtomicBool::new(false)) {
@@ -369,7 +375,7 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
             put(&mut m, "mirror_actions", plan.actions.len() as f64);
         }
     }
-    let _ = std::fs::remove_dir_all(&replica);
+    drop(replica);
     // thumbnails for the first 50 images, if any
     let images: Vec<PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e == "png" || e == "jpg").unwrap_or(false)).take(50).collect()).unwrap_or_default();
     if !images.is_empty() {
@@ -385,9 +391,9 @@ pub fn measure(dir: &Path) -> BTreeMap<String, Value> {
         put(&mut m, "thumbs_made", made as f64);
     }
     // a 64 MiB copy through the job copier
-    let src = std::env::temp_dir().join(format!("kiki-bench-src-{}", std::process::id()));
-    let dst = std::env::temp_dir().join(format!("kiki-bench-dst-{}", std::process::id()));
-    let _ = std::fs::remove_file(&dst);
+    let copy = crate::scratch::Scratch::new("bench-copy");
+    let src = copy.join("src");
+    let dst = copy.join("dst");
     let wrote = (|| -> std::io::Result<()> {
         use std::io::Write;
         let mut f = std::fs::File::create(&src)?;
@@ -473,7 +479,8 @@ fn machine(dir: &Path) -> Value {
 
 fn run_child(path: &Path) -> Option<Value> {
     let exe = std::env::current_exe().ok()?;
-    let out = std::env::temp_dir().join(format!("kiki-bench-child-{}-{}.json", std::process::id(), path.file_name()?.to_string_lossy()));
+    let scratch = crate::scratch::Scratch::new(&format!("bench-child-{}", path.file_name()?.to_string_lossy()));
+    let out = scratch.join("out.json");
     let st = std::process::Command::new(exe).env("KIKI_BENCH_CHILD", "1").args(["bench", "run"]).arg(path).arg("--json").arg(&out).stdout(std::process::Stdio::null()).status().ok()?;
     if !st.success() {
         return None;
@@ -545,8 +552,7 @@ mod tests {
     #[test]
     fn small_tree_measures_every_metric() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-bench-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::scratch::Scratch::new("bench");
         gen("photos", &d.join("photos")).unwrap();
         flat(&d.join("flat"), 300).unwrap();
         std::env::set_var("KIKI_CACHE_DIR", d.join("cache"));
@@ -565,6 +571,7 @@ mod tests {
             "index_build_ms",
             "index_query_us",
             "index_refresh_ms",
+            "index_patch_ms",
             "mirror_scan_ms",
             "copy64m_ms",
             "rss_peak_mb",
@@ -574,16 +581,19 @@ mod tests {
         assert_eq!(as_f64(&m["entries"]), Some(303.0));
         let p = measure(&d.join("photos"));
         assert!(p.contains_key("thumbs_ms"), "thumbnails measured");
+        // The windows above asked for thumbnails the workers may still be making: let them finish,
+        // and drop the decoder child — which writes the fail markers, on its own clock — before
+        // the cache they write into goes with `d`.
+        crate::thumber::settle_for_test();
+        crate::thumber::restart_for_test();
         std::env::remove_var("KIKI_CACHE_DIR");
         std::env::remove_var("XDG_CACHE_HOME");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn the_transfer_fixture_has_every_awkward_case_and_is_the_same_every_time() {
         use std::os::unix::fs::PermissionsExt;
-        let d = std::env::temp_dir().join(format!("kiki-bench-transfer-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::scratch::Scratch::new("bench-transfer");
         transfer(&d.join("a"), 300, 40, &[3 << 20, 1 << 20]).unwrap();
         transfer(&d.join("b"), 300, 40, &[3 << 20, 1 << 20]).unwrap();
         let count = |root: &Path| {
@@ -626,7 +636,6 @@ mod tests {
             .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() / (365 * 24 * 3600))
             .collect();
         assert!(mtimes.len() >= 5, "times spread over years: {mtimes:?}");
-        std::fs::remove_dir_all(&d).unwrap();
     }
 
     fn folder_of(dir: &Path, i: usize, dirs: usize) -> std::path::PathBuf {

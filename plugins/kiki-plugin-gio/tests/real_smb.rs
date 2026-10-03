@@ -19,8 +19,11 @@
 //! not there is `Invalid` on the `share` field, an unreachable server is `Network` naming the
 //! host, and a server that offers only SMB1 is refused in those words.
 
+#[path = "../../../kikid/src/scratch.rs"]
+mod scratch;
 use kiki_plugin_sdk::json::{self, Value};
 use kiki_plugin_sdk::{read_frame, write_binary, write_json};
+use scratch::Scratch;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
@@ -79,7 +82,8 @@ fn up(port: u16, deadline: Duration) -> bool {
 
 /// A server, a bus and a gvfsd, all this test's own; every one of them dies with it.
 struct Fixture {
-    dir: PathBuf,
+    // Dropped after the processes below are signalled: fields go in declaration order, after `drop`.
+    dir: Scratch,
     root: PathBuf,
     guest: PathBuf,
     port: u16,
@@ -94,8 +98,7 @@ impl Fixture {
         // Short, and it has to be: Samba's messaging socket is `<lock directory>/msg.lock/<pid>`,
         // and a unix socket path is 107 bytes. Under anything deeper `smbd` prints two lines and
         // exits with "messaging_dgm_ref failed: File name too long".
-        let dir = std::env::temp_dir().join(format!("kiki-smb-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = Scratch::new("smb");
         let (root, guest) = (dir.join("share"), dir.join("guest"));
         std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&guest).map_err(|e| e.to_string())?;
@@ -239,7 +242,6 @@ impl Drop for Fixture {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

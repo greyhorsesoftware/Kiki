@@ -129,10 +129,16 @@ impl Decorations {
         self.by_name.iter().filter(|(_, d)| d.repo.is_some()).map(|(k, _)| k.clone()).collect()
     }
 
-    /// Drop everything known about names that the folder no longer has. Called after a rescan,
-    /// which is the only time a name can leave; before then the map grows only with the folder.
-    pub fn retain_names(&mut self, present: &std::collections::HashSet<Vec<u8>>) {
-        self.by_name.retain(|k, d| present.contains(k) && (d.thumb.is_some() || d.git.is_some() || d.repo.is_some()));
+    /// Drop everything known about names that the folder no longer has — `gone` is the rescan's
+    /// list of them, which is the only time a name can leave; before then the map grows only with
+    /// the folder. By the gone names, not the present ones: the map is a few decorated rows, the
+    /// folder may be two hundred thousand, and a set of the latter cost more than the rescan's
+    /// own read (plan 07, 2026-10-02). Entries left with nothing in them go too.
+    pub fn forget_names<'a>(&mut self, gone: impl Iterator<Item = &'a Vec<u8>>) {
+        for name in gone {
+            self.by_name.remove(name);
+        }
+        self.by_name.retain(|_, d| d.thumb.is_some() || d.git.is_some() || d.repo.is_some());
     }
 
     pub fn clear_git(&mut self) {

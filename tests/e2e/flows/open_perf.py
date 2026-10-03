@@ -1,6 +1,7 @@
 """Opening a folder: how long until its first rows are there, and how many requests it took.
 
-Not in the default run — the fixtures are built once and the flow takes a minute:
+Not in the default run — the fixtures are built for the run and removed after it, and the
+flow takes a minute:
 
     make open-perf                       (or tests/e2e/run.sh --flow open_perf)
 
@@ -18,7 +19,7 @@ prints how it differs from the last one on the same machine. Nothing is asserted
 openings happened: the point is the shape, before and after.
 """
 import getpass, json, os, shutil, subprocess, time
-from harness import wait_for
+from harness import wait_for, drop_fixture
 from servers import Servers, add_location, sshd_bin
 
 NEEDS = {"shell"}
@@ -41,7 +42,7 @@ def probe(ctx):
 
 
 def flat(dir, n):
-    """`n` small files of a few kinds, like `kikid bench gen flat10k` makes. Kept between runs."""
+    """`n` small files of a few kinds, like `kikid bench gen flat10k` makes; gone when the flow ends."""
     if os.path.isdir(dir) and len(os.listdir(dir)) >= n:
         return
     shutil.rmtree(dir, ignore_errors=True)
@@ -180,4 +181,6 @@ def run(ctx):
         d.call("RemoveLocation", name="open-perf")
         servers.stop()
         shutil.rmtree(scratch, ignore_errors=True)
+        drop_fixture(local1k)
+        drop_fixture(local10k)
     record(results)

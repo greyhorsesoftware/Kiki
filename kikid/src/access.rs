@@ -127,12 +127,12 @@ pub fn count() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     #[test]
     fn records_latest_open_per_uri_and_clears() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-access-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("access");
         std::env::set_var("KIKI_DATA_DIR", &d);
         clear().unwrap();
         assert_eq!(opened("file:///tmp/a%20b.txt"), None);
@@ -148,7 +148,6 @@ mod tests {
         assert_eq!(opened("file:///tmp/a b.txt"), None);
         assert!(!path().exists());
         std::env::remove_var("KIKI_DATA_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// Plan 22: past 50,000 lines the log is rewritten with the newest entry per URI. Left to
@@ -157,8 +156,7 @@ mod tests {
     #[test]
     fn the_log_is_compacted_once_it_passes_fifty_thousand_lines() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let d = std::env::temp_dir().join(format!("kiki-access-compact-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("access-compact");
         std::env::set_var("KIKI_DATA_DIR", &d);
         clear().unwrap();
 
@@ -191,6 +189,5 @@ mod tests {
 
         clear().unwrap();
         std::env::remove_var("KIKI_DATA_DIR");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }

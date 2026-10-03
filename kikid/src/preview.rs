@@ -70,9 +70,10 @@ fn text_head(path: &std::path::Path, max_lines: usize, cap: usize, markdown: boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
     #[test]
     fn text_head_is_capped() {
-        let dir = std::env::temp_dir().join(format!("kiki-preview-{}", std::process::id()));
+        let dir = Scratch::new("preview");
         std::fs::create_dir_all(&dir).unwrap();
         let big = dir.join("big.txt");
         let line = "x".repeat(100) + "\n";
@@ -83,16 +84,15 @@ mod tests {
         assert_eq!(v.get("truncated").unwrap().as_bool(), Some(true));
         let v = preview(&Uri::from_path(&dir)).unwrap();
         assert_eq!(v.u64_field("n"), Some(1));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 
 #[cfg(test)]
 mod markdown_tests {
+    use crate::scratch::Scratch;
     #[test]
     fn markdown_preview_is_flagged_and_longer() {
-        let d = std::env::temp_dir().join(format!("kiki-md-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = Scratch::new("md");
         std::fs::create_dir_all(&d).unwrap();
         let body: String = (0..120).map(|i| format!("- item {i}\n")).collect();
         std::fs::write(d.join("notes.md"), format!("# Title\n\n{body}")).unwrap();
@@ -103,6 +103,5 @@ mod markdown_tests {
         let txt = super::preview(&crate::vfs::uri::Uri::from_path(&d.join("notes.txt"))).unwrap();
         assert!(txt.get("markdown").is_none());
         assert_eq!(txt.str_field("text").unwrap().lines().count(), super::TEXT_LINES);
-        std::fs::remove_dir_all(&d).unwrap();
     }
 }
