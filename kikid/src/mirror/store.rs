@@ -11,6 +11,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Plans kept at most. Those being shown or run are never the ones dropped.
 pub const KEEP: usize = 8;
 
+/// One off a counter, never below nought, answering what is left. Written out rather than
+/// called: `fetch_update` is deprecated as of Rust 1.98, and `try_update`, the name that
+/// replaces it, is not in the release before — and kiki's builders are not all on the same one
+/// (the aarch64 container tracks Arch Linux ARM, which follows Arch at its own pace). This is
+/// the loop both names wrap, and it compiles whichever of them a toolchain has (2026-10-04).
+fn one_off(n: &AtomicUsize) -> usize {
+    let mut now = n.load(Ordering::SeqCst);
+    loop {
+        let left = now.saturating_sub(1);
+        match n.compare_exchange_weak(now, left, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return left,
+            Err(seen) => now = seen,
+        }
+    }
+}
+
 pub struct Stored {
     pub spec: Spec,
     pub plan: Arc<Mutex<Plan>>,
@@ -56,7 +72,7 @@ pub fn unview(job: u64) {
     let wanted = crate::jobs::plan_wanted(job);
     let mut p = plans().lock().unwrap();
     let Some(s) = p.get(&job) else { return };
-    let left = s.viewers.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| Some(v.saturating_sub(1))).unwrap_or(1).saturating_sub(1);
+    let left = one_off(&s.viewers);
     if left == 0 && !wanted {
         p.remove(&job);
     }

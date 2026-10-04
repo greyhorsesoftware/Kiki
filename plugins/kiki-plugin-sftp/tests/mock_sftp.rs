@@ -117,6 +117,20 @@ enum ExecFail {
     ExitOne,
 }
 
+/// One off a counter, never below nought. Written out rather than called: `fetch_update` is
+/// deprecated as of Rust 1.98 and `try_update`, the name that replaces it, is not in the release
+/// before — and the builders are not all on the same one. This is the loop both names wrap
+/// (2026-10-04; the same helper is in `mirror/store.rs` and the plugin SDK).
+fn one_off(n: &AtomicUsize) {
+    let mut now = n.load(Ordering::SeqCst);
+    while now > 0 {
+        match n.compare_exchange_weak(now, now - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return,
+            Err(seen) => now = seen,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Counters {
     readdir: AtomicUsize,
@@ -385,7 +399,7 @@ impl tokio::io::AsyncWrite for Counting {
             let counters = self.counters.clone();
             drain_packets(&mut self.wbuf, |t| {
                 if t == FXP_DATA || t == FXP_STATUS {
-                    let _ = counters.inflight.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| Some(v.saturating_sub(1)));
+                    one_off(&counters.inflight);
                 }
             });
         }

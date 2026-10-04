@@ -572,11 +572,26 @@ pub mod liblog {
         }
     }
 
+    /// One off a counter, never below nought. Written out rather than called: `fetch_update` is
+    /// deprecated as of Rust 1.98, and `try_update`, the name that replaces it, is not in the
+    /// release before — and kiki's builders are not all on the same one (the aarch64 container
+    /// tracks Arch Linux ARM, which follows Arch at its own pace). This is the loop both names
+    /// wrap, and it compiles whichever of them a toolchain has (2026-10-04).
+    fn one_off(n: &AtomicUsize) {
+        let mut now = n.load(Ordering::Relaxed);
+        while now > 0 {
+            match n.compare_exchange_weak(now, now - 1, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => return,
+                Err(seen) => now = seen,
+            }
+        }
+    }
+
     pub(super) fn job_session(opened: bool) {
         if opened {
             JOB_SESSIONS.fetch_add(1, Ordering::Relaxed);
         } else {
-            let _ = JOB_SESSIONS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| Some(n.saturating_sub(1)));
+            one_off(&JOB_SESSIONS);
         }
     }
 
