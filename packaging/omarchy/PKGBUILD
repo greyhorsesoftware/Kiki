@@ -37,8 +37,8 @@ source_aarch64=("${pkgname}-${pkgver}-aarch64-release.pkg.tar.zst::${url}/releas
 # the build that produced the asset. Between a version bump and its release the lines hold a
 # digest that matches nothing, so a build from them fails its checksum rather than installing
 # something unverified. Not SKIP: SKIP would install anything.
-sha256sums_x86_64=('1791b2cf09439c7567d9b9dfcbdb6256cf39ee455c74632504d9637a362b2a2f')
-sha256sums_aarch64=('129a4958dc2251cbcada773ddafa7f786f3be07fd216352ac38053795fb30132')
+sha256sums_x86_64=('dc57c91eaf5cfdd9e8048cd2578bcf8d8c9b8c0686d9c66deebc4c2be79643ed')
+sha256sums_aarch64=('134fa075930f6c7383c7bf57e58c565cdb38f388d504ff87f9c44b50b1cae939')
 
 package() {
   # The release asset is a complete pacman package; unpack its payload into $pkgdir.
