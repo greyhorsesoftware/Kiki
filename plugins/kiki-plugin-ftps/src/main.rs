@@ -310,14 +310,14 @@ fn open_ftp(config: &Value, password: &str, reusing: bool) -> Result<(RustlsFtpS
     // Invalid/fingerprint with the fingerprint in the message, so kiki can offer to pin it.
     let cert_err = |e: FtpError| if rejected.load(Ordering::SeqCst) { PluginError::invalid("fingerprint", seen.lock().unwrap().clone().unwrap_or_default()) } else { ftp_err(e) };
     let mut ftp = if implicit {
-        let mut ftp = RustlsFtpStream::connect_secure_implicit(&addr, connector, &host).map_err(&cert_err)?;
+        let mut ftp = RustlsFtpStream::connect_secure_implicit(&addr, connector, &host).map_err(cert_err)?;
         // The data channel starts out unprotected (RFC 4217); into_secure does this for explicit mode.
         ftp.custom_command("PBSZ 0", &[Status::CommandOk]).map_err(ftp_err)?;
         ftp.custom_command("PROT P", &[Status::CommandOk]).map_err(ftp_err)?;
         ftp
     } else {
         let plain = RustlsFtpStream::connect(&addr).map_err(ftp_err)?;
-        plain.into_secure(connector, &host).map_err(&cert_err)?
+        plain.into_secure(connector, &host).map_err(cert_err)?
     };
     ftp.login(cfg(config, "username"), password).map_err(ftp_err)?;
     ftp.set_mode(Mode::Passive);
