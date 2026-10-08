@@ -7,8 +7,14 @@ Rectangle {
     id: dlg
     visible: false
     anchors.fill: parent; color: "transparent"; z: 95
+    /// Carried by `ChooserWindow` — a surface of its own, above the application that asked —
+    /// rather than drawn over the file manager's folder (docs/0.5.0/11-chooser-window.md). Then
+    /// there is no window behind to frost and no room around the box to dim: the box is the
+    /// window. Off by default, so a dialog put straight into a window (the QML tests) is what
+    /// it always was.
+    property bool ownWindow: false
     // The window behind, frosted and darkened: the chooser is over THIS folder, not over nothing.
-    Frost { anchors.fill: parent; radius: 0; tint: "black"; tintOpacity: 0.45; blur: 0.8 }
+    Frost { visible: !dlg.ownWindow; anchors.fill: parent; radius: 0; tint: "black"; tintOpacity: 0.45; blur: 0.8 }
     property var req: null            // the ShowChooser event
     property string home: ""
     property var favorites: []
@@ -97,8 +103,13 @@ Rectangle {
     ///     portal.pick({ mode: "open", directory: true, title: "Local folder", currentFolder: "/home/me" }, uris => …)
     property var _local: null
     function pick(r, cb) { _local = cb; open(r) }
+    /// Answered or cancelled, whichever way: what carries this dialog (`ChooserWindow`) hears it
+    /// here. `visible` cannot be watched for it — an Item's visibility is its parent's as well,
+    /// so a dialog inside a window that hides reads false whether it was answered or not.
+    signal closed()
     function finish(uris) {
         visible = false
+        closed()
         if (_local) { const cb = _local; _local = null; cb(uris); return }
         // Collected from the window by token: the listener that asked is started by the bus and
         // has no connection to the daemon (docs/0.3.0/01-daemon-on-demand.md, decision 4).
@@ -126,8 +137,9 @@ Rectangle {
     MouseArea { anchors.fill: parent }
     Rectangle {
         // As big as 860 × 560, and no bigger than the window less a margin: a fixed box was cut
-        // off in a window shorter than it, its buttons out of reach.
-        anchors.centerIn: parent; width: Math.min(860, dlg.width - 24); height: Math.min(560, dlg.height - 24); color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
+        // off in a window shorter than it, its buttons out of reach. In a window of its own the
+        // surface is already that size, so the box is all of it.
+        anchors.centerIn: parent; width: dlg.ownWindow ? dlg.width : Math.min(860, dlg.width - 24); height: dlg.ownWindow ? dlg.height : Math.min(560, dlg.height - 24); color: Kiki.Theme.bg; border.width: 2; border.color: Kiki.Theme.accent
         Column {
             anchors.fill: parent
             // One header row (owner, 2026-09-28): the title — Open File, Save As, whatever the asking

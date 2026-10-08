@@ -3,11 +3,17 @@
 # shell, driven by tests/e2e/driver.py. Everything it touches is a temp directory, so a run
 # leaves the machine as it found it.
 #
-#   tests/e2e/run.sh                 every flow
+#   tests/e2e/run.sh                 every flow under cage, then the chooser flows under sway
 #   tests/e2e/run.sh --flow trash    one of them
 #   tests/e2e/run.sh --part servers  one half: the flows that start a real server (or --part local)
+#   tests/e2e/run.sh --part chooser  the flows that need a layer surface, under sway
 #   tests/e2e/run.sh --flow gallery_perf   a thousand photographs, timed (not in the default run)
 #   KIKI_E2E_KEEP=1 tests/e2e/run.sh keep the fixture home for inspection
+#
+# Two compositors, because no one of them does both things (docs/0.5.0/11-chooser-window.md):
+# `cage` runs the suite as it always has, and `sway` runs the flows that need a layer surface —
+# the file chooser, which is above every window or it is behind the application that asked.
+# cage has no `wlr-layer-shell` at all, so a chooser shown there is a chooser nobody can see.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -157,38 +163,91 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run_in_cage() {
-  # cage runs one client, so that client is a shell script: daemon, front end, driver. The
-  # compositor gets a hard deadline of its own: it has been seen to linger after its client
-  # exits, and a hung compositor must not hang a test run.
-  timeout -k 5 "${KIKI_E2E_CAGE_TIMEOUT:-600}" cage -- bash -c "
-    set -e
-    '$work/start-kikid' & kikid_pid=\$!
-    for i in \$(seq 100); do [ -S '$XDG_RUNTIME_DIR/kiki.sock' ] && break; sleep 0.05; done
-    qs -p '$qs_conf/shell.qml' >'$out/shell.log' 2>&1 & qs_pid=\$!
-    for i in \$(seq 200); do qs -p '$qs_conf/shell.qml' ipc call shell state >/dev/null 2>&1 && break; sleep 0.05; done
-    python3 -u '$here/driver.py' '$XDG_RUNTIME_DIR/kiki.sock' '$out' $* 2>&1 | tee '$out/driver.log'
-    rc=\${PIPESTATUS[0]}
-    echo \$rc > '$work/rc'
-    kill \$qs_pid \$kikid_pid 2>/dev/null || true
-    wait \$qs_pid 2>/dev/null || true
-    # cage stays up for as long as anything is drawing in it, and project mode's terminals are
-    # started detached and outlive the shell — so a whole run used to sit here until the deadline
-    # and fail with 124, every check passed. Whatever else was started inside this run is known
-    # by the runtime directory in its environment, which no process outside the run has.
-    for e in /proc/[0-9]*/environ; do
-      p=\${e#/proc/}; p=\${p%/environ}
-      [ \$p = \$\$ ] || [ \$p = \$PPID ] && continue
-      grep -qzx 'XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR' \$e 2>/dev/null && kill \$p 2>/dev/null || true
-    done
-    exit \$rc
-  " || true
-  # cage does not hand back its client's exit status: a run with failed checks used to leave
-  # here as 0, and `make test` went green over them. The driver's own verdict is written down
-  # inside and read here; no verdict at all (the compositor died, or hit its deadline) is a failure.
-  [ -f "$work/rc" ] && return "$(cat "$work/rc")"
+# The one client both compositors run: daemon, front end, driver. Written to a file rather than
+# quoted into a `bash -c` — sway's config `exec`s it, cage takes it as an argument, and one copy
+# of it means the two cannot drift apart. $1 is where the driver's verdict is written, $2 the log
+# the run is teed to, and the rest are the driver's own arguments.
+write_client() {
+  local rc_file="$1" log="$2"; shift 2
+  cat > "$work/client" <<EOS
+#!/usr/bin/env bash
+'$work/start-kikid' & kikid_pid=\$!
+for i in \$(seq 100); do [ -S '$XDG_RUNTIME_DIR/kiki.sock' ] && break; sleep 0.05; done
+qs -p '$qs_conf/shell.qml' >'$out/shell.log' 2>&1 & qs_pid=\$!
+for i in \$(seq 200); do qs -p '$qs_conf/shell.qml' ipc call shell state >/dev/null 2>&1 && break; sleep 0.05; done
+python3 -u '$here/driver.py' '$XDG_RUNTIME_DIR/kiki.sock' '$out' $* 2>&1 | tee '$log'
+rc=\${PIPESTATUS[0]}
+echo \$rc > '$rc_file'
+kill \$qs_pid \$kikid_pid 2>/dev/null || true
+wait \$qs_pid 2>/dev/null || true
+# A compositor stays up for as long as anything is drawing in it, and project mode's terminals
+# are started detached and outlive the shell — so a whole run used to sit here until the deadline
+# and fail with 124, every check passed. Whatever else was started inside this run is known by
+# the runtime directory in its environment, which no process outside the run has. The verdict is
+# written above this sweep on purpose: under sway the compositor carries that same runtime
+# directory and is swept away with everything else, which is how sway is asked to leave.
+for e in /proc/[0-9]*/environ; do
+  p=\${e#/proc/}; p=\${p%/environ}
+  { [ "\$p" = "\$\$" ] || [ "\$p" = "\$PPID" ]; } && continue
+  grep -qzx 'XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR' "\$e" 2>/dev/null && kill "\$p" 2>/dev/null || true
+done
+exit \$rc
+EOS
+  chmod +x "$work/client"
+}
+
+# Neither compositor hands back its client's exit status: a run with failed checks used to leave
+# here as 0, and `make test` went green over them. The driver's own verdict is written down
+# inside and read here; no verdict at all (the compositor died, or hit its deadline) is a failure.
+verdict() {
+  [ -f "$1" ] && return "$(cat "$1")"
   echo "the run ended without a verdict (compositor deadline, or it died)" >&2
   return 124
+}
+
+run_in_cage() {
+  # cage runs one client, so that client is the script above. The compositor gets a hard deadline
+  # of its own: it has been seen to linger after its client exits, and a hung compositor must not
+  # hang a test run. The deadline is for a compositor that has stopped answering, not for a slow
+  # run: at 789 checks the suite came within a minute of the old 600 and a whole green run was
+  # thrown away as "no verdict" (2026-10-06). It is a ceiling, so raising it costs a hung run
+  # nothing but the waiting.
+  rm -f "$work/rc.cage"
+  write_client "$work/rc.cage" "$out/driver.log" "$@"
+  timeout -k 5 "${KIKI_E2E_CAGE_TIMEOUT:-1800}" cage -- "$work/client" || true
+  verdict "$work/rc.cage"
+}
+
+run_in_sway() {
+  # sway for the flows that need a layer surface. cage has no `wlr-layer-shell` at all, so a
+  # chooser shown under it is drawn nowhere and takes no keys — measured on 2026-10-04 with a
+  # bare overlay panel: under cage, two "Failed to initialize layershell integration" and a black
+  # screen; under sway, the panel is there, 400x200 at the centre of the output, in its colour.
+  #
+  # The config is the whole of sway's setup: one headless output the size cage gives, no bar, no
+  # decoration, and every window full screen, so the shell fills the output from the origin as it
+  # does under cage and the geometry the flows aim at is still the window's own.
+  rm -f "$work/rc.sway"
+  write_client "$work/rc.sway" "$out/driver-sway.log" "$@"
+  cat > "$work/sway.conf" <<EOS
+output HEADLESS-1 resolution 1280x720
+default_border none
+default_floating_border none
+focus_follows_mouse no
+for_window [title=".*"] fullscreen enable
+exec "$work/client"
+EOS
+  # `setpriv --no-new-privs`: sway is installed with `cap_sys_nice=ep` and asks the kernel for
+  # real-time scheduling as it starts. A terminal whose RLIMIT_RTTIME is nought — which is what
+  # this desktop hands its terminals — then has sway SIGKILLed fifteen milliseconds in, before it
+  # draws anything, and the limit's hard value cannot be raised back by the one who inherited it.
+  # Refusing the capability costs a test compositor nothing: it runs at ordinary priority, which
+  # is what a test run wants of it anyway.
+  # sway's own log goes to the file; the client's stdout — which is the driver's — comes out
+  # here, the way cage's does, so a run says what it is doing as it happens.
+  SWAYSOCK="$XDG_RUNTIME_DIR/sway.sock" timeout -k 5 "${KIKI_E2E_CAGE_TIMEOUT:-1800}" \
+    setpriv --no-new-privs sway -c "$work/sway.conf" 2>"$out/sway.log" || true
+  verdict "$work/rc.sway"
 }
 
 run_daemon_only() {
@@ -234,10 +293,65 @@ run_on_desktop() {
   "
 }
 
+# The flows that need a layer surface, named once in the driver and read back here so the two
+# cannot disagree about which they are.
+chooser_flows() { python3 "$here/driver.py" --list-part chooser 2>/dev/null; }
+
+# Which compositor the arguments ask for. `--part chooser`, or `--flow` naming nothing but
+# chooser flows, is sway's; anything else is cage's. No arguments at all is the whole suite,
+# which is both — cage first and then the chooser pass, one after the other, never at once.
+wants_sway() {
+  case " $* " in *" --part chooser "*) return 0 ;; esac
+  local named="" prev="" a
+  for a in "$@"; do
+    [ "$prev" = "--flow" ] && named="$named $a"
+    prev="$a"
+  done
+  [ -n "$named" ] || return 1
+  local list; list=" $(chooser_flows | tr '\n' ' ')"
+  for a in $named; do
+    case "$list" in *" $a "*) ;; *) return 1 ;; esac
+  done
+  return 0
+}
+
+# A developer without sway still gets the whole cage suite; only the chooser pass stands down,
+# and says which package would bring it back.
+sway_pass() {
+  if ! command -v sway >/dev/null; then
+    echo "" >&2
+    echo "sway is not installed: the chooser flows (a layer surface, which cage cannot show) did not run." >&2
+    echo "  install it with 'sudo pacman -S sway' to cover them too." >&2
+    return 0
+  fi
+  echo ""
+  echo "============================================================"
+  echo "the chooser flows, under sway (cage has no layer shell)"
+  echo "============================================================"
+  run_in_sway "$@"
+}
+
 if [ -n "${KIKI_E2E_DESKTOP:-}" ]; then
   run_on_desktop "$@"
+elif [ "${KIKI_E2E_COMPOSITOR:-}" = "sway" ] || wants_sway "$@"; then
+  [ $# -gt 0 ] || set -- --part chooser
+  command -v sway >/dev/null || { echo "sway is not installed: 'sudo pacman -S sway'" >&2; exit 2; }
+  run_in_sway "$@"
 elif command -v cage >/dev/null; then
-  run_in_cage "$@"
+  if [ $# -gt 0 ]; then
+    run_in_cage "$@"
+  else
+    # The whole suite: everything under cage, then the chooser flows under sway. Both verdicts
+    # count — a run is green only when both are — and each block says which compositor it was.
+    echo "============================================================"
+    echo "the suite, under cage"
+    echo "============================================================"
+    set +e; run_in_cage; cage_rc=$?
+    sway_pass --part chooser; sway_rc=$?
+    set -e
+    if [ "$cage_rc" -ne 0 ]; then exit "$cage_rc"; fi
+    exit "$sway_rc"
+  fi
 else
   echo "cage is not installed: running the flows that need only the daemon." >&2
   echo "  install it with 'sudo pacman -S cage' to cover the shell flows too." >&2

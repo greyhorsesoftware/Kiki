@@ -4,15 +4,42 @@ import "ui" as UI
 
 // The window's face to the desktop, split out of Shell.qml (docs/0.5.0/04-shell-split.md): the
 // file chooser another application's Open or Save asks for through `kiki-dbus`, the answers
-// kept by token until the listener collects them, and "Show in folder" (`showItems`). The
-// chooser dialog itself lives here too, filling the window as it did from Shell.qml; `raise`
-// stays the window's, since a second `kiki` asks for it as well.
+// kept by token until the listener collects them, and "Show in folder" (`showItems`).
+//
+// The chooser is no longer drawn here: it has a surface of its own on the overlay layer
+// (`ui/ChooserWindow.qml`, docs/0.5.0/11-chooser-window.md), above the application that asked
+// instead of inside this window and behind it. `raise` stays for "Show in folder", which really
+// does want this window in front — a second `kiki` asks for the same.
 Item {
     id: shellChooser
     anchors.fill: parent
     required property var win
-    /// The chooser dialog, for whoever asks whether it is up.
-    property alias portal: portal
+
+    /// The chooser window, made the first time one is asked for: a session that never opens a
+    /// chooser never builds its pane, its listing, its sidebar or its search.
+    property Loader chooserLoader: Loader {
+        active: false
+        sourceComponent: UI.ChooserWindow {
+            ghost: shellChooser.win.left.ghost
+            home: shellChooser.win.home
+            favorites: shellChooser.win.favorites
+            locations: shellChooser.win.locations
+            chooser: ({ answered: (token, uris) => shellChooser.chooserFinished(token, uris) })
+            // The keys come back to the file manager's own handler — an item inside this window,
+            // not a raise of it: the compositor gives the keyboard back to whoever had it, which
+            // after another application's dialog is that application.
+            onDismissed: shellChooser.win.keys.forceActiveFocus()
+        }
+    }
+    /// The chooser, built if it is not there yet. Everything that opens one goes through here.
+    function chooserWindow() { chooserLoader.active = true; return chooserLoader.item }
+    /// Whether a chooser is up, for whoever asks (the IPC's `dialogs.portal`). Never builds it.
+    readonly property bool chooserUp: chooserLoader.item ? chooserLoader.item.up : false
+    /// The same chooser, asked by kiki itself rather than through the portal: `cb(uris)` gets
+    /// the answer (null when cancelled) and nothing goes to the daemon.
+    function pick(r, cb) { chooserWindow().pick(r, cb) }
+    /// Answer the chooser that is up, if one is (the IPC's `chooser save <path>`).
+    function finishChooser(uris) { if (chooserLoader.item) chooserLoader.item.dialog.finish(uris) }
 
     /// Answers for choosers that have finished, by token, until the listener collects them. A
     /// listener that dies before collecting leaves one entry; they are small and the window is
@@ -20,8 +47,9 @@ Item {
     property var chooserDone: ({})
     readonly property int chooserKeep: 5 * 60 * 1000
     function startChooser(r) {
-        win.raise()
-        portal.open(r)
+        // No `raise`: the chooser is above every window already, and raising this one would pull
+        // the person off whatever they were doing to the workspace the file manager is on.
+        chooserWindow().show(r)
     }
     /// Called by the portal when a chooser the LISTENER asked for is answered (`uris` null when
     /// it was cancelled). A chooser kiki asked itself never comes here.
@@ -55,5 +83,4 @@ Item {
         win.selectCameFrom()
         if (msg.properties) win.inspectorRequested = true
     }
-    UI.PortalDialog { id: portal; objectName: "portal"; ghost: win.left.ghost; chooser: ({ answered: (token, uris) => chooserFinished(token, uris) }); anchors.fill: parent; home: win.home; favorites: win.favorites; locations: win.locations }
 }

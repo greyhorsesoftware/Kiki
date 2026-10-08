@@ -5,8 +5,8 @@
 //! 1. MIME: `inode/directory` (and the sftp/ftps scheme handlers) in `~/.config/mimeapps.list`.
 //! 2. D-Bus: user-level activation files for `org.freedesktop.FileManager1` ("Show in folder")
 //!    and the portal backend name, which win over the distro's files in `/usr/share`.
-//! 3. Hyprland: a marked block in `~/.config/hypr/bindings.conf` with the launch keys and the
-//!    floating rule for the chooser, reloaded with a config-error check and automatic rollback.
+//! 3. Hyprland: a marked block in `~/.config/hypr/bindings.lua` with the launch keys and Quick
+//!    Look's window rule, reloaded with a config-error check and automatic rollback.
 //! 4. Portal: `org.freedesktop.impl.portal.FileChooser=kiki;gtk` in
 //!    `~/.config/xdg-desktop-portal/portals.conf`, then a portal restart.
 //!
@@ -19,8 +19,13 @@ use std::process::Command;
 
 pub const DESKTOP_ID: &str = "org.kiki.App.desktop";
 pub const PORTAL_NAME: &str = "org.freedesktop.impl.portal.desktop.kiki";
-pub const BEGIN: &str = "# kiki: begin";
-pub const END: &str = "# kiki: end";
+pub const BEGIN: &str = "-- kiki: begin";
+pub const END: &str = "-- kiki: end";
+/// The same markers in the comment syntax of the configuration language Hyprland used to be
+/// written in. Nothing is written with them any more; they are how the block kiki left in
+/// `bindings.conf` before 2026-10-06 is recognised and swept (`sweep_conf`).
+const CONF_BEGIN: &str = "# kiki: begin";
+const CONF_END: &str = "# kiki: end";
 pub const PARTS: [&str; 4] = ["mime", "dbus", "hypr", "portal"];
 
 fn home() -> PathBuf {
@@ -51,6 +56,12 @@ fn mimeapps() -> PathBuf {
 fn services_dir() -> PathBuf {
     data_home().join("dbus-1/services")
 }
+/// Where a person's own Hyprland bindings go, and the file `hyprland.lua` requires
+/// (`require("hypr.bindings")`): kiki's block goes in beside theirs.
+fn bindings_lua() -> PathBuf {
+    config_home().join("hypr/bindings.lua")
+}
+/// Where kiki's block went before 2026-10-06, read by nothing (`docs/0.5.0/12-hypr-lua.md`).
 fn bindings_conf() -> PathBuf {
     config_home().join("hypr/bindings.conf")
 }
@@ -393,29 +404,63 @@ fn dbus_remove() -> Result<String, String> {
 
 // ---------------------------------------------------------------- 3. hyprland
 
-/// The launch keys, the chooser's floating rule, and Quick Look's: its window floats and is
-/// pinned — above everything, on every workspace — matched by the title's constant ending
-/// (owner, 2026-09-25: "quick look window should be a floating window ie above all").
+/// The launch keys and Quick Look's rules: its window floats and is pinned — above everything,
+/// on every workspace — matched by the title's constant ending (owner, 2026-09-25: "quick look
+/// window should be a floating window ie above all").
+///
+/// Lua, because Hyprland's configuration is Lua now and the file this used to be written in is
+/// read by nothing (docs/0.5.0/12-hypr-lua.md). Three things the block has to get right, each
+/// measured rather than assumed:
+///
+/// - **Omarchy's defaults already own both chords** (`bindings/applications.lua`: Nautilus), and
+///   binding a taken chord adds a bind rather than replacing one. So each is unbound first. The
+///   unbind is inside this block, which is what makes Remove exact: delete the block and
+///   Omarchy's own binding is simply there again, with nothing to put back.
+/// - **`o.*` is not sugar.** `o.bind(…, { launch = "x" })` becomes `uwsm-app -- x`, the systemd
+///   scope every other application on that desktop is started in. kiki asks for the same when
+///   the helpers are loaded, and falls back to Hyprland's own `hl.*` when they are not — this
+///   block must not need Omarchy to be there.
+/// - **`pcall` around the unbind**: a Hyprland that never bound the chord, or one old enough to
+///   lack `hl.unbind`, must not fail to load its configuration over it.
+///
+/// Three `kiki-chooser` rules stood here from 0.1.0, waiting for the chooser to become a window
+/// of its own. It became one on 2026-10-04 — and a layer surface, not a toplevel
+/// (docs/0.5.0/11-chooser-window.md), which no window rule can match: Hyprland matches a layer
+/// by its namespace with `layerrule`, and the chooser wants nothing a layer rule gives. So they
+/// are gone rather than rewritten.
 pub fn hypr_block() -> String {
     format!(
         "{BEGIN}\n\
-         bindd = SUPER SHIFT, F, File manager (kiki), exec, kiki\n\
-         bindd = SUPER ALT SHIFT, F, File manager here (kiki), exec, kiki \"$(omarchy-cmd-terminal-cwd)\"\n\
-         windowrulev2 = float, class:^(kiki-chooser)$\n\
-         windowrulev2 = center, class:^(kiki-chooser)$\n\
-         windowrulev2 = size 860 560, class:^(kiki-chooser)$\n\
-         windowrulev2 = float, title:^(.* — Quick Look)$\n\
-         windowrulev2 = pin, title:^(.* — Quick Look)$\n\
+         pcall(hl.unbind, \"SUPER + SHIFT + F\")\n\
+         pcall(hl.unbind, \"SUPER + ALT + SHIFT + F\")\n\
+         if o and o.bind then\n\
+         \x20 o.bind(\"SUPER + SHIFT + F\", \"File manager (kiki)\", {{ launch = \"kiki\" }})\n\
+         \x20 o.bind(\"SUPER + ALT + SHIFT + F\", \"File manager here (kiki)\", {{ launch = 'kiki \"$(omarchy-cmd-terminal-cwd)\"' }})\n\
+         else\n\
+         \x20 hl.bind(\"SUPER + SHIFT + F\", hl.dsp.exec_cmd(\"kiki\"), {{ description = \"File manager (kiki)\" }})\n\
+         \x20 hl.bind(\"SUPER + ALT + SHIFT + F\", hl.dsp.exec_cmd('kiki \"$(omarchy-cmd-terminal-cwd)\"'), {{ description = \"File manager here (kiki)\" }})\n\
+         end\n\
+         if o and o.window then\n\
+         \x20 o.window({{ title = \"^(.* — Quick Look)$\" }}, {{ float = true, pin = true }})\n\
+         else\n\
+         \x20 hl.window_rule({{ match = {{ title = \"^(.* — Quick Look)$\" }}, float = true, pin = true }})\n\
+         end\n\
          {END}\n"
     )
 }
 
-/// Removes the marked block (and one blank line before it) from a config text.
+/// Removes kiki's marked block (and one blank line before it) from a config text.
 pub fn strip_block(text: &str) -> String {
+    strip_marked(text, BEGIN, END)
+}
+
+/// The same, for a block written with other markers: the one left in `bindings.conf` by the
+/// versions that wrote Hyprland's old configuration language.
+fn strip_marked(text: &str, begin: &str, end: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
     let mut inside = false;
     for line in text.lines() {
-        if line.trim() == BEGIN {
+        if line.trim() == begin {
             inside = true;
             if out.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
                 out.pop();
@@ -423,7 +468,7 @@ pub fn strip_block(text: &str) -> String {
             continue;
         }
         if inside {
-            if line.trim() == END {
+            if line.trim() == end {
                 inside = false;
             }
             continue;
@@ -447,16 +492,34 @@ pub fn with_block(text: &str) -> String {
 }
 
 fn hypr_status() -> bool {
-    std::fs::read_to_string(bindings_conf()).map(|t| t.contains(BEGIN)).unwrap_or(false)
+    std::fs::read_to_string(bindings_lua()).map(|t| t.contains(BEGIN)).unwrap_or(false)
+}
+
+/// The block kiki wrote into `bindings.conf` before 2026-10-06, taken away: the file was read by
+/// nothing, so the lines did nothing, and leaving them would leave a person reading their own
+/// configuration something that looks like it works. The file goes with them when kiki's block
+/// was all it held — kiki made it — and stays, shorter, when it was not.
+fn sweep_conf() {
+    let path = bindings_conf();
+    let Ok(old) = std::fs::read_to_string(&path) else { return };
+    if !old.contains(CONF_BEGIN) {
+        return;
+    }
+    let rest = strip_marked(&old, CONF_BEGIN, CONF_END);
+    if rest.trim().is_empty() {
+        let _ = std::fs::remove_file(&path);
+    } else {
+        let _ = write_atomic(&path, &rest);
+    }
 }
 
 fn config_errors() -> Vec<String> {
     run("hyprctl", &["configerrors"]).map(|o| o.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
 }
 
-/// Writes `new` to bindings.conf, reloads, and puts `old` back if Hyprland reports errors.
+/// Writes `new` to bindings.lua, reloads, and puts `old` back if Hyprland reports errors.
 fn hypr_write_reload(old: &str, new: &str) -> Result<(), String> {
-    let path = bindings_conf();
+    let path = bindings_lua();
     write_atomic(&path, new).map_err(|e| format!("{}: {e}", path.display()))?;
     let _ = run("hyprctl", &["reload"]);
     let errors = config_errors();
@@ -473,19 +536,24 @@ fn hypr_apply() -> Result<String, String> {
     if !pre.is_empty() {
         return Err(format!("your Hyprland config already has errors; fix those first: {}", pre.join("; ")));
     }
-    let old = std::fs::read_to_string(bindings_conf()).unwrap_or_default();
+    let old = std::fs::read_to_string(bindings_lua()).unwrap_or_default();
     let new = with_block(&old);
     if new != old {
         hypr_write_reload(&old, &new)?;
     }
-    Ok("Super+Shift+F opens kiki, Super+Alt+Shift+F opens the terminal's folder; the chooser floats; Quick Look floats above all".into())
+    sweep_conf();
+    Ok("Super+Shift+F opens kiki, Super+Alt+Shift+F opens the terminal's folder; Quick Look floats above all".into())
 }
 
 fn hypr_remove() -> Result<String, String> {
-    let path = bindings_conf();
-    let Ok(old) = std::fs::read_to_string(&path) else { return Ok("nothing to remove".into()) };
+    let path = bindings_lua();
+    let had_conf = std::fs::read_to_string(bindings_conf()).map(|t| t.contains(CONF_BEGIN)).unwrap_or(false);
+    sweep_conf();
+    let Ok(old) = std::fs::read_to_string(&path) else {
+        return Ok(if had_conf { "keybindings and window rules removed".into() } else { "nothing to remove".into() });
+    };
     if !old.contains(BEGIN) {
-        return Ok("nothing to remove".into());
+        return Ok(if had_conf { "keybindings and window rules removed".into() } else { "nothing to remove".into() });
     }
     hypr_write_reload(&old, &strip_block(&old))?;
     Ok("keybindings and window rules removed".into())
@@ -547,7 +615,7 @@ pub fn status_json() -> Value {
         .b("hyprlandAvailable", no_exec() || Command::new("hyprctl").arg("version").output().map(|o| o.status.success()).unwrap_or(false))
         .v("hyprConfigErrors", Value::Arr(config_errors().into_iter().map(Value::Str).collect()))
         .s("mimeapps", mimeapps().to_string_lossy().into_owned())
-        .s("bindings", bindings_conf().to_string_lossy().into_owned())
+        .s("bindings", bindings_lua().to_string_lossy().into_owned())
         .s("portals", portals_conf().to_string_lossy().into_owned())
         .s("services", services_dir().to_string_lossy().into_owned())
         .done()
@@ -633,13 +701,66 @@ mod tests {
 
     #[test]
     fn hypr_block_round_trip() {
-        let base = "# my bindings\nbindd = SUPER, RETURN, Terminal, exec, alacritty\n";
+        let base = "-- my bindings\no.bind(\"SUPER + RETURN\", \"Terminal\", { launch = \"alacritty\" })\n";
         let with = with_block(base);
         assert!(with.starts_with(base));
-        assert!(with.contains("SUPER SHIFT, F"));
+        assert!(with.contains("\"SUPER + SHIFT + F\""));
+        // Hyprland's configuration is Lua now, and the language it used to be written in is read
+        // by nothing (docs/0.5.0/12-hypr-lua.md): nothing of the old one may be left here.
+        assert!(!with.contains("bindd ="), "a line in the old configuration language");
+        assert!(!with.contains("windowrulev2"), "a rule in the old configuration language");
+        // The chooser is a layer surface now, which a window rule cannot match: no rule of the
+        // package's may name the class it never had (docs/0.5.0/11-chooser-window.md).
+        assert!(!with.contains("kiki-chooser"), "a window rule for a layer surface");
         assert_eq!(with_block(&with), with, "idempotent");
         assert_eq!(strip_block(&with), base);
         assert_eq!(strip_block(base), base);
+    }
+
+    /// Omarchy's defaults bind both chords to Nautilus, and binding a taken chord adds a bind
+    /// rather than replacing one — so each is unbound first, *before* it is bound. The unbind
+    /// lives inside the block, which is the whole of what Remove has to undo: take the block
+    /// away and Omarchy's own binding is there again.
+    #[test]
+    fn the_block_unbinds_each_chord_before_it_binds_it() {
+        let block = hypr_block();
+        for chord in ["SUPER + SHIFT + F", "SUPER + ALT + SHIFT + F"] {
+            let unbind = block.find(&format!("hl.unbind, \"{chord}\"")).unwrap_or_else(|| panic!("no unbind for {chord}"));
+            let bind = block.find(&format!("o.bind(\"{chord}\"")).unwrap_or_else(|| panic!("no bind for {chord}"));
+            assert!(unbind < bind, "{chord} is bound before it is unbound");
+        }
+        // And nothing of the unbinding survives the block's removal.
+        assert!(!strip_block(&with_block("-- mine\n")).contains("unbind"));
+    }
+
+    /// Omarchy's helpers are not sugar: `{ launch = … }` becomes `uwsm-app -- …`, the systemd
+    /// scope every other application on that desktop is started in. kiki asks for the same where
+    /// they are loaded — and must still work where they are not, which is every Hyprland that is
+    /// not Omarchy's.
+    #[test]
+    fn the_block_uses_omarchy_s_helpers_where_they_are_there_and_hyprland_s_own_where_they_are_not() {
+        let block = hypr_block();
+        assert!(block.contains("if o and o.bind then"), "{block}");
+        assert!(block.contains("{ launch = \"kiki\" }"), "the launcher Omarchy starts applications with");
+        assert!(block.contains("hl.bind(\"SUPER + SHIFT + F\", hl.dsp.exec_cmd(\"kiki\")"), "the fallback off Omarchy");
+        assert!(block.contains("if o and o.window then") && block.contains("hl.window_rule("), "{block}");
+    }
+
+    /// The block is written into a person's configuration: it has to be Lua that loads. Checked
+    /// with the compiler if one is installed — a machine without `luac` says so and passes,
+    /// since an assertion made where nothing can parse Lua would prove nothing.
+    #[test]
+    fn the_block_is_lua_that_parses() {
+        if Command::new("luac").arg("-v").output().map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("luac is not installed: the block's syntax is unchecked here");
+            return;
+        }
+        let d = Scratch::new("integrate-lua");
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("block.lua");
+        std::fs::write(&f, hypr_block()).unwrap();
+        let out = Command::new("luac").arg("-p").arg(&f).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     }
 
     /// Installed, the user file is a link into the package. When the package is gone the link
@@ -710,13 +831,48 @@ mod tests {
         std::env::remove_var("KIKI_INTEGRATE_NO_EXEC");
     }
 
+    /// Everyone who applied the integration before 2026-10-06 has a block in `bindings.conf`
+    /// that has never done anything (docs/0.5.0/12-hypr-lua.md). Applying sweeps it: the file
+    /// goes when kiki's block was all of it, and keeps whatever else was in it when it was not.
+    #[test]
+    fn the_block_left_in_the_old_file_is_swept() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = scratch();
+        std::env::set_var("KIKI_CONFIG_DIR", d.join(".config/kiki"));
+        let conf = d.join(".config/hypr/bindings.conf");
+        let lua = d.join(".config/hypr/bindings.lua");
+        std::fs::create_dir_all(d.join(".config/hypr")).unwrap();
+        let old_block = format!("{CONF_BEGIN}\nbindd = SUPER SHIFT, F, File manager (kiki), exec, kiki\n{CONF_END}\n");
+
+        // kiki's block was the whole file: kiki made the file, so the file goes with it.
+        std::fs::write(&conf, &old_block).unwrap();
+        apply(Some(&Value::Arr(vec![Value::Str("hypr".into())])));
+        assert!(!conf.exists(), "a file that held nothing but kiki's dead block");
+        assert!(std::fs::read_to_string(&lua).unwrap().contains(BEGIN), "the block is in the file Hyprland reads");
+
+        // Somebody else's lines were in it too: those stay, and only kiki's go.
+        std::fs::write(&lua, "").unwrap();
+        std::fs::write(&conf, format!("# theirs\nbind = SUPER, X, exec, xterm\n{old_block}")).unwrap();
+        apply(Some(&Value::Arr(vec![Value::Str("hypr".into())])));
+        assert_eq!(std::fs::read_to_string(&conf).unwrap(), "# theirs\nbind = SUPER, X, exec, xterm\n");
+
+        // And Remove sweeps it as well, for anyone who never applied again first.
+        std::fs::write(&conf, &old_block).unwrap();
+        remove(Some(&Value::Arr(vec![Value::Str("hypr".into())])));
+        assert!(!conf.exists());
+        assert!(!std::fs::read_to_string(&lua).unwrap_or_default().contains(BEGIN));
+
+        std::env::remove_var("KIKI_CONFIG_DIR");
+        done(&d);
+    }
+
     #[test]
     fn apply_and_remove_everything_per_user() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = scratch();
         // pre-existing user config that must survive
         std::fs::create_dir_all(d.join(".config/hypr")).unwrap();
-        std::fs::write(d.join(".config/hypr/bindings.conf"), "bindd = SUPER, RETURN, Terminal, exec, alacritty\n").unwrap();
+        std::fs::write(d.join(".config/hypr/bindings.lua"), "o.bind(\"SUPER + RETURN\", \"Terminal\", { launch = \"alacritty\" })\n").unwrap();
         std::fs::create_dir_all(d.join(".config/xdg-desktop-portal")).unwrap();
         std::fs::write(d.join(".config/xdg-desktop-portal/portals.conf"), "[preferred]\ndefault=hyprland;gtk\norg.freedesktop.impl.portal.FileChooser=gtk\n").unwrap();
         std::fs::write(d.join(".config/mimeapps.list"), "[Default Applications]\ntext/plain=nvim.desktop\ninode/directory=org.gnome.Nautilus.desktop\n").unwrap();
@@ -741,8 +897,8 @@ mod tests {
         assert!(svc.contains("Name=org.freedesktop.FileManager1"), "{svc}");
         assert!(svc.contains("kiki-dbus") || svc.contains("kiki-plugin-dbus"), "the bus must start the listener, not the daemon: {svc}");
         assert!(!svc.contains("SystemdService"), "there are no units to name any more: {svc}");
-        let bindings = std::fs::read_to_string(d.join(".config/hypr/bindings.conf")).unwrap();
-        assert!(bindings.starts_with("bindd = SUPER, RETURN"));
+        let bindings = std::fs::read_to_string(d.join(".config/hypr/bindings.lua")).unwrap();
+        assert!(bindings.starts_with("o.bind(\"SUPER + RETURN\""), "the person's own bindings stay: {bindings}");
         assert!(bindings.contains(BEGIN) && bindings.contains(END));
 
         let r = remove(None);
@@ -750,7 +906,11 @@ mod tests {
         for p in PARTS {
             assert_eq!(st.get(p), Some(&Value::Bool(false)), "{p} still on");
         }
-        assert_eq!(std::fs::read_to_string(d.join(".config/hypr/bindings.conf")).unwrap(), "bindd = SUPER, RETURN, Terminal, exec, alacritty\n");
+        assert_eq!(
+            std::fs::read_to_string(d.join(".config/hypr/bindings.lua")).unwrap(),
+            "o.bind(\"SUPER + RETURN\", \"Terminal\", { launch = \"alacritty\" })\n",
+            "the file is the person's own again, unbinds and all gone"
+        );
         assert_eq!(std::fs::read_to_string(d.join(".config/xdg-desktop-portal/portals.conf")).unwrap(), "[preferred]\ndefault=hyprland;gtk\norg.freedesktop.impl.portal.FileChooser=gtk\n");
         assert_eq!(
             std::fs::read_to_string(d.join(".config/mimeapps.list")).unwrap(),

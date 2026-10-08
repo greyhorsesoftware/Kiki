@@ -178,7 +178,7 @@ Item {
                 case "report": win.mirrorWs.fetchReport(); break
                 // The button itself: the chooser comes up; `save <uri>` is what choosing that file does.
                 case "saveReport": win.mirrorWs.saveReport(); break
-                case "save": if (win.portal.visible) win.portal.finish([a[1]]); break
+                case "save": if (win.chooserUp) win.finishChooser([a[1]]); break
                 case "run": win.mirrorWs.mirror(false); break
                 case "confirm": win.mirrorWs.answerLargeDelete(a[1] === "yes"); break
                 case "cancel": win.mirrorWs.stop(); break
@@ -206,7 +206,7 @@ Item {
             function state(): string {
                 return JSON.stringify({ uri: win.pane.uri, view: win.pane.view, count: win.pane.listing.count, done: win.pane.listing.done, error: win.pane.listing.error, selection: win.selectedUris(), inspector: win.inspector, sidebar: win.sidebarShown, keyFocus: win.keys.activeFocus, filterOpen: win.filterOpen, searchOpen: win.searchOverlay.visible, settingsVisible: win.settingsWin.visible, menuVisible: win.menu.visible, clipboard: win.clipboard.uris, clipboardCut: win.clipboard.cut === true, renaming: win.renamingRow(),
                     daemon: { ready: Kiki.Daemon.ready, connected: Kiki.Daemon.connected },
-                    dialogs: { confirm: win.confirm.visible, compress: win.compressDialog.visible, location: win.locationDialog.visible, integration: win.integrationDialog.visible, portal: win.portal.visible, share: win.shareSheet.visible }, split: win.split, infoPopover: win.infoPopover.visible, infoRows: win.inspectedRows.length, filter: win.pane.filterText, filterColumn: (win.pane.view === "columns" && win.currentView()) ? win.currentView().focusCol : -1, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
+                    dialogs: { confirm: win.confirm.visible, compress: win.compressDialog.visible, location: win.locationDialog.visible, integration: win.integrationDialog.visible, portal: win.chooserUp, share: win.shareSheet.visible }, split: win.split, infoPopover: win.infoPopover.visible, infoRows: win.inspectedRows.length, filter: win.pane.filterText, filterColumn: (win.pane.view === "columns" && win.currentView()) ? win.currentView().focusCol : -1, sort: [win.pane.sortRole, win.pane.sortOrder], toast: win.toast,
                     listColumns: win.listColumnWidths(), quickLook: win.quickLookState() })
             }
             /// Side by side, for scripts and tests: `toggle`; `drag <px>` is what dragging the line

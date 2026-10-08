@@ -32,6 +32,15 @@ PARTS = {
 PARTS["local"] = [f for f in FLOWS if f not in PARTS["servers"]]
 assert sorted(PARTS["servers"] + PARTS["local"]) == sorted(FLOWS) and len(set(FLOWS)) == len(FLOWS), "every flow in exactly one part"
 
+# The flows that drive the file chooser, which since 2026-10-04 is a layer surface — above the
+# application that asked, which is the whole point of it — and `cage` has no layer shell at all,
+# so under it the chooser would be drawn nowhere and take no keys. `run.sh` runs these under
+# sway instead (docs/0.5.0/11-chooser-window.md). They are deliberately NOT in `FLOWS`: the two
+# halves above are the cage suite and CI names them, so a part CI does not name is a part CI
+# does not run, and a sway-only flow can never reach a compositor that cannot show it.
+PARTS["chooser"] = ["chooser"]
+assert not any(f in FLOWS for f in PARTS["chooser"]), "a sway-only flow in the cage suite"
+
 
 class Ctx:
     """What a flow is handed: a daemon, a shell, a place to build fixtures, somewhere to record."""
@@ -77,6 +86,11 @@ def have(capability, args):
 
 def main():
     args = sys.argv[1:]
+    # `--list-part NAME`: the flows in a part, one per line, without a daemon or a socket. The
+    # harness reads the chooser part this way rather than keeping a second copy of the list.
+    if args and args[0] == "--list-part":
+        print("\n".join(PARTS.get(args[1] if len(args) > 1 else "", [])))
+        return 0
     sock_path, out_dir = args[0], args[1]
     wanted = [args[i + 1] for i, a in enumerate(args) if a == "--flow"]
     part = next((args[i + 1] for i, a in enumerate(args) if a == "--part"), os.environ.get("KIKI_E2E_PART", ""))

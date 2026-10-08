@@ -34,3 +34,18 @@ are in each.
 10. `10-faster-listings.md` — **the first screenful comes with the open**: rows ride on the
     `Open` reply or the `Reset`, the window never asks a `Window` for them, every `Reset`
     carries the rows on screen. Local and remote. Measured first.
+11. `11-chooser-window.md` — **the chooser is a window of its own**, a layer surface on the
+    overlay layer, so another application's Save is above the application that asked rather than
+    behind it, and on the output the person is looking at. Driven under `sway` locally, where a
+    screenshot says it is over that application and gone after an answer; `cage` has no layer
+    shell, so those checks are local and not CI's. **Built 2026-10-04.**
+12. `12-hypr-lua.md` — **kiki's Hyprland block is Lua**: Hyprland's configuration on Omarchy is
+    Lua now and the file kiki wrote is read by nothing, so `Super+Shift+F` had never once opened
+    kiki. The block goes into `bindings.lua`, unbinds the chords Omarchy's defaults hold before
+    taking them, and starts kiki the way Omarchy starts everything else; the dead block in the
+    old file is swept. **Built 2026-10-06.**
+13. `13-one-switch.md` — **one switch, and what it does in a person's words**: Settings → Omarchy
+    was four rows of Apply/Remove with the file each one writes, and the first-run dialog four
+    checkboxes with their paths beneath. Both are now one answer over one list — the keys,
+    folders, the Open and Save dialogs, "Show in folder", Quick Look — with no paths and no
+    taking three of the four. **Built 2026-10-06.**

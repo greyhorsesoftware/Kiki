@@ -31,7 +31,11 @@ def run(ctx):
 
     # Rename: F2, type, Enter. The editor opens asynchronously, so wait for it rather than
     # typing into whatever happens to have the focus.
-    sh.select("a.txt")
+    # The paste is on the disk by now; this waits for the window to have been told, which is a
+    # watch away. Said rather than assumed: when it did not arrive (once in a full suite,
+    # 2026-10-04, never reproduced) F2 went to an empty folder and five checks failed downstream
+    # of this one, none of them naming what had actually gone wrong.
+    c.check("the pasted file reaches the view", sh.select("a.txt") is not None, sh.state())
     sh.keys(("F2",))
     opened = sh.wait_state(lambda st: st.get("renaming", -1) >= 0)
     c.check("F2 opens the inline editor", opened is not None, sh.state())

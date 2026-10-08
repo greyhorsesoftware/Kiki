@@ -4,7 +4,12 @@ Another application asks the bus for `org.freedesktop.FileManager1` or the file-
 the bus starts `kiki-dbus` from a service file; the listener puts the request to a kiki window
 through its IPC and carries the answer back. `plugins/kiki-plugin-dbus/tests/activation.rs`
 proves that round trip against a stub window — this proves it against the real one: the folder
-really opens with the file selected, and a chooser really appears and answers.
+really opens, with the file selected.
+
+The chooser is not here: it became a window of its own on 2026-10-04 — a layer surface, which
+`cage` cannot show (docs/0.5.0/11-chooser-window.md) — so everything that drives a chooser is in
+`flows/chooser.py`, which runs under sway. What is left is what needs no chooser, and it is what
+CI runs: the bus starting the listener, and "Show in folder" reaching the window.
 
 The bus here is private (`dbus-run-session`) and can see nothing but this test's service file,
 which is also how a person takes the FileManager1 name from the package that owns it system-wide
@@ -18,7 +23,7 @@ import time
 
 from harness import wait_for
 
-NEEDS = {"shell", "keyboard"}
+NEEDS = {"shell"}
 TITLE = "the session bus starts kiki's listener, which reaches the window"
 
 LISTENER = "kiki-plugin-dbus"   # what it is built as; the package installs it as kiki-dbus
@@ -142,29 +147,6 @@ def run(ctx):
     c.check("the window opens the file's folder", went is not None, (sh.state().get("uri"), said()))
     picked = sh.wait_state(lambda s: s.get("selection") == ["file://" + paper], 10)
     c.check("with the file itself selected", picked is not None, sh.state().get("selection"))
-
-    # ---------------------------------------------------------------- the file chooser
-    # The call blocks while the person chooses, so it runs alongside and is collected after.
-    chooser = subprocess.Popen(
-        ["dbus-run-session", "--", "busctl", "--user", "call",
-         "org.freedesktop.impl.portal.desktop.kiki", "/org/freedesktop/portal/desktop",
-         "org.freedesktop.impl.portal.FileChooser", "OpenFile", "osssa{sv}",
-         "/org/freedesktop/portal/desktop/request/kiki/1", "app.test", "", "Open a file", "0"],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-    )
-    up = sh.wait_state(lambda s: (s.get("dialogs") or {}).get("portal") is True, 25)
-    c.check("a chooser asked for on the bus appears in the window", up is not None, (sh.state().get("dialogs") or {}))
-
-    # Cancelled with a real key, the way a person would. The answer must reach the bus: a chooser
-    # nobody answers leaves the asking application waiting for ever.
-    sh.keys(("Escape",))
-    c.check("the chooser closes", sh.wait_state(lambda s: not (s.get("dialogs") or {}).get("portal"), 10) is not None, (sh.state().get("dialogs") or {}))
-    try:
-        out, err = chooser.communicate(timeout=60)
-    except subprocess.TimeoutExpired:
-        chooser.kill()
-        out, err = "", "the chooser call never returned"
-    c.check("and the answer goes back to whoever asked", chooser.returncode == 0 and "1" in out.strip(), (out or err).strip()[-200:])
 
     # ---------------------------------------------------------------- nothing left behind
     # The listeners this flow had the bus start serve their request and go; they are not daemons

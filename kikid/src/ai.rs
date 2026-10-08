@@ -12,15 +12,35 @@ fn jarvis_settings() -> Value {
     crate::config::settings().get("jarvis").cloned().unwrap_or(Value::Null)
 }
 
-/// Omarchy's chosen AI: the web app its AI keybinding launches. Heuristic; the override wins.
-pub fn omarchy_provider() -> Option<&'static str> {
-    let home = crate::config::home();
-    for p in [home.join(".config/hypr/bindings.conf"), home.join(".local/share/omarchy/default/hypr/bindings.conf")] {
-        let Ok(text) = std::fs::read_to_string(&p) else { continue };
+/// The files Omarchy's AI keybinding could be in, a person's own first: Hyprland reads their
+/// overrides after Omarchy's defaults, so the binding made last is the one the key answers to,
+/// and that is the one to believe. Then Omarchy's own — every `.lua` in its bindings directory,
+/// since the AI keys are in `applications.lua` today and naming that one file would go stale the
+/// first time they move.
+///
+/// Lua, not `.conf`: Omarchy's configuration moved, and kiki went on reading two files nothing
+/// writes any more, so the answer was always "no Omarchy AI" (docs/0.5.0/12-hypr-lua.md, which
+/// found the same thing had silently disabled kiki's own keybindings).
+fn binding_files(home: &std::path::Path, packaged: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = vec![home.join(".config/hypr/bindings.lua")];
+    for root in [packaged.to_path_buf(), home.join(".local/share/omarchy")] {
+        let dir = root.join("default/hypr/bindings");
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let mut lua: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "lua")).collect();
+        lua.sort(); // name order, so two runs read them the same way
+        files.extend(lua);
+    }
+    files
+}
+
+/// Which AI the first binding that launches one belongs to. The domain is what is read: a person
+/// who put another AI on the key is answered by what they put there, whatever they called it.
+fn provider_in(files: &[std::path::PathBuf]) -> Option<&'static str> {
+    for p in files {
+        let Ok(text) = std::fs::read_to_string(p) else { continue };
         for line in text.lines() {
             let l = line.to_ascii_lowercase();
-            let is_ai = l.contains("super, a,") || l.contains("super, a ,") || l.contains(", ai,") || l.contains("chatgpt") || l.contains("claude") || l.contains("grok") || l.contains("gemini");
-            if !is_ai || !l.contains("webapp") && !l.contains("http") {
+            if !l.contains("webapp") && !l.contains("http") {
                 continue;
             }
             if l.contains("claude.ai") || l.contains("anthropic") {
@@ -38,6 +58,12 @@ pub fn omarchy_provider() -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Omarchy's chosen AI: the web app its AI keybinding launches. Heuristic; the override wins.
+pub fn omarchy_provider() -> Option<&'static str> {
+    let packaged = std::env::var_os("OMARCHY_PATH").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("/usr/share/omarchy"));
+    provider_in(&binding_files(&crate::config::home(), &packaged))
 }
 
 /// The effective provider and where the choice came from.
@@ -190,6 +216,34 @@ mod tests {
         assert_eq!(terminal_argv(prog.clone(), d, true, Some("kitty".into())), ["xdg-terminal-exec", "--dir=/w/site", "claude", "hi"]);
         assert_eq!(terminal_argv(prog.clone(), d, false, Some("kitty".into())), ["kitty", "-e", "claude", "hi"]);
         assert_eq!(terminal_argv(prog, d, false, None), ["alacritty", "-e", "claude", "hi"]);
+    }
+
+    /// Omarchy's AI key, read out of the Lua its configuration is written in since 2026. The two
+    /// `.conf` files this used to read are written by nothing now, so the answer was always "no
+    /// Omarchy AI" and every install fell through to the default (docs/0.5.0/12-hypr-lua.md).
+    #[test]
+    fn the_desktops_ai_is_read_from_its_lua_and_a_persons_own_binding_wins() {
+        let home = crate::scratch::Scratch::new("ai-home");
+        let omarchy = crate::scratch::Scratch::new("ai-omarchy");
+        let binds = omarchy.join("default/hypr/bindings");
+        std::fs::create_dir_all(&binds).unwrap();
+        std::fs::create_dir_all(home.join(".config/hypr")).unwrap();
+        assert_eq!(provider_in(&binding_files(&home, &omarchy)), None, "nothing installed, nothing chosen");
+
+        // Omarchy's own, as it ships: the AI keys live in applications.lua among other files.
+        std::fs::write(binds.join("windows.lua"), "o.bind(\"SUPER + W\", \"Close\", hl.dsp.killactive())\n").unwrap();
+        std::fs::write(binds.join("applications.lua"), "o.bind(\"SUPER + SHIFT + A\", \"ChatGPT\", { webapp = \"https://chatgpt.com\" })\n").unwrap();
+        assert_eq!(provider_in(&binding_files(&home, &omarchy)), Some("openai"));
+
+        // The person's own file is read first, because the binding made last is the one the key
+        // answers to.
+        std::fs::write(home.join(".config/hypr/bindings.lua"), "o.bind(\"SUPER + SHIFT + A\", \"Claude\", { webapp = \"https://claude.ai\" })\n").unwrap();
+        assert_eq!(provider_in(&binding_files(&home, &omarchy)), Some("anthropic"));
+
+        // A binding that launches no AI says nothing: the default is not something to guess at.
+        std::fs::write(home.join(".config/hypr/bindings.lua"), "o.bind(\"SUPER + SHIFT + R\", \"SSH\", \"alacritty -e ssh server\")\n").unwrap();
+        std::fs::remove_file(binds.join("applications.lua")).unwrap();
+        assert_eq!(provider_in(&binding_files(&home, &omarchy)), None);
     }
 
     #[test]

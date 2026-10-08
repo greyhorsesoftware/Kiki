@@ -58,6 +58,12 @@ QtObject {
     }
     /// Whether the language in use, or English, has words for `key`.
     function has(key) { return (catalogs[language] || En.strings)[key] !== undefined || En.strings[key] !== undefined }
+    /// What making kiki the default does, in a person's words — the same list on the Settings
+    /// page and in the first-run dialog, so the two cannot drift. In the order a person meets
+    /// them: the keys they press, then what other applications start doing.
+    function omarchyDoes() {
+        return ["keys", "keysHere", "folders", "dialogs", "showInFolder", "quickLook"].map(k => tr("omarchy.does." + k))
+    }
     /// A daemon error in this language: `{ n, params, message }` — the number's sentence when
     /// there is one (its `.more` form when `params.more` counts extras), else the daemon's
     /// English `message` (docs/0.2.0/02-localization.md, L5).

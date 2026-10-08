@@ -133,6 +133,38 @@ TestCase {
         compare(choice.value, "anthropic")
     }
 
+    // ---------------------------------------------------------------- Omarchy: one switch
+    /// The page was four rows of Apply/Remove with the file each one wrote beside it (owner,
+    /// 2026-10-06: "just one switch on/off w/ list of stuff we bind (in human terms) no file
+    /// nonsense"). What is asserted here is what the switch means: all of it or none of it, and
+    /// a desktop that is half set up does not read as done.
+    function test_the_omarchy_switch_is_all_of_it_or_none() {
+        sw.page = "omarchy"
+        Wire.reset()
+        const sw2 = control("omarchy-integration")
+        sw.integration = { mime: true, dbus: true, hypr: true, portal: true }
+        compare(sw2.on, true, "every part in place")
+        sw.integration = { mime: true, dbus: true, hypr: false, portal: true }
+        compare(sw2.on, false, "one part refused is not 'kiki is the default'")
+
+        // On sends one request for the lot: the page no longer offers a part at a time.
+        sw2.toggled()
+        const req = Wire.last("Integrate")
+        verify(req !== null, "the switch applies")
+        verify(req.parts === undefined, "every part, so the daemon decides what is missing")
+        Wire.replyTo("Integrate", { status: { mime: true, dbus: true, hypr: true, portal: true }, results: [{ part: "hypr", ok: true, message: "wrote it" }] })
+        compare(sw2.on, true)
+        compare(sw.integrationTrouble, "", "nothing failed, nothing to say")
+
+        // What did not take is named in the words the list uses, never by its file.
+        sw2.toggled()
+        verify(Wire.last("Unintegrate") !== null, "off removes it")
+        Wire.replyTo("Unintegrate", { status: { mime: false, dbus: false, hypr: true, portal: false }, results: [{ part: "hypr", ok: false, message: "~/.config/hypr/bindings.lua: permission denied" }] })
+        compare(sw2.on, false)
+        verify(sw.integrationTrouble.indexOf("keyboard shortcuts") >= 0, "said in words: " + sw.integrationTrouble)
+        verify(sw.integrationTrouble.indexOf("/") < 0, "and with no path in it: " + sw.integrationTrouble)
+    }
+
     // ---------------------------------------------------------------- Share: a plugin's own form
     // Not one field of a share plugin's form was ever drawn: the delegate asked for a property
     // no Repeater supplies, and the only sign was "Cannot create delegate" in the log, once a

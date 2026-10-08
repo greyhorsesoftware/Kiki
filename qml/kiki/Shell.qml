@@ -457,6 +457,11 @@ FloatingWindow {
     function startChooser(r) { shellChooser.startChooser(r) }
     function chooserAnswer(token) { return shellChooser.chooserAnswer(token) }
     function showItems(msg) { shellChooser.showItems(msg) }
+    /// Whether a chooser is up, and the way to answer the one that is: the chooser has a window
+    /// of its own now (docs/0.5.0/11-chooser-window.md), so what used to read `portal.visible`
+    /// asks here instead and nothing builds the window by looking at it.
+    readonly property bool chooserUp: shellChooser.chooserUp
+    function finishChooser(uris) { shellChooser.finishChooser(uris) }
     // The inspected item follows the selection's current row.
     /// The info panel's width, dragged by its edge and remembered between sessions.
     property int inspectorW: Kiki.Settings.view.inspectorWidth || Kiki.Theme.inspectorWidth
@@ -511,7 +516,7 @@ FloatingWindow {
         id: ops
         pane: win.pane
         onConfirmNeeded: (spec, reply) => confirm.ask(spec, reply)
-        onFolderNeeded: (spec, reply) => portal.pick(
+        onFolderNeeded: (spec, reply) => shellChooser.pick(
             { mode: "open", directory: true, title: spec.title, currentFolder: (spec.start || "").replace(/^file:\/\//, "") || win.home },
             uris => reply(uris && uris.length ? uris[0].replace(/\/+$/, "") : ""))
         // Which view will show a folder being made, so its new row can be named where the user is
@@ -752,7 +757,7 @@ FloatingWindow {
         objectName: "shell-keys"
         anchors.fill: parent
         focus: !win.filterOpen && !searchOverlay.visible && !toolbar.breadcrumb.editing && !leftHeader.breadcrumb.editing && !rightHeader.breadcrumb.editing && !menu.visible && !settingsWin.visible
-            && !locationDialog.visible && !portal.visible && !confirm.visible && !integrationDialog.visible
+            && !locationDialog.visible && !shellChooser.chooserUp && !confirm.visible && !integrationDialog.visible
             && !shareSheet.visible && !compressDialog.visible && !win.projectMode
             && !keysWin.visible && !aboutDlg.visible && !jobLog.visible
             && win.pane.renamingIndex < 0
@@ -789,7 +794,6 @@ FloatingWindow {
     property alias mirrorWs: mirrorWs
     property alias openProbe: openProbe
     property alias paneRow: paneRow
-    property alias portal: shellChooser.portal
     property alias projectTree: projectTree
     property alias quickLookWin: quickLookWin
     property alias rightHeader: rightHeader
@@ -864,7 +868,7 @@ FloatingWindow {
                 width: parent.width; height: parent.height
                 localUri: win.localUri(); remoteUri: win.remoteUri(); home: win.home
                 onClosed: win.mirrorOpen = false
-                onSaveWanted: (name, reply) => portal.pick({ mode: "save", title: Kiki.T.tr("dialog.saveReport"), currentFolder: win.home, currentName: name },
+                onSaveWanted: (name, reply) => shellChooser.pick({ mode: "save", title: Kiki.T.tr("dialog.saveReport"), currentFolder: win.home, currentName: name },
                                                            uris => reply(uris && uris.length ? uris[0] : ""))
                 onRelist: { win.left.listing.refresh(); win.right.listing.refresh(); win.recordMirror() }
             }
@@ -1111,14 +1115,14 @@ FloatingWindow {
         // kiki's own folder chooser — the one it gives other apps through the portal — over the
         // form, starting where the field points (or at home), answering with a plain path.
         onChooseImage: (start, reply) => win.pickLocationImage(start, path => { reply(path); locationDialog.forceActiveFocus() })
-        onChooseFolder: (start, reply) => portal.pick(
+        onChooseFolder: (start, reply) => shellChooser.pick(
             { mode: "open", directory: true, title: Kiki.T.tr("dialog.chooseLocalFolder"), currentFolder: (start || "").replace(/^~/, win.home) || win.home },
             uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, "")).replace(/\/+$/, "") || "/"); locationDialog.forceActiveFocus() })
     }
     /// kiki's own chooser, asked for one picture; answers with a plain path.
     function pickLocationImage(start, reply) {
         const dir = start ? start.replace(/\/[^\/]*$/, "") : ""
-        portal.pick({ mode: "open", title: Kiki.T.tr("dialog.chooseImage"), currentFolder: dir || win.home,
+        shellChooser.pick({ mode: "open", title: Kiki.T.tr("dialog.chooseImage"), currentFolder: dir || win.home,
                       filters: [{ name: "Images", patterns: ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.svg", "*.gif", "*.bmp"] }] },
             uris => { if (uris && uris.length) reply(decodeURIComponent(uris[0].replace(/^file:\/\//, ""))) })
     }

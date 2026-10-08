@@ -1,33 +1,35 @@
 import QtQuick
 import ".." as Kiki
 
-// First launch (plan 09): offer to make kiki the default for this user. Every item is a
-// per-user, reversible change; Settings → Omarchy shows the same list with Remove.
+// First launch (plan 09): offer to make kiki the default for this user. One answer, not four —
+// the list says what it does in a person's words, and Settings → Omarchy is one switch over the
+// same list (owner, 2026-10-06: "just one switch on/off w/ list of stuff we bind (in human
+// terms) no file nonsense" … "yes do the dialog too"). It is all of it or none: a desktop where
+// the keys are kiki's but the Open dialog is not is a desktop nobody asked for, and every part
+// is per-user and reversible from that switch.
 Rectangle {
     id: dlg
     visible: false
     anchors.fill: parent; color: Qt.rgba(0, 0, 0, 0.55); z: 95
     property var status: ({})
-    property var picked: ({ mime: true, dbus: true, hypr: true, portal: true })
     property var results: []
     property bool busy: false
-    readonly property var items: [
-        { id: "mime", label: Kiki.T.tr("integration.mime"), detail: "inode/directory in ~/.config/mimeapps.list" },
-        { id: "dbus", label: Kiki.T.tr("integration.dbus"), detail: "org.freedesktop.FileManager1 in ~/.local/share/dbus-1/services (yours, above the system's)" },
-        { id: "hypr", label: Kiki.T.tr("integration.hypr"), detail: "a marked block in ~/.config/hypr/bindings.conf, rolled back if Hyprland rejects it" },
-        { id: "portal", label: Kiki.T.tr("integration.portal"), detail: "FileChooser=kiki;gtk in ~/.config/xdg-desktop-portal/portals.conf" },
-    ]
-    function open() { results = []; Kiki.Daemon.request("Integration", {}, ok => { if (ok) status = ok; visible = true }) }
+    /// What did not take, in the same words the list uses — "" when nothing failed.
+    property string trouble: ""
+    function open() { results = []; trouble = ""; Kiki.Daemon.request("Integration", {}, ok => { if (ok) status = ok; visible = true }) }
     function decide(apply) {
         Kiki.Settings.set("integration", "asked", true)
         if (!apply) { visible = false; return }
-        const parts = items.map(i => i.id).filter(id => picked[id])
         busy = true
-        Kiki.Daemon.request("Integrate", { parts: parts }, (ok, err) => {
+        // Every part: the dialog no longer asks which, so it sends no `parts` and the daemon
+        // does the lot.
+        Kiki.Daemon.request("Integrate", {}, (ok, err) => {
             busy = false
-            if (err) { results = [{ part: "all", ok: false, message: err.message }]; return }
+            if (err) { trouble = err.message; return }
             results = ok.results; status = ok.status
-            if (results.every(r => r.ok)) visible = false
+            const failed = (ok.results || []).filter(r => !r.ok).map(r => Kiki.T.tr("settings.omarchyPart." + r.part))
+            trouble = failed.length ? Kiki.T.tr("settings.omarchyTrouble", { which: failed.join(", ") }) : ""
+            if (!failed.length) visible = false
         })
     }
     MouseArea { anchors.fill: parent }
@@ -38,31 +40,22 @@ Rectangle {
         Column {
             id: col; x: 24; y: 24; width: parent.width - 48; spacing: 12
             Text { text: Kiki.T.tr("integration.title"); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 16; font.bold: true }
-            Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("integration.note"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+            Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("settings.omarchyWhatItDoes"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
             Repeater {
-                model: dlg.items
-                delegate: Row {
+                model: Kiki.T.omarchyDoes()
+                delegate: Text {
                     required property var modelData
-                    spacing: 10; width: col.width
-                    Rectangle {
-                        width: 16; height: 16; radius: 2; anchors.top: parent.top; anchors.topMargin: 2
-                        color: dlg.picked[modelData.id] ? Kiki.Theme.accent : "transparent"; border.width: 1; border.color: dlg.picked[modelData.id] ? Kiki.Theme.accent : Kiki.Theme.gutter
-                        Text { anchors.centerIn: parent; text: "✓"; visible: dlg.picked[modelData.id]; color: Kiki.Theme.bg; font.pixelSize: 11; font.bold: true }
-                        MouseArea { anchors.fill: parent; onClicked: { const p = Object.assign({}, dlg.picked); p[modelData.id] = !p[modelData.id]; dlg.picked = p } }
-                    }
-                    Column {
-                        width: parent.width - 26; spacing: 2
-                        Text { width: parent.width; wrapMode: Text.WordWrap; text: modelData.label + (dlg.status[modelData.id] ? "  ·  already set" : ""); color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-                        Text { width: parent.width; wrapMode: Text.WordWrap; text: modelData.detail; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-                        Text { visible: !!(dlg.results.find(r => r.part === modelData.id && !r.ok)); width: parent.width; wrapMode: Text.WordWrap; text: (dlg.results.find(r => r.part === modelData.id) || {}).message || ""; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-                    }
+                    width: col.width; wrapMode: Text.WordWrap
+                    text: "·  " + modelData; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12
                 }
             }
+            Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("integration.note"); color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
+            Text { objectName: "integration-trouble"; visible: dlg.trouble !== ""; width: parent.width; wrapMode: Text.WordWrap; text: dlg.trouble; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Text { visible: !!dlg.status.hyprConfigErrors && dlg.status.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("integration.hyprErrors", { errors: (dlg.status.hyprConfigErrors || []).join("\n") }); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
             Row {
                 spacing: 8; anchors.right: parent.right
                 Button { text: Kiki.T.tr("integration.notNow"); onClicked: dlg.decide(false) }
-                Button { text: dlg.busy ? "Applying…" : "Make kiki the default"; primary: true; enabled: !dlg.busy; onClicked: dlg.decide(true) }
+                Button { objectName: "integration-yes"; text: dlg.busy ? Kiki.T.tr("integration.applying") : Kiki.T.tr("integration.makeDefault"); primary: true; enabled: !dlg.busy; onClicked: dlg.decide(true) }
             }
         }
     }

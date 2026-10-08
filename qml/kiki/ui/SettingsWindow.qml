@@ -221,26 +221,37 @@ Rectangle {
     property var volumes: []
     readonly property var homeVolume: { const home = "file://" + Quickshell.env("HOME"); let best = null; for (const v of volumes) if (v.uri && home.startsWith(v.uri.replace(/\/$/, "")) && (!best || v.uri.length > best.uri.length)) best = v; return best }
     function loadIntegration() { Kiki.Daemon.request("Integration", {}, ok => { if (ok) sw.integration = ok }) }
+    /// On only when every part is in place: a half-applied desktop — one step refused, one file
+    /// edited by hand since — must not read as done.
+    readonly property bool integrationOn: ["mime", "dbus", "hypr", "portal"].every(p => sw.integration[p] === true)
+    /// What did not take, named in the same words the list uses. The daemon's own message says
+    /// which file it could not write, which is what this page stopped showing.
+    property string integrationTrouble: ""
+    function setIntegration(on) {
+        Kiki.Daemon.request(on ? "Integrate" : "Unintegrate", {}, (ok, err) => {
+            if (err) { sw.integrationTrouble = err.message; return }
+            sw.integration = ok.status
+            const failed = (ok.results || []).filter(r => !r.ok).map(r => Kiki.T.tr("settings.omarchyPart." + r.part))
+            sw.integrationTrouble = failed.length ? Kiki.T.tr("settings.omarchyTrouble", { which: failed.join(", ") }) : ""
+            sw.flash = failed.length ? "" : (on ? Kiki.T.tr("settings.isDefault") : Kiki.T.tr("settings.integrationRemoved"))
+            if (sw.flash !== "") flashTimer.restart()
+        })
+    }
     Component { id: omarchyPage; Column { spacing: 12
         Component.onCompleted: sw.loadIntegration()
-        Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("settings.omarchyIntro"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        Row2 { label: Kiki.T.tr("settings.makeDefault"); hint: Kiki.T.tr("settings.omarchyHint")
+            Switch { objectName: "omarchy-integration"; on: sw.integrationOn; onToggled: sw.setIntegration(!sw.integrationOn) } }
+        Text { width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("settings.omarchyWhatItDoes"); color: Kiki.Theme.fgDim; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
+        // What the switch does, in the words a person would use for it. Which file each one is
+        // written into is kiki's business and was on this page until 2026-10-06 (owner: "just one
+        // switch on/off w/ list of stuff we bind (in human terms) no file nonsense").
         Repeater {
-            model: [
-                { id: "mime", label: Kiki.T.tr("settings.mime"), file: sw.integration.mimeapps },
-                { id: "dbus", label: Kiki.T.tr("settings.dbus"), file: sw.integration.services },
-                { id: "hypr", label: Kiki.T.tr("settings.hypr"), file: sw.integration.bindings },
-                { id: "portal", label: Kiki.T.tr("settings.portal"), file: sw.integration.portals },
-            ]
-            delegate: Row2 { required property var modelData; label: modelData.label
-                Text { width: 36; anchors.verticalCenter: parent.verticalCenter; text: sw.integration[modelData.id] ? Kiki.T.tr("settings.on") : Kiki.T.tr("settings.off"); color: sw.integration[modelData.id] ? Kiki.Theme.green : Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
-                Button { id: act; text: sw.integration[modelData.id] ? Kiki.T.tr("settings.remove") : Kiki.T.tr("settings.apply"); onClicked: Kiki.Daemon.request(sw.integration[modelData.id] ? "Unintegrate" : "Integrate", { parts: [modelData.id] }, ok => { if (ok) { sw.integration = ok.status; const r = ok.results[0]; sw.flash = r.ok ? r.message : "Failed: " + r.message; flashTimer.restart() } }) }
-                Text { width: Math.max(0, parent.slot - 36 - act.width - 2 * parent.spacing); elide: Text.ElideMiddle; anchors.verticalCenter: parent.verticalCenter; text: modelData.file || ""; color: Kiki.Theme.muted; font.family: Kiki.Theme.mono; font.pixelSize: 11 } }
+            model: Kiki.T.omarchyDoes()
+            delegate: Text { required property var modelData; width: parent ? parent.width : 0; wrapMode: Text.WordWrap
+                text: "·  " + modelData; color: Kiki.Theme.fg; font.family: Kiki.Theme.mono; font.pixelSize: 12 }
         }
+        Text { objectName: "omarchy-trouble"; visible: text !== ""; width: parent.width; wrapMode: Text.WordWrap; text: sw.integrationTrouble; color: Kiki.Theme.danger; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
         Text { visible: !!sw.integration.hyprConfigErrors && sw.integration.hyprConfigErrors.length > 0; width: parent.width; wrapMode: Text.WordWrap; text: Kiki.T.tr("settings.hyprErrors", { errors: (sw.integration.hyprConfigErrors || []).join("; ") }); color: Kiki.Theme.yellow; font.family: Kiki.Theme.mono; font.pixelSize: 11 }
-        Flow { spacing: 8; width: parent.width
-            Button { text: Kiki.T.tr("settings.makeDefault"); primary: true; onClicked: Kiki.Daemon.request("Integrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = ok.results.every(r => r.ok) ? Kiki.T.tr("settings.isDefault") : Kiki.T.tr("settings.stepsFailed", { which: ok.results.filter(r => !r.ok).map(r => r.part + ": " + r.message).join("; ") }); flashTimer.restart() } }) }
-            Button { text: Kiki.T.tr("settings.removeFromOmarchy"); onClicked: Kiki.Daemon.request("Unintegrate", {}, ok => { if (ok) { sw.integration = ok.status; sw.flash = Kiki.T.tr("settings.integrationRemoved"); flashTimer.restart() } }) }
-        }
     } }
     Component { id: git; Column { spacing: 12
         Row2 { label: Kiki.T.tr("settings.showGit"); Switch { on: Kiki.Settings.git.enabled !== false; onToggled: sw.set("git", "enabled", !on) } }
