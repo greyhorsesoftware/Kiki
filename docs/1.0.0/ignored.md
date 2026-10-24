@@ -3,7 +3,7 @@
 The companion to `01-from-the-fork.md`, which holds only work to do. This file holds the rest:
 the parts of [ChrisTitusTech/Path](https://github.com/ChrisTitusTech/Path) that were read,
 understood and declined, with the reason. Recorded 2026-10-24 so that nobody goes looking for
-work that is already decided against, and — now that all nine items are built — so that a later
+work that is already decided against, and — now that the work is built — so that a later
 reading of these commits does not quietly undo a decision by following the fork's diff.
 
 Two kinds. **Declined outright** is a whole commit with nothing in it for kiki. **Declined in

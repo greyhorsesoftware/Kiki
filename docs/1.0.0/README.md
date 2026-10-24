@@ -8,7 +8,8 @@ The plans for the release after 0.6.0. Sizes are in each.
    keystrokes, untrusted listing names joined to a local root, an SFTP password offered to a
    host nobody has verified — one live test-suite race kiki shared, two CI conveniences, and a
    dependency upgrade. With the version bump that opens the cycle and the About dialog's
-   tagline, nine items. **Planned 2026-10-24; all nine built the same day.**
+   tagline, nine items. **Planned 2026-10-24; all nine built the same day** — with a tenth,
+   item 10, found while recording the baseline and fixed alongside them.
 
    1. the version, now `1.0.0` · 2. the Neovim filename-as-keystrokes hole · 3. untrusted names
    joined to a local root · 4. permissions and times through a staged copy (needed no change) ·
@@ -28,8 +29,13 @@ lines inside commits kiki *did* take that read like part of the fix and are not.
 reasoning behind five decisions in items 2, 3, 4, 6 and 8, kept so that a later reading of those
 commits does not undo them.
 
+Item 10 in that file was not planned and is not the fork's: the daemon's build stamp survived
+its own commit, because `build.rs` watched `.git/HEAD` — which a commit does not change — and
+not the ref. A baseline that stamped itself with the previous commit is what caught it.
+
 **Before a `v1.0.0` tag:** item 1 recorded a gate — the three security items done before the
 tag — and all three are. The benchmark run is done too (2026-10-24, in item 3): no regressions
 beyond 25 %, `copy_file_range` confirmed intact at ~3.2 GB/s, and the scan *faster* despite
-checking every one of 202 000 names. What is left is a new baseline recorded at the tagged build,
-and item 7's CI changes, which parse but cannot be proven until a push.
+checking every one of 202 000 names. The new baseline is recorded too
+(`5399065.20261024`, at load 0.98 — item 3 says why the load matters). What is left is item 7's
+CI changes, which parse but cannot be proven until a push.

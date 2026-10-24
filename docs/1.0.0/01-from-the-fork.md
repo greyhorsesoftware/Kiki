@@ -1,7 +1,8 @@
 # 01 — What the fork found
 
-**Status:** planned 2026-10-24; **all nine items built the same day.** Sizes are per item, and
-what each one actually cost is in it.
+**Status:** nine items planned 2026-10-24 and **all nine built the same day**, plus a tenth
+found while recording the baseline and fixed with them. Sizes are per item, and what each one
+actually cost is in it.
 
 [ChrisTitusTech/Path](https://github.com/ChrisTitusTech/Path) is a fork of kiki taken at
 roughly 0.5/0.6 and renamed throughout — `kiki` → `path`, `kikid` → `pathd`,
@@ -17,7 +18,8 @@ its commits were read:
 | `7fbb9bd` | fix(clippy): address Rust 1.99 compatibility | nothing — kiki is already past it; see `ignored.md` |
 
 Because the fork renamed everything, no patch applies. Items 2-8 are each a re-implementation
-against kiki's own files; items 1 and 9 are this cycle's own. All nine are built.
+against kiki's own files; items 1 and 9 are this cycle's own, and item 10 is not from the fork
+at all — it is a defect this work tripped over. All ten are built.
 
 What the fork changed and kiki declines is in `ignored.md` beside this file: one commit with
 nothing in it for us, and five lines inside commits kiki *is* taking that would be a regression
@@ -251,9 +253,24 @@ scan:
 | `copy64m_ms` / `copy_mb_s` | 19.42 → 19.45 ms mean, ~3.2 GB/s | **unchanged — `copy_file_range` is intact.** The same 64 MB copy is measured once per profile, so the four readings are four samples of one operation: 18.23–20.63 now, 18.91–19.93 on the base. Five repeats of one profile with nothing changed read 18.58, 19.11, 20.15, 20.80, 21.74 — **±8 % run to run**, which is where the single flagged line (`flat200k.copy64m_ms` +8 %) sits. At 3.1–3.5 GB/s this is plainly still the in-kernel path and not a userspace byte loop. |
 | `photos.enrich_ms` +133 %, `photos.mirror_scan_ms` +50 %, `photos.window_ms` +33 %, `deep100k.phase1_first_chunk_ms` +22 % | — | **not real.** 0.16, 0.07, 0.06 and 0.04 **milliseconds** on a 200-file fixture — at timer resolution for a single shot, and the doc warns micro numbers on this machine swing about twofold with the day. Every large-N line, where the magnitude is trustworthy, improved. |
 
-Numbers in `bench-1.0.0.json` beside this plan's scratch; `bench/baseline-linux-x86_64.json` is
-**not** updated here, because its `build` field records a commit and nothing is committed yet —
-recording a new baseline belongs at the tagged build.
+**The new baseline is recorded**, at the committed tree: `bench/baseline-linux-x86_64.json`,
+version `1.0.0`, build `5399065.20261024`, all four profiles, `taskset -c 0-3`, tmpfs. Against
+the 0.5.0 baseline it kept to **no regressions beyond 25 %**. The 0.5.0 file is in git history at
+`de27b55` if it is ever wanted back.
+
+**Two things that run taught, both worth keeping.**
+
+- **A baseline recorded on a machine in use is not a baseline.** The first attempt was taken at
+  load 2.1 rising to 3.0 (the owner's own kiki session had just started, plus this work's build
+  writing to btrfs) and it read **10–13 % slower on every large-N line** than the same binary on
+  the same fixture at load 0.98: `flat200k.rescan_ms` 116.04 vs 101.18, `mirror_scan_ms` 184.93
+  vs 165.21, `index_build_ms` 45.65 vs 40.10. Installing that would have made the reference
+  pessimistic and hidden up to a tenth of a future real regression — the one thing a baseline
+  must not do. The quiet run is what is installed, and two independent quiet measurements agree
+  on it (`rescan_ms` 101.18 and 104.01; `mirror_scan_ms` 165.21 and 164.88), which is why it is
+  trusted rather than merely preferred. **Record the next one with the machine idle, and read
+  `/proc/loadavg` before and after.**
+- **The build stamp was lying, and a baseline is what caught it.** See below.
 
 **Size:** well under the two to three days estimated, because the `/proc/self/fd` anchoring made
 the design question disappear.
@@ -543,3 +560,47 @@ item 1 was waiting on; item 6 is a dependency upgrade, not a hole.
 Before starting any of them, read `ignored.md`. Items 2, 3, 4, 6 and 8 each have a line in the
 fork's diff that reads like part of the fix and is not, and that file is where the reasoning
 for leaving each one alone is kept.
+
+---
+
+## 10. The build stamp survived its own commit
+
+**Found and fixed 2026-10-24**, while recording the 1.0.0 baseline — not planned, and not from
+the fork. `kikid/build.rs` stamps `KIKI_BUILD` with the short commit, a `+` when the tree is
+dirty, and the date. It is what the About panel shows (`handlers/session.rs:22`) and what
+`kikid bench` writes into a results file's `build` field, which is how a baseline says what it
+is a baseline *of*.
+
+**The defect.** The only git path it asked cargo to watch was `../.git/HEAD`:
+
+```rust
+println!("cargo:rerun-if-changed=../.git/HEAD");
+```
+
+On a branch, that file holds the text `ref: refs/heads/main`, and **committing does not change
+it** — the ref file does. So cargo saw nothing, never re-ran the build script, and the stamp
+baked into the binary outlived the commit. Caught because a baseline built from a clean
+`5399065` tree stamped itself **`de27b55+`**: the commit before, still marked dirty. The mtimes
+say it plainly — `.git/HEAD` last changed 2026-10-08, `.git/refs/heads/main` at 17:31 on the
+24th.
+
+**The fix.** Watch the ref `HEAD` names, resolved by reading it, plus `packed-refs` for a ref
+that has been packed and so has no file of its own.
+
+**What was deliberately left out:** `../.git/index`. It would turn the `+` over on a `git add`
+too, but it moves on every staging operation — and when `git status` refreshes a stale stat
+cache — and each move recompiles the daemon, the one crate here where that is felt. A commit
+moves the ref, which is what the stamp is for. So an edit that is not committed still moves
+nothing cargo watches and `+` can lag until the next rebuild; that trade is written in the file.
+
+**Worth knowing about the old numbers.** The 0.5.0 baseline records `5844d55+.20261002`. With
+this defect, that `+` may have been a stale stamp rather than a dirty build, so "the 0.5.0 base"
+may not be exactly the tree its label names. It does not change this release's verdict — the
+scan got faster, the copy is unchanged — but it is the reason a correctly stamped baseline was
+worth the trouble.
+
+**Checked.** `cargo fmt --check` and clippy `-D warnings` clean; the stamp now reads `5399065`
+from the clean commit and `5399065+` with this very change in the tree, which is both halves of
+it working.
+
+**Size:** half an hour, none of it planned.
