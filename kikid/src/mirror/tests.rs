@@ -627,13 +627,13 @@ fn the_guards_refuse_before_anything_is_deleted() {
         error: None,
     });
     let err = execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("a path climbing out of the replica is refused");
-    assert!(err.message().contains("outside the replica root"), "{}", err.message());
+    assert!(err.message().contains("not inside the transfer root"), "{}", err.message());
 
     // And so is an absolute one.
     let mut plan = diff(&m, &r, &s, Detector::SizeOnly, 0).unwrap();
     plan.actions
         .push(Action { rel: "/etc/passwd".into(), kind: ActionKind::Delete, reason: Reason::Extra, master: None, replica: None, bytes: 0, checked: true, state: State::Pending, progress: 0, error: None });
-    assert!(execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("an absolute path is refused").message().contains("outside the replica root"));
+    assert!(execute(&Arc::new(Mutex::new(plan)), &s, &ctx).err().expect("an absolute path is refused").message().contains("not inside the transfer root"));
 }
 
 // ---------------------------------------------------------------- scanning
@@ -807,4 +807,50 @@ fn the_audit_log_is_compacted_past_its_cap() {
     assert!(!p.with_extension("log.tmp").exists(), "the file it was written through is gone");
     super::execute::audit("one more");
     assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), super::execute::AUDIT_CAP / 2 + 1, "appended to again after");
+}
+
+/// A name from a server reaches the filesystem only if it is an ordinary relative path, and the
+/// write lands where it was aimed even if something is put in its way. Four ways in, all shut:
+/// a `rel` that climbs, an absolute one, a destination that is already a symlink, and a parent
+/// component swapped for one. The copy also carries the source's mode, which is what keeps a
+/// mirror from quietly opening files up (docs/1.0.0/01-from-the-fork.md items 3 and 4).
+#[test]
+fn a_copy_refuses_a_name_that_leaves_the_root_and_follows_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let src = Scratch::new("mirror-safe-src");
+    let root = Scratch::new("mirror-safe-root");
+    let outside = Scratch::new("mirror-safe-outside");
+    std::fs::write(src.join("source"), b"new data").unwrap();
+    std::fs::set_permissions(src.join("source"), std::fs::Permissions::from_mode(0o750)).unwrap();
+    let victim = outside.join("victim");
+    std::fs::write(&victim, b"preserve").unwrap();
+
+    let cancel = AtomicBool::new(false);
+    let ctx = ExecCtx { cancel: &cancel, workers: 1, on_change: &|_| {}, on_bytes: &|_| {}, exact_times: false };
+    let (m, r) = (Side::Local(src.to_path_buf()), Side::Local(root.to_path_buf()));
+
+    // Neither end of a copy takes a name that is not inside its root.
+    for bad in ["../victim", "/tmp/victim", "a/../../victim", "", "./victim", "a//b", "sub/"] {
+        assert!(copy_file(&m, "source", &r, bad, 8, 0, &ctx).is_err(), "destination {bad:?} must be refused");
+        assert!(copy_file(&m, bad, &r, "dest", 8, 0, &ctx).is_err(), "source {bad:?} must be refused");
+    }
+    assert!(!victim.exists() || std::fs::read(&victim).unwrap() == b"preserve", "nothing was written through a refused name");
+
+    // A destination that is already a symlink is replaced, not written through.
+    std::os::unix::fs::symlink(&victim, root.join("dest")).unwrap();
+    copy_file(&m, "source", &r, "dest", 8, 0, &ctx).unwrap();
+    assert_eq!(std::fs::read(&victim).unwrap(), b"preserve", "the file the link pointed at is untouched");
+    assert_eq!(std::fs::read(root.join("dest")).unwrap(), b"new data");
+    assert!(!std::fs::symlink_metadata(root.join("dest")).unwrap().file_type().is_symlink(), "and what is there now is a real file");
+    assert_eq!(std::fs::metadata(root.join("dest")).unwrap().permissions().mode() & 0o777, 0o750, "the source's mode came with it");
+
+    // A parent component that is a symlink is not a way out either.
+    std::os::unix::fs::symlink(outside.path(), root.join("escape")).unwrap();
+    assert!(copy_file(&m, "source", &r, "escape/landed", 8, 0, &ctx).is_err(), "a symlinked parent is refused");
+    assert!(!outside.join("landed").exists(), "and nothing arrived through it");
+
+    // A source reached through a symlink is not read.
+    std::os::unix::fs::symlink(&victim, src.join("sneaky")).unwrap();
+    assert!(copy_file(&m, "sneaky", &r, "copied", 8, 0, &ctx).is_err(), "a linked source is refused");
+    assert!(!root.join("copied").exists());
 }

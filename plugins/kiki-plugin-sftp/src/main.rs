@@ -75,6 +75,11 @@ struct ClientHandler {
     /// Set when `~/.ssh/known_hosts` already vouches for this key: the user has verified this
     /// host with ssh, so kiki has no reason to ask them a second time.
     known: Arc<Mutex<bool>>,
+    /// Set when the server offered an SSH certificate instead of a host key. Its own flag, not
+    /// `refused`, because it is not a key that disagrees with anything — there is simply nothing
+    /// here to check it against — and the person needs to be told that rather than shown the
+    /// "this host's key has changed" warning, which is the one error they must not misread.
+    certificate: Arc<Mutex<bool>>,
     host: String,
     port: u16,
 }
@@ -112,7 +117,14 @@ fn known_hosts_says(host: &str, port: u16, key: &russh::keys::PublicKey) -> Know
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, key: &russh::keys::PublicKey) -> std::result::Result<bool, Self::Error> {
+    async fn check_server_key(&mut self, offered: &russh::keys::PublicKeyOrCertificate) -> std::result::Result<bool, Self::Error> {
+        // 0.64 can be offered a certificate signed by a CA. kiki's trust is one key a person
+        // accepted for this location, or one `~/.ssh/known_hosts` already vouches for; it holds
+        // no CA list, so a certificate is nothing it can check. Refused, and said so below.
+        let russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } = offered else {
+            *self.certificate.lock().unwrap() = true;
+            return Ok(false);
+        };
         let fp = key.fingerprint(HashAlg::Sha256).to_string();
         *self.seen.lock().unwrap() = Some(fp.clone());
         // A key the user has already accepted for this location: it must be that key and no other.
@@ -136,9 +148,14 @@ impl client::Handler for ClientHandler {
                 *self.refused.lock().unwrap() = Some(format!("~/.ssh/known_hosts records a different key for this host (line {line})"));
                 Ok(false)
             }
-            // Unknown to ssh as well. The key is reported back with the reply; kiki shows it to
-            // the user, and once they accept it, saves it as `trustedFingerprint`.
-            KnownHosts::Unknown => Ok(true),
+            // Unknown to ssh as well: stop here, before authentication. Returning `true` let
+            // russh carry on and offer the password, or a signature from the user's key, to a
+            // host nobody has ever verified — so by the time the window asked "trust this
+            // key?", the credential had already gone to whoever answered that address. The
+            // fingerprint comes back as the refusal instead (`Connect`, below), which is the
+            // shape FTPS already uses and `locations::unaccepted_fingerprint` already reads, so
+            // the same verify-and-pin flow runs and nothing is sent to get it.
+            KnownHosts::Unknown => Ok(false),
         }
     }
 }
@@ -695,11 +712,12 @@ impl Handler for Sftp {
         let seen = Arc::new(Mutex::new(None));
         let refused: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let known = Arc::new(Mutex::new(false));
+        let certificate = Arc::new(Mutex::new(false));
         let password = if auth == "key" { None } else { secrets.str_field("password").map(str::to_string) };
         let passphrase = secrets.str_field("passphrase").map(str::to_string);
         let result = self.rt.block_on(async {
             let config = Arc::new(client::Config { inactivity_timeout: Some(Duration::from_secs(300)), keepalive_interval: Some(Duration::from_secs(30)), ..Default::default() });
-            let handler = ClientHandler { pinned: pinned.clone(), seen: Arc::clone(&seen), refused: Arc::clone(&refused), known: Arc::clone(&known), host: host.clone(), port };
+            let handler = ClientHandler { pinned: pinned.clone(), seen: Arc::clone(&seen), refused: Arc::clone(&refused), known: Arc::clone(&known), certificate: Arc::clone(&certificate), host: host.clone(), port };
             let mut handle = client::connect(config, (host.as_str(), port), handler).await.map_err(|e| PluginError::network(format!("{host}:{port}: {e}")))?;
             // Keys first, then the password, then the password again as the answer to a
             // keyboard-interactive prompt — which is how many servers ask for it (PAM) while
@@ -764,13 +782,26 @@ impl Handler for Sftp {
             Ok(v) => v,
             Err(e) => {
                 // A refused host key surfaces from russh as a closed connection; say what really happened.
+                if *certificate.lock().unwrap() {
+                    return Err(PluginError::auth(format!(
+                        "{host} offered an SSH certificate rather than a host key. kiki trusts one key per location — the one you accept here, or one ~/.ssh/known_hosts already vouches for — so it has no certificate authority to check this against. Connect with the server's host key, or add it to known_hosts with ssh first."
+                    )));
+                }
                 let why = refused.lock().unwrap().clone();
                 return match why {
                     Some(why) => {
                         let got = seen.lock().unwrap().clone().unwrap_or_default();
                         Err(PluginError::auth(format!("the host key of {host} has changed — it offered {got}, and {why}. Verify the server before connecting again.")))
                     }
-                    None => Err(e),
+                    // Not a changed key, so it is a key nobody has vouched for: the handshake
+                    // was stopped before any authentication. The fingerprint IS the refusal.
+                    None => {
+                        let fingerprint = seen.lock().unwrap().clone();
+                        match fingerprint.filter(|_| pinned.is_none() && !*known.lock().unwrap()) {
+                            Some(fp) => Err(PluginError::invalid("fingerprint", fp)),
+                            None => Err(e),
+                        }
+                    }
                 };
             }
         };

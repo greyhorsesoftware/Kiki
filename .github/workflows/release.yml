@@ -33,13 +33,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          # `--event push`: with CI now runnable by hand against any revision (ci.yml's
+          # workflow_dispatch), a manual run on some other commit could otherwise be the newest
+          # green one and get released. A release ships what was pushed to main, and nothing else.
+          run="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           [ -n "$run" ] || { echo "no successful CI run on main to release"; exit 1; }
           sha="$(gh run view --repo "$GITHUB_REPOSITORY" "$run" --json headSha --jq .headSha)"
           # The newest green run is not the newest run when main has moved and its CI is still
           # going, or went red: releasing then quietly ships the commit before the fix. Say so and
           # stop. (A commit CI skips, docs only, starts no run, so it cannot trip this.)
-          newest="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --limit 1 --json databaseId,headSha,status,conclusion --jq '.[0]')"
+          newest="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --event push --branch main --limit 1 --json databaseId,headSha,status,conclusion --jq '.[0]')"
           newest_id="$(jq -r .databaseId <<<"$newest")"
           if [ "$newest_id" != "$run" ]; then
             echo "the newest CI run on main is $(jq -r .headSha <<<"$newest") ($(jq -r '.status + (if .conclusion then " / " + .conclusion else "" end)' <<<"$newest")), not the newest green one ($sha)."

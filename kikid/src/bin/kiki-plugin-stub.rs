@@ -332,6 +332,21 @@ fn main() {
             // API-PLUGIN: a plugin that cannot walk a whole tree in one request says so, and the
             // daemon lists directory by directory. Answering the top level and calling it
             // recursive would leave every mirror re-copying the files it never saw.
+            // A hostile server, for `tests/transfer_security.rs`: a listing that names something
+            // outside the root it was asked about. Behind a variable so that no other test can
+            // meet it by accident, and under two paths so that BOTH scan paths are covered —
+            // `/unsafe-recursive` answers the recursive Scan, `/unsafe-fallback` refuses it and
+            // answers the per-directory walk the daemon falls back to
+            // (docs/1.0.0/01-from-the-fork.md item 3).
+            "Scan" if std::env::var_os("KIKI_STUB_UNSAFE_SCAN").is_some() && path.starts_with("/unsafe") => {
+                if path == "/unsafe-fallback" && v.get("recursive").and_then(Value::as_bool).unwrap_or(false) {
+                    err(id, "Unsupported", "the stub lists one directory at a time")
+                } else {
+                    let entry = Value::obj().s("name", "../outside").s("rel", "../outside").s("kind", "file").v("meta", Value::Null).done();
+                    send(&out, &Value::obj().u("id", id).v("entries", Value::Arr(vec![entry])).done());
+                    ok(id, Value::obj().u("n", 1).done())
+                }
+            }
             "Scan" if v.get("recursive").and_then(Value::as_bool).unwrap_or(false) => err(id, "Unsupported", "the stub lists one directory at a time"),
             "Scan" => match lookup(&mut root, &path) {
                 Some(d) if d.is_dir => {

@@ -59,7 +59,15 @@ fn cancelled(c: &AtomicBool) -> bool {
 
 /// Copies one file, streaming with progress; `copy_file_range` on Linux with a partial-write loop.
 pub fn copy_file(src: &Path, dst: &Path, p: &mut Progress) -> Result<u64> {
-    let mut input = fs::File::open(src)?;
+    copy_open_file(fs::File::open(src)?, dst, p)
+}
+
+/// The same copy from a source that is already open, so a caller can decide how it was opened:
+/// the mirror and plain transfers open theirs with `O_NOFOLLOW` and refuse anything that is not
+/// a regular file, because the name came from a server (`mirror::safety::open_source`). The
+/// `copy_file_range` fast path, the `fallocate`, the `fadvise` and the 64 MiB cancel granularity
+/// are all on this side of the split, so nothing about them changes.
+pub fn copy_open_file(mut input: fs::File, dst: &Path, p: &mut Progress) -> Result<u64> {
     let md = input.metadata()?;
     #[cfg(target_os = "linux")]
     let total = md.len();

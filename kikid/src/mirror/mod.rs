@@ -328,10 +328,15 @@ mod diff;
 mod execute;
 mod filters;
 mod report;
+/// Untrusted names, checked and anchored before they reach the filesystem. `pub(crate)` for
+/// `transfer.rs`, which joins the same kind of name to the same kind of root.
+pub(crate) mod safety;
 mod scan;
 mod store;
 #[cfg(test)]
 mod tests;
+
+use safety::{create_part, local_path, open_source, validate_name, validate_rel};
 
 pub use detect::{auto_offset, is_changed, pick_detector};
 pub use diff::diff;

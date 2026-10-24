@@ -10,6 +10,12 @@ pub struct Outcome {
 }
 
 fn enforce_guards(plan: &Plan, spec: &Spec) -> Result<(), VfsError> {
+    // Every name the plan would act on, before any of it runs, whatever it does. This used to
+    // sit below the early return and look only at deletes, so a `rel` on a Copy was never
+    // checked at all and a plan that only added files was never checked either.
+    for a in plan.actions.iter().filter(|a| a.checked && a.kind != ActionKind::Skip) {
+        validate_rel(&a.rel)?;
+    }
     if plan.delete_count() == 0 {
         return Ok(());
     }
@@ -19,11 +25,6 @@ fn enforce_guards(plan: &Plan, spec: &Spec) -> Result<(), VfsError> {
             &[("n", &plan.delete_count()), ("total", &plan.replica_entry_count)],
             format!("Safety: this would delete {} of {} replica items; confirm to proceed", plan.delete_count(), plan.replica_entry_count),
         ));
-    }
-    for a in plan.actions.iter().filter(|a| a.checked && matches!(a.kind, ActionKind::Delete | ActionKind::Rmdir)) {
-        if a.rel.is_empty() || a.rel.split('/').any(|s| s == "..") || a.rel.starts_with('/') {
-            return Err(VfsError::said(1224, &[("path", &a.rel)], format!("Safety: refusing to delete outside the replica root: {}", a.rel)));
-        }
     }
     Ok(())
 }
@@ -189,13 +190,22 @@ fn set_state(plan: &Arc<Mutex<Plan>>, idx: usize, st: State, err: Option<String>
 }
 
 fn run_action(a: &Action, master: &Side, replica: &Side, ctx: &ExecCtx) -> Result<(), VfsError> {
+    // Again here, and not only in `enforce_guards`: a plan can be executed by a path that did
+    // not come through the guards, and this is the last place before the filesystem.
+    validate_rel(&a.rel)?;
     match a.kind {
         ActionKind::Mkdir => match replica {
-            Side::Local(root) => std::fs::create_dir(root.join(&*a.rel)).map_err(VfsError::from),
+            Side::Local(root) => {
+                let at = local_path(root, &a.rel)?;
+                std::fs::create_dir(at.path()).map_err(VfsError::from)
+            }
             Side::Remote(s, root) => s.plugin.request(s.req("Mkdir").s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Delete | ActionKind::Rmdir => match replica {
-            Side::Local(root) => crate::ops::remove_tree(&root.join(&*a.rel)),
+            Side::Local(root) => {
+                let at = local_path(root, &a.rel)?;
+                crate::ops::remove_tree(at.path())
+            }
             Side::Remote(s, root) => s.plugin.request(s.req("Delete").s("path", join_rel(root, &a.rel)).done()).map(|_| ()),
         },
         ActionKind::Copy => copy_action(a, master, replica, ctx),
@@ -293,29 +303,38 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
         to: &'a str,
         bytes: u64,
     }
+    validate_rel(from)?;
+    validate_rel(to)?;
     let a = A { rel: from, to, bytes };
     match (master, replica) {
         (Side::Local(mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(a.to);
-            let _ = std::fs::remove_file(&dst);
+            // Both sides anchored, and held so for the whole copy: `src` and `dst` keep their
+            // parent directories open, so neither name can be re-aimed once it is resolved.
+            let src = local_path(mroot, a.rel)?;
+            let dst = local_path(rroot, a.to)?;
+            let input = open_source(src.path())?;
+            let _ = std::fs::remove_file(dst.path());
             let mut p = crate::ops::Progress { cancel: ctx.cancel, bytes: &mut |n| (ctx.on_bytes)(n), file: None, failed: None };
-            crate::ops::copy_file(&mroot.join(a.rel), &dst, &mut p)?;
+            crate::ops::copy_open_file(input, dst.path(), &mut p)?;
             Ok(())
         }
         (Side::Local(mroot), Side::Remote(s, rroot)) => {
-            let mut f = std::fs::File::open(mroot.join(a.rel))?;
+            let src = local_path(mroot, a.rel)?;
+            let mut f = open_source(src.path())?;
             put(s, &join_rel(rroot, a.to), a.bytes, mtime, ctx, || read_chunk(&mut f))
         }
         (Side::Remote(s, mroot), Side::Local(rroot)) => {
-            let dst = rroot.join(a.to);
+            let dst = local_path(rroot, a.to)?;
             // Appended, not swapped for the extension: `notes.txt` and `notes.md` arriving on two
-            // workers at once must not share a part file.
+            // workers at once must not share a part file. Anchored to the same parent as the
+            // file it becomes, and created so that one planted ahead of time is not written
+            // through — this was a plain `File::create`, which follows a symlink.
             let tmp = {
-                let mut n = dst.clone().into_os_string();
+                let mut n = dst.path().to_path_buf().into_os_string();
                 n.push(".kiki-part");
                 std::path::PathBuf::from(n)
             };
-            let mut f = std::fs::File::create(&tmp)?;
+            let mut f = create_part(&tmp)?;
             let req = s.req("Read").s("path", join_rel(mroot, a.rel)).done();
             let mut disk: Option<std::io::Error> = None;
             let r = s.plugin.read_stream_with(req, Some(ctx.cancel), |m| {
@@ -337,7 +356,7 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
                 let _ = std::fs::remove_file(&tmp);
                 return Err(e);
             }
-            std::fs::rename(&tmp, &dst)?;
+            std::fs::rename(&tmp, dst.path())?;
             // (Plain downloads only — see `ExecCtx::exact_times`.)
             // A time that is a whole minute came from a listing that could say no better: FTP's
             // LIST gives minutes for a recent file and only the DAY for one older than six months
@@ -350,7 +369,7 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
                 mtime
             };
             if mtime > 0 {
-                let _ = crate::ops::set_mtime(&dst, std::time::UNIX_EPOCH + std::time::Duration::from_millis(mtime));
+                let _ = crate::ops::set_mtime(dst.path(), std::time::UNIX_EPOCH + std::time::Duration::from_millis(mtime));
             }
             Ok(())
         }
@@ -386,7 +405,9 @@ pub fn copy_file(master: &Side, from: &str, replica: &Side, to: &str, bytes: u64
             // Same plugin process on both sides: a plugin serves one binary stream at a time, so
             // spool through a temp file.
             let tmp = std::env::temp_dir().join(format!("kiki-mirror-{}-{}", std::process::id(), crate::md5::hex(a.rel.as_bytes())));
-            let mut f = std::fs::File::create(&tmp)?;
+            // The name is predictable and the directory is shared, so another user on this
+            // machine could leave a symlink under it; `create_part` will not write through one.
+            let mut f = create_part(&tmp)?;
             let req = ms.req("Read").s("path", join_rel(mroot, a.rel)).done();
             let mut disk: Option<std::io::Error> = None;
             let spooled = ms.plugin.read_stream_with(req, Some(ctx.cancel), |m| {

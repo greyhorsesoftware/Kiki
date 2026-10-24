@@ -12,9 +12,14 @@ path = "src/main.rs"
 [dependencies]
 kiki-plugin-sdk = { path = "../../crates/kiki-plugin-sdk" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "time", "macros"] }
-russh = "0.52"
+# `default-features = false` to leave `aws-lc-rs` out: it is 0.64's default crypto backend and
+# wants cmake and a C toolchain, which the aarch64 package container would have to grow for no
+# gain here. `ring` does the same job for what kiki speaks. `rsa` because servers with RSA host
+# keys are still everywhere, and `flate2` was the 0.52 default (docs/1.0.0/01-from-the-fork.md
+# item 6).
+russh = { version = "0.64.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 russh-sftp = "2"
 
 [dev-dependencies]
-rand = "0.8"
+rand = "0.10"
 tokio = { version = "1", features = ["rt", "net", "io-util", "time", "macros", "sync"] }

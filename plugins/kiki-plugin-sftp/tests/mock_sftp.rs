@@ -11,7 +11,7 @@ use kiki_plugin_sdk::json::{self, Value};
 use kiki_plugin_sdk::{read_frame, write_binary, write_json};
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Msg, Session};
-use russh::{Channel, ChannelId, CryptoVec};
+use russh::{Channel, ChannelId};
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode};
 use scratch::Scratch;
 use std::collections::{BTreeMap, HashMap};
@@ -140,6 +140,9 @@ struct Counters {
     execs: AtomicUsize,
     /// Successful sign-ins: how many connections this server has really been given.
     auths: AtomicUsize,
+    /// Sign-ins *attempted*, by any method. A host key kiki refuses must produce none of these:
+    /// that nothing was offered to the unverified server is the whole point of refusing early.
+    auth_attempts: AtomicUsize,
 }
 
 struct MockCfg {
@@ -282,6 +285,7 @@ impl russh::server::Handler for SshSession {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        self.counters.auth_attempts.fetch_add(1, Ordering::SeqCst);
         let ok = !self.cfg.auth.no_password_method && user == "kiki" && password == "secret";
         if ok {
             self.counters.auths.fetch_add(1, Ordering::SeqCst);
@@ -290,6 +294,7 @@ impl russh::server::Handler for SshSession {
     }
 
     async fn auth_publickey(&mut self, user: &str, key: &russh::keys::PublicKey) -> Result<Auth, Self::Error> {
+        self.counters.auth_attempts.fetch_add(1, Ordering::SeqCst);
         let offered = key.to_openssh().unwrap_or_default();
         OFFERED.lock().unwrap().push(offered.clone());
         let blob = |k: &str| k.split_whitespace().nth(1).unwrap_or("").to_string();
@@ -298,6 +303,7 @@ impl russh::server::Handler for SshSession {
     }
 
     async fn auth_keyboard_interactive<'a>(&'a mut self, user: &str, _submethods: &str, response: Option<russh::server::Response<'a>>) -> Result<Auth, Self::Error> {
+        self.counters.auth_attempts.fetch_add(1, Ordering::SeqCst);
         if !self.cfg.auth.interactive {
             return Ok(Auth::Reject { proceed_with_methods: None, partial_success: false });
         }
@@ -310,9 +316,10 @@ impl russh::server::Handler for SshSession {
         }
     }
 
-    async fn channel_open_session(&mut self, channel: Channel<Msg>, _session: &mut Session) -> Result<bool, Self::Error> {
+    async fn channel_open_session(&mut self, channel: Channel<Msg>, reply: russh::server::ChannelOpenHandle, _session: &mut Session) -> Result<(), Self::Error> {
         self.channels.insert(channel.id(), channel);
-        Ok(true)
+        reply.accept().await;
+        Ok(())
     }
 
     async fn subsystem_request(&mut self, channel_id: ChannelId, name: &str, session: &mut Session) -> Result<(), Self::Error> {
@@ -351,7 +358,7 @@ impl russh::server::Handler for SshSession {
         let (out, status) = self.emulate(&cmd);
         session.channel_success(channel_id)?;
         for chunk in out.chunks(32 * 1024) {
-            session.data(channel_id, CryptoVec::from(chunk.to_vec()))?;
+            session.data(channel_id, chunk.to_vec())?;
         }
         session.exit_status_request(channel_id, status)?;
         session.eof(channel_id)?;
@@ -564,6 +571,12 @@ impl russh_sftp::server::Handler for SftpFs {
     }
 }
 
+/// The fingerprint of each mock server's host key, by port. A plugin spawned by `spawn()` pins
+/// it (see `Plugin::pin_fixture`): since an unvouched-for key is now refused before
+/// authentication, a test that is not *about* host keys has to say which key it trusts, exactly
+/// as a saved location does.
+static HOST_KEYS: Mutex<BTreeMap<u16, String>> = Mutex::new(BTreeMap::new());
+
 fn start(exec: ExecMode, fail: ExecFail, page: usize) -> Mock {
     start_auth(exec, fail, page, AuthMode::default())
 }
@@ -575,8 +588,9 @@ fn start_auth(exec: ExecMode, fail: ExecFail, page: usize, auth: AuthMode) -> Mo
     let port = std_listener.local_addr().unwrap().port();
     std_listener.set_nonblocking(true).unwrap();
     let server = MockServer { fs: fs.clone(), cfg: Arc::new(MockCfg { exec, fail, page, auth }), counters: counters.clone() };
-    let host_private = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap();
+    let host_private = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
     let host_key = host_private.public_key().to_openssh().unwrap();
+    HOST_KEYS.lock().unwrap().insert(port, host_private.public_key().fingerprint(russh::keys::HashAlg::Sha256).to_string());
     let thread = std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
@@ -597,13 +611,20 @@ struct Plugin {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
+    /// Put this server's own fingerprint into any `Connect` that does not name one. A key
+    /// nobody has vouched for is refused before authentication now, so without this every test
+    /// that merely connects would be testing the refusal. The tests that *are* about host keys
+    /// spawn through `spawn_with`, which leaves this off and lets the real decision happen.
+    pin_fixture: bool,
     /// The wire lines the plugin logged (`KIKI_PLUGIN_LOG`), kept out of `req`'s frames.
     log: Vec<String>,
 }
 
 impl Plugin {
     fn spawn() -> Plugin {
-        Plugin::spawn_with(None)
+        let mut p = Plugin::spawn_with(None);
+        p.pin_fixture = true;
+        p
     }
 
     /// `known_hosts` points the plugin at a fixture instead of the real `~/.ssh/known_hosts`.
@@ -613,7 +634,9 @@ impl Plugin {
 
     /// With the library log asked for, as the daemon asks: `Log` events between the frames.
     fn spawn_logging() -> Plugin {
-        Plugin::spawn_all(None, true)
+        let mut p = Plugin::spawn_all(None, true);
+        p.pin_fixture = true;
+        p
     }
 
     fn spawn_all(known_hosts: Option<&std::path::Path>, log: bool) -> Plugin {
@@ -635,11 +658,20 @@ impl Plugin {
         let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().expect("spawn plugin");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        Plugin { child, stdin, stdout, next: 1, log: Vec::new() }
+        Plugin { child, stdin, stdout, next: 1, pin_fixture: false, log: Vec::new() }
     }
 
     /// Sends a request; returns (streamed JSON frames, final reply).
     fn req(&mut self, mut v: Value) -> (Vec<Value>, Value) {
+        if self.pin_fixture && v.str_field("type") == Some("Connect") {
+            if let Value::Obj(m) = &mut v {
+                if let Some(Value::Obj(config)) = m.get_mut("config") {
+                    let port = config.get("port").and_then(Value::as_str).expect("a Connect names its port").parse::<u16>().unwrap();
+                    let fp = HOST_KEYS.lock().unwrap().get(&port).cloned().expect("a mock server was started on this port");
+                    config.entry("trustedFingerprint".into()).or_insert(Value::Str(fp));
+                }
+            }
+        }
         let id = self.next;
         self.next += 1;
         if let Value::Obj(m) = &mut v {
@@ -985,15 +1017,33 @@ fn a_host_in_known_hosts_is_accepted_and_reported() {
     assert!(ok.str_field("fingerprint").is_some());
 }
 
-/// A host ssh has never seen is connected to, and the key is handed back: kiki asks the user
-/// before it saves anything.
+/// A host nobody has vouched for is refused, and refused *before* anything is offered to it.
+/// The refusal carries the key's fingerprint, which is what the window turns into "trust this
+/// server?" — so the question is still asked, and the user can still say yes; what has changed
+/// is that it is asked while the answer still matters. Until 1.0.0 the handshake carried on
+/// instead, and the password (or a signature from the user's key) reached whoever answered that
+/// address before anyone was asked anything (docs/1.0.0/01-from-the-fork.md item 5).
 #[test]
-fn an_unknown_host_is_reported_for_the_user_to_verify() {
+fn an_unknown_host_is_refused_before_anything_is_offered_to_it() {
     let m = start(ExecMode::Refused, ExecFail::None, 0);
+    // Not pinned: this test is about the decision itself, so it must make it.
     let mut p = Plugin::spawn_with(None);
-    let ok = p.connect(m.port, "secret").get("ok").cloned().expect("connect");
-    assert_eq!(ok.get("knownHost").and_then(Value::as_bool), Some(false));
-    assert!(ok.str_field("fingerprint").unwrap().starts_with("SHA256:"));
+    let r = p.connect(m.port, "secret");
+    let err = r.get("err").unwrap_or_else(|| panic!("a key nobody has vouched for must be refused: {}", json::to_string(&r)));
+    assert_eq!(err.str_field("code"), Some("Invalid"), "{}", json::to_string(err));
+    assert_eq!(err.str_field("field"), Some("fingerprint"), "the shape `locations::unaccepted_fingerprint` reads");
+    let fp = err.str_field("message").unwrap_or_default().to_string();
+    assert_eq!(fp, HOST_KEYS.lock().unwrap()[&m.port], "and the refusal IS this server's key, to show the user");
+    // The point of refusing early, asserted rather than assumed.
+    assert_eq!(m.counters.auth_attempts.load(Ordering::SeqCst), 0, "nothing may be offered to a server nobody has vouched for");
+    assert_eq!(m.counters.auths.load(Ordering::SeqCst), 0, "and so nothing signed in");
+
+    // And the user saying yes — the same key, pinned — is an ordinary connection.
+    let mut good = Plugin::spawn_with(None);
+    let r = good.connect_cfg(m.port, "secret", &[("trustedFingerprint", &fp)]);
+    let ok = r.get("ok").unwrap_or_else(|| panic!("the pinned key must connect: {}", json::to_string(&r)));
+    assert_eq!(ok.str_field("fingerprint"), Some(fp.as_str()));
+    assert!(m.counters.auth_attempts.load(Ordering::SeqCst) > 0, "that one did authenticate");
 }
 
 /// known_hosts has a different key of the same kind for this host — ssh's "identification has
@@ -1001,7 +1051,7 @@ fn an_unknown_host_is_reported_for_the_user_to_verify() {
 #[test]
 fn a_key_that_known_hosts_disagrees_with_is_refused() {
     let m = start(ExecMode::Refused, ExecFail::None, 0);
-    let other = PrivateKey::random(&mut rand::thread_rng(), Algorithm::Ed25519).unwrap().public_key().to_openssh().unwrap();
+    let other = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap().public_key().to_openssh().unwrap();
     let (_kh_dir, kh) = known_hosts_file("changed", m.port, &other);
     let mut p = Plugin::spawn_with(Some(&kh));
     let r = p.connect(m.port, "secret");
@@ -1016,9 +1066,11 @@ fn a_key_that_known_hosts_disagrees_with_is_refused() {
 #[test]
 fn a_pinned_key_must_match() {
     let m = start(ExecMode::Refused, ExecFail::None, 0);
+    // How the fingerprint reaches a user now: the refusal carries it, and the window offers it
+    // for accepting. Nothing signed in anywhere to learn it.
     let mut p = Plugin::spawn_with(None);
-    let fp = p.connect(m.port, "secret").get("ok").cloned().expect("connect").str_field("fingerprint").unwrap().to_string();
-    p.ok(Value::obj().s("type", "Disconnect").s("location", "lab").s("role", "browse").done());
+    let r = p.connect(m.port, "secret");
+    let fp = r.get("err").unwrap_or_else(|| panic!("an unvouched-for key is refused: {}", json::to_string(&r))).str_field("message").unwrap().to_string();
 
     // The key it offers: accepted.
     let mut good = Plugin::spawn_with(None);

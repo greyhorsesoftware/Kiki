@@ -56,13 +56,15 @@ Error codes the plugin may return: `NotFound`, `Denied`, `Exists`, `NotEmpty`, `
 
 | Request | Fields | Reply |
 |---|---|---|
-| `Connect` | `location: string`, `role`, `config`, `secrets` | `{ "fingerprint": string \| null, "banner": string \| null }` or `Auth` / `Network` / `Invalid` |
+| `Connect` | `location: string`, `role`, `config`, `secrets` | `{ "fingerprint": string \| null, "knownHost"?: bool, "banner": string \| null }` or `Auth` / `Network` / `Invalid` |
 | `Disconnect` | `location`, `role` | `{}` |
 | `Capabilities` | `location` | `{ "trash": bool, "setMtime": bool, "mode": bool, "realDirs": bool, "digestKind": string \| null, "separator": string, "fastScan": string \| null }` (`fastScan` names the accelerated listing path the plugin probed: `"gnu"` for SSH exec with GNU find, `"posix"` for `find -exec stat`, `"none"`; informational; `partialRead: false` tells the daemon the backend cannot serve byte ranges, plan 17) |
 | `Ping` | | `{}` |
 | `Shutdown` | | `{}` then exit |
 
-Connect is idempotent: a second `Connect` for an open session returns the same reply. If the server's host key or certificate is unknown, return `Invalid` with `field: "fingerprint"` and the fingerprint in `message`; the daemon asks the user and retries `Connect` with `config.trustedFingerprint` set.
+Connect is idempotent: a second `Connect` for an open session returns the same reply. If the server's host key or certificate is unknown, return `Invalid` with `field: "fingerprint"` and the fingerprint in `message`; the daemon asks the user and retries `Connect` with `config.trustedFingerprint` set. **Raise it before authenticating** — the point of the refusal is that nothing has been offered to a host nobody has verified, so a plugin that signs in first and reports the key in its reply has already given away the password, whatever the daemon then decides (1.0.0: the SFTP plugin was doing exactly that).
+
+`knownHost: true` is the one case where an unverified key is a reply rather than a refusal: the key is new to this location, but the machine's own `~/.ssh/known_hosts` already vouches for it, so there is nobody to ask and the daemon pins it and carries on. It is optional, defaults to `false`, and says nothing without a `fingerprint` beside it.
 
 ### Listing
 
@@ -71,7 +73,7 @@ Connect is idempotent: a second `Connect` for an open session returns the same r
 | `Scan` | `location`, `path`, `id` | JSON frames `{ "id", "entries": [{ "name", "kind", "meta"? }] }` in chunks of up to 1024 | `{ "n": u64 }` |
 | `Stat` | `location`, `path` | | `Meta` |
 
-`Scan` lists one directory, not recursively, unless `recursive: true` is passed, in which case entries carry `rel` (path relative to `path`) and the plugin may stream the whole tree in one go where its protocol allows (SFTP exec acceleration); a plugin that cannot recurse returns `Unsupported` and the daemon walks directory by directory. Names are as the remote returns them; the daemon skips `.` and `..` if present. Symbolic links are reported as `link` and never followed. If the protocol returns attributes with the listing (SFTP, FTPS `MLSD`), include `meta` on every entry and set `metaInScan` in `Describe`; the daemon then never calls `Stat` for windows or mirror scans.
+`Scan` lists one directory, not recursively, unless `recursive: true` is passed, in which case entries carry `rel` (path relative to `path`) and the plugin may stream the whole tree in one go where its protocol allows (SFTP exec acceleration); a plugin that cannot recurse returns `Unsupported` and the daemon walks directory by directory. Names must be ordinary relative names, and a listing that breaks this fails the whole scan with error 1224 rather than having the entry dropped (1.0.0): `name` is one component and contains no `/`; `rel` is a relative path whose every component is an ordinary name — nothing empty (so no leading, trailing or doubled `/`), no `.`, no `..`, no NUL, and so no absolute path. Until 1.0.0 this line said the daemon skipped `.` and `..`, which it did not do; a `rel` that climbed was joined to the local root like any other name. A whole listing is refused rather than filtered because an entry naming `../../.ssh/authorized_keys` means the other end is not keeping this contract, and the rest of its answer cannot be relied on either. Symbolic links are reported as `link` and never followed. If the protocol returns attributes with the listing (SFTP, FTPS `MLSD`), include `meta` on every entry and set `metaInScan` in `Describe`; the daemon then never calls `Stat` for windows or mirror scans.
 
 ### Files
 

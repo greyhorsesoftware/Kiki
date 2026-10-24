@@ -8,6 +8,7 @@
 
 use crate::jobs::Job;
 use crate::json::Value;
+use crate::mirror::safety::{local_path, open_source, validate_name, validate_rel};
 use crate::mirror::{copy_file, scan_side, ExecCtx, Side};
 use crate::vfs::uri::Uri;
 use crate::vfs::{Meta, VfsError};
@@ -38,8 +39,15 @@ fn request(s: &Side, ty: &str, rel: &str) -> Result<(), VfsError> {
 }
 
 fn mkdir(s: &Side, rel: &str) -> Result<(), VfsError> {
+    if !rel.is_empty() {
+        validate_rel(rel)?;
+    }
     match s {
-        Side::Local(p) => std::fs::create_dir_all(if rel.is_empty() { p.clone() } else { p.join(rel) }).map_err(VfsError::from),
+        Side::Local(p) if rel.is_empty() => std::fs::create_dir_all(p).map_err(VfsError::from),
+        Side::Local(p) => {
+            let at = local_path(p, rel)?;
+            std::fs::create_dir_all(at.path()).map_err(VfsError::from)
+        }
         Side::Remote(..) => request(s, "Mkdir", rel),
     }
 }
@@ -49,8 +57,15 @@ fn mkdir(s: &Side, rel: &str) -> Result<(), VfsError> {
 /// a folder on a server is emptied from here, deepest first — which also makes it work the same
 /// for every plugin there will ever be.
 fn delete(s: &Side, rel: &str, is_dir: bool, cancel: &AtomicBool) -> Result<(), VfsError> {
+    if !rel.is_empty() {
+        validate_rel(rel)?;
+    }
     match s {
-        Side::Local(p) => crate::ops::remove_tree(&if rel.is_empty() { p.clone() } else { p.join(rel) }),
+        Side::Local(p) if rel.is_empty() => crate::ops::remove_tree(p),
+        Side::Local(p) => {
+            let at = local_path(p, rel)?;
+            crate::ops::remove_tree(at.path())
+        }
         Side::Remote(..) if !is_dir => request(s, "Delete", rel),
         Side::Remote(..) => {
             let root = child(s, rel);
@@ -72,6 +87,7 @@ fn delete(s: &Side, rel: &str, is_dir: bool, cancel: &AtomicBool) -> Result<(), 
 /// What is in the folder `s`: name -> (is a folder, its meta). One listing, not a walk.
 fn names(s: &Side, cancel: &AtomicBool) -> Result<HashMap<String, (bool, Meta)>, VfsError> {
     let mut out = HashMap::new();
+    let mut unsafe_name: Option<VfsError> = None;
     match s {
         Side::Local(p) => {
             for e in std::fs::read_dir(p)?.flatten() {
@@ -86,12 +102,19 @@ fn names(s: &Side, cancel: &AtomicBool) -> Result<HashMap<String, (bool, Meta)>,
             sess.plugin.request_stream_with(req, Some(cancel), |m| {
                 if let crate::plugin::Msg::Json(v) = m {
                     for e in v.get("entries").and_then(Value::as_arr).into_iter().flatten() {
+                        if let Err(e) = validate_name(e.str_field("name").unwrap_or("")) {
+                            unsafe_name = Some(e);
+                            continue;
+                        }
                         let meta = e.get("meta").filter(|m| !matches!(m, Value::Null)).map(crate::vfs::remote::meta_from).unwrap_or_default();
                         out.insert(e.str_field("name").unwrap_or("").to_string(), (e.str_field("kind") == Some("dir"), meta));
                     }
                 }
             })?;
         }
+    }
+    if let Some(e) = unsafe_name {
+        return Err(e);
     }
     Ok(out)
 }
@@ -196,7 +219,8 @@ impl Made {
 fn landed(at: &Side, rel: &str) -> Option<(u64, u64)> {
     match at {
         Side::Local(root) => {
-            let m = std::fs::metadata(root.join(rel)).ok()?;
+            let at = local_path(root, rel).ok()?;
+            let m = open_source(at.path()).ok()?.metadata().ok()?;
             Some((m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)))
         }
         Side::Remote(sess, root) => {
@@ -239,6 +263,7 @@ pub fn copy_or_move(job: &Job, moving: bool, items: &[Uri], dest: &Uri, cancel: 
             listings.insert(key.clone(), names(&side(&parent)?, cancel)?);
         }
         let name = u.name().to_string();
+        validate_name(&name)?;
         let (is_dir, meta) = listings[&key].get(&name).cloned().ok_or(VfsError::NotFound)?;
         let from = side(&parent)?;
         let mut tree = Vec::new();
@@ -424,7 +449,10 @@ fn is_cancel(e: &VfsError) -> bool {
 /// time that differs proves nothing there.)
 fn arrived_whole(to: &Side, rel: &str, size: u64) -> Result<(), VfsError> {
     let got = match to {
-        Side::Local(root) => std::fs::metadata(root.join(rel))?.len(),
+        Side::Local(root) => {
+            let at = local_path(root, rel)?;
+            open_source(at.path())?.metadata()?.len()
+        }
         Side::Remote(sess, root) => {
             let path = format!("{}/{}", root.trim_end_matches('/'), rel);
             sess.plugin.request(sess.req("Stat").s("path", path).done())?.u64_field("size").unwrap_or(u64::MAX)
@@ -541,7 +569,10 @@ pub fn undo_copy(job: &Job, op: &Value, cancel: &AtomicBool) -> Result<TakenBack
 
 fn rename(from: &Side, name: &str, to: &Side, target: &str) -> Result<(), VfsError> {
     match (from, to) {
-        (Side::Local(a), Side::Local(b)) => std::fs::rename(a.join(name), b.join(target)).map_err(VfsError::from),
+        (Side::Local(a), Side::Local(b)) => {
+            let (at, to) = (local_path(a, name)?, local_path(b, target)?);
+            std::fs::rename(at.path(), to.path()).map_err(VfsError::from)
+        }
         (Side::Remote(s, a), Side::Remote(_, b)) => {
             s.plugin.request(s.req("Rename").s("from", format!("{}/{}", a.trim_end_matches('/'), name)).s("to", format!("{}/{}", b.trim_end_matches('/'), target)).done()).map(|_| ())
         }

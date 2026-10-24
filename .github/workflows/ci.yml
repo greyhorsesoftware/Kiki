@@ -6,6 +6,16 @@ name: CI
 # were built from and publishes them. What ships is what CI built and tested, and no commit
 # becomes a release on its own.
 on:
+  # By hand, against any revision: a tag, or the commit before a suspected regression, put
+  # through the whole suite without pushing anything. Every job below checks out `inputs.revision`
+  # when there is one, so a dispatched run tests one revision and not a mix of it and the branch
+  # head (docs/1.0.0/01-from-the-fork.md item 7).
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: 'Commit or tag to validate (empty uses the selected branch)'
+        type: string
+        default: ''
   push:
     branches: [main]
     paths-ignore: ['docs/**', '**/*.md']
@@ -36,9 +46,11 @@ jobs:
       - name: Install toolchain
         run: |
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel git rust clang pkgconf sudo \
-            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb libsecret desktop-file-utils
+            openssh vsftpd ffmpeg dbus xdg-desktop-portal libpng glib2 gvfs gvfs-smb libsecret desktop-file-utils neovim
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: actions/cache@v6
         with:
           path: |
@@ -125,6 +137,8 @@ jobs:
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed base-devel sudo pacman-contrib
           useradd -m builder && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: actions/download-artifact@v8
         with:
           name: kiki-package-x86_64
@@ -164,6 +178,8 @@ jobs:
           rustup toolchain install nightly-2026-09-29 --profile minimal
           cargo +nightly-2026-09-29 install cargo-fuzz --locked
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - uses: actions/cache@v6
         with:
           path: |
@@ -190,6 +206,8 @@ jobs:
           sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf && pacman -Syu --noconfirm --needed make xorg-server-xvfb \
             qt6-base qt6-declarative qt6-svg qt6-multimedia qt6-multimedia-ffmpeg ttf-liberation
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.revision || github.sha }}
       - name: Run qmltestrunner
         run: |
           # The leaf and interaction tests (plan 28): they drive synthetic mouse and key input,
